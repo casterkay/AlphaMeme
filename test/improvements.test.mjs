@@ -8,7 +8,8 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { config } from '../src/config.mjs';
 import { GmgnClient, requestWeight, tokenInfoPrice, translateGmgnError } from '../src/gmgn.mjs';
-import { collectOutcomeSamples, dueOutcomeJobs, outcomeCoverage, sampleRejected } from '../src/outcomes.mjs';
+import { collectOutcomeSamples, dueOutcomeJobs, horizons, outcomeCoverage, sampleRejected } from '../src/scoring/outcomes.mjs';
+import { sha256Bytes, sha256Hex } from '../src/util/crypto.mjs';
 import { RadarControls, atomicJson, readJsonWithBackup, tokenKey } from '../src/local-store.mjs';
 import { GmgnKeyStore } from '../src/gmgn-key-store.mjs';
 import { GmgnConnection } from '../src/gmgn-connection.mjs';
@@ -73,15 +74,35 @@ test('priceAt selects timestamped closed candles, not current price or future ba
   assert.deepEqual(await client.priceAt(address, target, 'bsc'), { at: target, price:2, source:'GMGN_1M_CLOSE' });
 });
 
-test('rejection cohort is deterministic and separated from passed outcomes', () => {
+test('WebCrypto SHA-256 helpers preserve the legacy byte and hex vectors', async () => {
+  const input = 'bsc:0x0000000000000000000000000000000000000001';
+  assert.equal(await sha256Hex(input), '91ee07c1272616ab0c322bbe1ab3f839cc7d25e841889843466de90898a66eec');
+  assert.equal((await sha256Bytes(input))[0], 145);
+  assert.deepEqual(Object.keys(horizons), ['m5', 'm15', 'm30', 'h1', 'h2', 'h6', 'h24']);
+});
+
+test('rejection cohort is deterministic and separated from passed outcomes', async () => {
   const rows = [];
-  for (let i=1;i<100;i++) sampleRejected(rows, { chain:'bsc', address:'0x'+i.toString(16).padStart(40,'0'), price: 1, status:'HARD_REJECT' }, 10);
+  for (let i=1;i<100;i++) await sampleRejected(rows, { chain:'bsc', address:'0x'+i.toString(16).padStart(40,'0'), price: 1, status:'HARD_REJECT' }, 10);
   assert.ok(rows.length > 5 && rows.length < 40);
+  assert.equal(rows.length, 33);
+  assert.deepEqual(rows.slice(0, 4).map(row => row.address), [
+    '0x0000000000000000000000000000000000000001',
+    '0x0000000000000000000000000000000000000002',
+    '0x0000000000000000000000000000000000000005',
+    '0x0000000000000000000000000000000000000006'
+  ]);
   const count = rows.length;
-  for (const row of [...rows]) sampleRejected(rows, { ...row, price:1, status:'HARD_REJECT' }, 20);
+  for (const row of [...rows]) await sampleRejected(rows, { ...row, price:1, status:'HARD_REJECT' }, 20);
   assert.equal(rows.length, count);
   assert.equal(outcomeCoverage(rows, 1900000).passed.m30.eligible, 0);
   assert.equal(outcomeCoverage(rows, 1900000).rejected.m30.eligible, count);
+});
+
+test('rejection sampling uses the legacy SHA-256 first byte modulo five rule', async () => {
+  const candidate = { chain: 'bsc', address: '0x0000000000000000000000000000000000000001', price: 1, status: 'HARD_REJECT' };
+  const rows = await sampleRejected([], candidate, 10);
+  assert.deepEqual(rows.map(row => row.address), [candidate.address]);
 });
 
 test('local store recovers last good JSON; unrecoverable data is not silently reset', t => {
@@ -128,7 +149,7 @@ test('disconnect survives reload and never falls back to legacy credentials; ver
   assert.equal(gmgn.apiKey(),key);
 });
 
-test('UI approval is case-sensitive on Solana and expires on risk revision changes', () => {
+test('UI approval is case-sensitive on Solana and expires on risk revision changes', async () => {
   const html=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
   const start=html.indexOf('function addressIdentity('), end=html.indexOf('function rowMatches(',start);
   const context={ Date, manualMarks:{}, lastData:{}, activeChain:()=> 'sol', candidateAuditAge:()=>0, t:x=>x, escapeHtml:x=>x };
@@ -138,7 +159,13 @@ test('UI approval is case-sensitive on Solana and expires on risk revision chang
   assert.equal(context.status({address:a,status:'X_REVIEW',reviewRevision:'r1'}),'passed');
   assert.equal(context.status({address:b,status:'X_REVIEW',reviewRevision:'r1'}),'chain');
   assert.equal(context.status({address:a,status:'X_REVIEW',reviewRevision:'r2'}),'chain');
-  assert.notEqual(reviewRevision({status:'X_REVIEW'}),reviewRevision({status:'HARD_REJECT'}));
+  assert.equal(await reviewRevision({
+    status: 'X_REVIEW',
+    deep: { checks: ['tax', 'rug'], failed: ['wallets'], security: { ownerRenounced: true, renouncedMint: true, renouncedFreezeAccount: false, honeypot: false, buyTax: 0, sellTax: 0, lockRate: .8, lpBurned: true } },
+    secondary: { security: { verdict: 'NO_FATAL_FLAGS' }, conflicts: [] },
+    info: { website: 'https://example.test', twitter: 'example' }
+  }), 'd528d083a302796978e30f27');
+  assert.notEqual(await reviewRevision({status:'X_REVIEW'}),await reviewRevision({status:'HARD_REJECT'}));
 });
 
 test('scanner batch audits multiple candidates, saves per-chain history, and multi-chain view does not interrupt work', async t => {

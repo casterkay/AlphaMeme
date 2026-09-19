@@ -1,11 +1,11 @@
 import { config } from './config.mjs';
 import { CHART_RISK_VERSION, applyRiskExclusion } from './scoring/chart-risk.mjs';
-import crypto from 'node:crypto';
 import { discoveryScreen, deepScreen, marketCap, createdAt } from './scoring/index.mjs';
 import { socialGate } from './social.mjs';
 import { tokenInfoPrice } from './gmgn.mjs';
-import { collectOutcomeSamples, dueOutcomeJobs, outcomeCoverage, sampleRejected } from './outcomes.mjs';
+import { collectOutcomeSamples, dueOutcomeJobs, outcomeCoverage, sampleRejected } from './scoring/outcomes.mjs';
 import { tokenKey } from './local-store.mjs';
+import { sha256Hex } from './util/crypto.mjs';
 
 const numberOrNull = value => {
   if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
@@ -65,16 +65,16 @@ function cleanCandidate(row, defaultChain = '') {
   return clean;
 }
 
-export function reviewRevision(candidate) {
+export async function reviewRevision(candidate) {
   const security = candidate.deep?.security || {};
-  return crypto.createHash('sha256').update(JSON.stringify({
+  return (await sha256Hex(JSON.stringify({
     status: candidate.status, checks: candidate.deep?.checks, failed: candidate.deep?.failed,
     owner: security.ownerRenounced, mint: security.renouncedMint, freeze: security.renouncedFreezeAccount,
     honeypot: security.honeypot, buyTax: security.buyTax, sellTax: security.sellTax,
     lock: security.lockRate, burned: security.lpBurned,
     secondary: candidate.secondary?.security?.verdict, conflicts: candidate.secondary?.conflicts,
     website: candidate.info?.website, twitter: candidate.info?.twitter
-  })).digest('hex').slice(0, 24);
+  }))).slice(0, 24);
 }
 
 function publicToken(row, screen, chain) {
@@ -617,7 +617,7 @@ export class Scanner {
             }
           };
           const previousCandidate = candidatesByAddress.get(addressKey(token.address));
-          candidate.reviewEvidence = reviewRevision(candidate);
+          candidate.reviewEvidence = await reviewRevision(candidate);
           candidate.reviewRevision = previousCandidate?.reviewEvidence === candidate.reviewEvidence
             ? previousCandidate.reviewRevision : `${candidate.reviewEvidence}-${auditedAt}`;
           candidatesByAddress.set(addressKey(token.address), candidate);
@@ -648,7 +648,7 @@ export class Scanner {
           const label = { X_REVIEW: '链上通过，待人工看X', WAIT_RECHECK: '等待短时复查', HARD_REJECT: '永久安全拒绝' }[candidate.status];
           events = addEvent(events, candidate.status, `${token.symbol}：${label}`, chain, { address: token.address });
           outcomes = upsertOutcome(outcomes, candidate, auditedAt);
-          outcomes = sampleRejected(outcomes, candidate, auditedAt);
+          outcomes = await sampleRejected(outcomes, candidate, auditedAt);
         } catch (error) {
           auditHadError = true;
           const auditedAt = Date.now();
