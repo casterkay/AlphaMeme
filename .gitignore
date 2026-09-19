@@ -19,3 +19,9 @@ logs/**
 *.pem
 *.p12
 npm-debug.log*
+
+.agents/
+.claude/
+.pi/
+.history/
+skills-lock.json
