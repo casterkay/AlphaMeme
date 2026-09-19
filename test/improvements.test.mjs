@@ -10,12 +10,14 @@ import { config } from '../src/config.mjs';
 import { GmgnClient, requestWeight, tokenInfoPrice, translateGmgnError } from '../src/gmgn.mjs';
 import { collectOutcomeSamples, dueOutcomeJobs, horizons, outcomeCoverage, sampleRejected } from '../src/scoring/outcomes.mjs';
 import { sha256Bytes, sha256Hex } from '../src/util/crypto.mjs';
-import { RadarControls, atomicJson, readJsonWithBackup, tokenKey } from '../src/local-store.mjs';
+import { atomicJson, readJsonWithBackup } from '../src/storage/store.mjs';
+import { RadarControls, tokenKey } from '../src/storage/controls.mjs';
 import { GmgnKeyStore } from '../src/gmgn-key-store.mjs';
 import { GmgnConnection } from '../src/gmgn-connection.mjs';
 import { RadarState } from '../src/state.mjs';
 import { Scanner, reviewRevision } from '../src/scanner.mjs';
 import { createServer } from '../src/server.mjs';
+import { effectiveStatus } from '../src/scoring/manual-review.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const address = '0x' + '1'.repeat(40);
@@ -150,15 +152,12 @@ test('disconnect survives reload and never falls back to legacy credentials; ver
 });
 
 test('UI approval is case-sensitive on Solana and expires on risk revision changes', async () => {
-  const html=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
-  const start=html.indexOf('function addressIdentity('), end=html.indexOf('function rowMatches(',start);
-  const context={ Date, manualMarks:{}, lastData:{}, activeChain:()=> 'sol', candidateAuditAge:()=>0, t:x=>x, escapeHtml:x=>x };
-  vm.runInNewContext(html.slice(start,end)+'\nthis.key=addressIdentity; this.status=effectiveStatus;',context);
   const a='So11111111111111111111111111111111111111112', b=a.replace(/^S/,'s');
-  context.manualMarks['sol:'+a]={decision:'passed',at:Date.now(),reviewRevision:'r1'};
-  assert.equal(context.status({address:a,status:'X_REVIEW',reviewRevision:'r1'}),'passed');
-  assert.equal(context.status({address:b,status:'X_REVIEW',reviewRevision:'r1'}),'chain');
-  assert.equal(context.status({address:a,status:'X_REVIEW',reviewRevision:'r2'}),'chain');
+  const marks={['sol:'+a]:{decision:'passed',at:Date.now(),reviewRevision:'r1'}};
+  const candidate={status:'X_REVIEW',auditedAt:Date.now(),reviewRevision:'r1'};
+  assert.equal(effectiveStatus({address:a,...candidate},marks['sol:'+a]),'passed');
+  assert.equal(effectiveStatus({address:b,...candidate},marks['sol:'+b]),'chain');
+  assert.equal(effectiveStatus({address:a,...candidate,reviewRevision:'r2'},marks['sol:'+a]),'chain');
   assert.equal(await reviewRevision({
     status: 'X_REVIEW',
     deep: { checks: ['tax', 'rug'], failed: ['wallets'], security: { ownerRenounced: true, renouncedMint: true, renouncedFreezeAccount: false, honeypot: false, buyTax: 0, sellTax: 0, lockRate: .8, lpBurned: true } },

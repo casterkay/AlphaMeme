@@ -126,7 +126,7 @@ test('exact static routes serve voice modules, keep CSP, exclude recordings and 
     const res = { writeHead(status, headers) { Object.assign(out, { status, headers }); }, end(body) { resolve({ ...out, body }); } };
     Promise.resolve(server.listeners('request')[0](req, res)).catch(reject);
   });
-  for (const route of ['/voice-ui.mjs', '/voice-alerts.mjs', '/voice-player.mjs']) {
+  for (const route of ['/voice-ui.mjs', '/voice-alerts.mjs', '/voice-player.mjs', '/manual-review.mjs']) {
     const result = await dispatch(route); assert.equal(result.status, 200); assert.match(result.headers['Content-Type'], /javascript/);
     assert.match(result.headers['Content-Security-Policy'], /connect-src 'self'/);
   }

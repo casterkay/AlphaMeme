@@ -5,7 +5,7 @@ import path from 'node:path';
 import { normalizeGmgnApiKey } from './gmgn-key-store.mjs';
 import { secondaryChainSupport } from './providers/secondary.mjs';
 import { publicCandidate, publicMessage, toPublicStatus } from './render/whitelist.mjs';
-import { tokenKey } from './local-store.mjs';
+import { tokenKey } from './storage/controls.mjs';
 import { CHART_RISK_VERSION } from './scoring/chart-risk.mjs';
 
 export { toPublicStatus } from './render/whitelist.mjs';
@@ -415,11 +415,12 @@ export function createServer({ state, settings, controls, switchChain, saveGmgnK
     if (url.pathname === '/health') return sendJson(res, 200, healthSnapshot(state.value, settings), csp);
     const assets = { '/voice-ui.mjs': ['voice-ui.mjs', 'text/javascript; charset=utf-8'],
       '/voice-alerts.mjs': ['voice-alerts.mjs', 'text/javascript; charset=utf-8'],
-      '/voice-player.mjs': ['voice-player.mjs', 'text/javascript; charset=utf-8'] };
+      '/voice-player.mjs': ['voice-player.mjs', 'text/javascript; charset=utf-8'],
+      '/manual-review.mjs': [new URL('./scoring/manual-review.mjs', import.meta.url), 'text/javascript; charset=utf-8'] };
     if (Object.hasOwn(assets, url.pathname)) {
       const [relative, type] = assets[url.pathname];
       try {
-        const content = fs.readFileSync(path.join(settings.publicDir, relative));
+        const content = fs.readFileSync(typeof relative === 'string' ? path.join(settings.publicDir, relative) : relative);
         res.writeHead(200, { ...headers(type, csp), 'Content-Length': content.length });
         return res.end(content);
       } catch { return sendJson(res, 404, { error: 'asset_not_found' }, csp); }

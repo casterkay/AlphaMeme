@@ -1356,6 +1356,9 @@
     let toastTimer = null;
     let chainSwitching = false;
     let rowsFingerprint = '';
+    let backendDisposition;
+    let effectiveStatus;
+    let canPass;
 
     function readStorage(key, fallback) {
       try {
@@ -1572,25 +1575,9 @@
       return manualMarks[chainKey] || (activeChain(lastData) === 'robinhood' ? manualMarks[normalized] : null) || null;
     }
 
-    function backendDisposition(row) {
-      if (row.status === 'X_REVIEW' || row.status === 'QUALIFIED') return 'chain';
-      if (row.status === 'WAIT_RECHECK') return 'waiting';
-      if (row.status === 'HARD_REJECT' || row.status === 'REJECTED') return 'rejected';
-      if (row.deep && row.deep.chainPass) return 'chain';
-      return 'rejected';
-    }
-
-    function effectiveStatus(row) {
-      const mark = markFor(row.address);
-      if (mark && mark.decision === 'ignored') return 'ignored';
-      if (mark && mark.decision === 'passed' && mark.reviewRevision && mark.reviewRevision === row.reviewRevision
-        && Date.now() - mark.at < 24 * 60 * 60000 && backendDisposition(row) === 'chain' && candidateAuditAge(row) <= 10 * 60000) return 'passed';
-      return backendDisposition(row);
-    }
-
     function statusBadge(row) {
       const mark = markFor(row.address);
-      const status = effectiveStatus(row);
+      const status = effectiveStatus(row, mark);
       if (status === 'passed') return '<span class="pill pass">' + escapeHtml(t('manualApproved')) + '</span>';
       if (status === 'ignored') return '<span class="pill ignore">' + escapeHtml(t('ignored')) + '</span>';
       if (mark && mark.decision === 'passed' && status !== 'passed') return '<span class="pill expired">' + escapeHtml(t('manualExpired')) + '</span>';
@@ -1602,7 +1589,7 @@
     function rowMatches(row, query, filter, now) {
       const searchable = [row.symbol, row.name, row.address].join(' ').toLowerCase();
       if (query && !searchable.includes(query)) return false;
-      const status = effectiveStatus(row);
+      const status = effectiveStatus(row, markFor(row.address));
       if (filter === 'chain' && status !== 'chain') return false;
       if (filter === 'waiting' && status !== 'waiting') return false;
       if (filter === 'passed' && status !== 'passed') return false;
@@ -1697,7 +1684,7 @@
       const address = String(row.address || '');
       const encodedAddress = encodeURIComponent(address);
       const mark = markFor(address);
-      const canPass = backendDisposition(row) === 'chain' && candidateAuditAge(row, now) <= 10 * 60000 || Boolean(mark && mark.decision === 'passed');
+      const passAllowed = canPass(row, mark, now);
       const reasons = failureReasons(row, policy).map(function (reason) {
         return '<div class="reason">' + escapeHtml(reason) + '</div>';
       }).join('');
@@ -1735,7 +1722,7 @@
         '<td class="' + (observation.pass ? 'good' : 'bad') + '">' + (earlyExit ? skipped : escapeHtml(safeMessage(observation.reason, t('marketUnknown'))) + '<br><span class="muted">' + escapeHtml(t('return5m', { value: formatPercent(observation.return5m) })) + '<br>' + escapeHtml(t('maxDrawdown', { value: formatPercent(observation.maxDrawdown) })) + '</span>') + '</td>' +
         '<td><span class="warn">' + escapeHtml(t('manualReview')) + '</span><br><span class="muted">' + escapeHtml(officialStatus) + '</span></td>' +
         '<td>' + statusBadge(row) + '<div class="reasons">' + reasons + '</div><div class="review-actions">' +
-          '<button type="button" class="mini-button pass ' + (passActive ? 'active' : '') + '" data-action="pass" data-address="' + encodedAddress + '" ' + (canPass ? '' : 'disabled title="' + escapeHtml(passDisabledReason) + '"') + '>' + escapeHtml(passActive ? t('cancelPass') : t('manualPass')) + '</button>' +
+          '<button type="button" class="mini-button pass ' + (passActive ? 'active' : '') + '" data-action="pass" data-address="' + encodedAddress + '" ' + (passAllowed ? '' : 'disabled title="' + escapeHtml(passDisabledReason) + '"') + '>' + escapeHtml(passActive ? t('cancelPass') : t('manualPass')) + '</button>' +
           '<button type="button" class="mini-button ignore ' + (ignoreActive ? 'active' : '') + '" data-action="ignore" data-address="' + encodedAddress + '">' + escapeHtml(ignoreActive ? t('cancelIgnore') : t('ignoreAction')) + '</button>' +
           '<button type="button" class="mini-button" data-action="favorite" data-address="' + encodedAddress + '">' + escapeHtml(t(annotationFor(row.chain || activeChain(lastData), row.address).favorite ? 'unfavorite' : 'favorite')) + '</button>' +
           '<button type="button" class="mini-button" data-action="note" data-address="' + encodedAddress + '">' + escapeHtml(t('editNote')) + '</button>' +
@@ -2130,7 +2117,7 @@
       const hardRejectCount = rowsCache.filter(function (row) { return backendDisposition(row) === 'rejected'; }).length;
       const queue = data.auditQueueStats || {};
       byId('chainCandidates').textContent = chainCount.toLocaleString(currentLocale);
-      byId('manualPassed').textContent = rowsCache.filter(function (row) { return effectiveStatus(row) === 'passed'; }).length.toLocaleString(currentLocale);
+      byId('manualPassed').textContent = rowsCache.filter(function (row) { return effectiveStatus(row, markFor(row.address)) === 'passed'; }).length.toLocaleString(currentLocale);
       byId('prequalifiedDetail').textContent = queue.queued !== undefined || queue.total !== undefined
         ? t('queueDue', { queued: formatCount(queue.queued !== undefined ? number(queue.queued) : number(queue.total)), due: formatCount(number(queue.due)) })
         : t('awaitingAudit');
@@ -2528,19 +2515,27 @@
       }
     });
 
-    const storedLocale = readStorage('memeRadarLanguageV1', 'zh-CN');
-    setLocale(storedLocale, false);
-    renderChainSwitcher(null);
-    if (location.protocol !== 'file:') {
-      startParticleField();
-      refresh();
-      refreshLive();
-      setInterval(refreshLive, 5000);
-      document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshLive(); });
-      setInterval(refresh, 3000);
-      setInterval(renderTelemetry, 1000);
-      setInterval(renderCandidates, 60000);
+    function initializeDashboard() {
+      const storedLocale = readStorage('memeRadarLanguageV1', 'zh-CN');
+      setLocale(storedLocale, false);
+      renderChainSwitcher(null);
+      if (location.protocol !== 'file:') {
+        startParticleField();
+        refresh();
+        refreshLive();
+        setInterval(refreshLive, 5000);
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshLive(); });
+        setInterval(refresh, 3000);
+        setInterval(renderTelemetry, 1000);
+        setInterval(renderCandidates, 60000);
+      }
     }
+
+    if (location.protocol === 'file:') initializeDashboard();
+    else import('/manual-review.mjs').then(function (manualReview) {
+      ({ backendDisposition, effectiveStatus, canPass } = manualReview);
+      initializeDashboard();
+    });
   </script>
 </body>
 </html>
