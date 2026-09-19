@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SecondaryValidator, secondaryChainSupport } from '../src/secondary.mjs';
+import { SecondaryValidator, secondaryChainSupport } from '../src/providers/secondary.mjs';
 
 const evmAddress = '0x1111111111111111111111111111111111111111';
 const otherEvmAddress = '0x2222222222222222222222222222222222222222';

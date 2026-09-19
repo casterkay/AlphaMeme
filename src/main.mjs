@@ -5,7 +5,7 @@ import { GmgnKeyStore } from './gmgn-key-store.mjs';
 import { GmgnConnection } from './gmgn-connection.mjs';
 import { RadarState } from './state.mjs';
 import { Scanner } from './scanner.mjs';
-import { SecondaryValidator } from './secondary.mjs';
+import { SecondaryValidator } from './providers/secondary.mjs';
 import { createServer, toPublicStatus } from './server.mjs';
 import { RadarControls } from './local-store.mjs';
 import { LiveDiscovery } from './live-discovery.mjs';
