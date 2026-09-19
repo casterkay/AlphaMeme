@@ -1,0 +1,14 @@
+.gitignore
+  h_0528fe13c98664 22-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "81678a402588400e8ee5663d5b924cf115f92daf",
+  "prompts": {},
+  "humans": {
+    "h_0528fe13c98664": {
+      "author": "casterkay <poetrycoder>"
+    }
+  }
+}
