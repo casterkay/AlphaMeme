@@ -1,12 +1,12 @@
-import crypto from 'node:crypto';
+import { sha256Bytes } from '../util/crypto.mjs';
 
 export const horizons = Object.freeze({ m5: 300_000, m15: 900_000, m30: 1800_000, h1: 3600_000, h2: 7200_000, h6: 21600_000, h24: 86400_000 });
 
-export function sampleRejected(outcomes, candidate, now) {
+export async function sampleRejected(outcomes, candidate, now) {
   if (candidate.status !== 'HARD_REJECT' || !(candidate.price > 0)) return outcomes;
   if (outcomes.some(row => row.address === candidate.address)) return outcomes;
   // Stable 1-in-5 sampling, independent of subsequent returns or popularity.
-  const hash = crypto.createHash('sha256').update(`${candidate.chain}:${candidate.address}`).digest();
+  const hash = await sha256Bytes(`${candidate.chain}:${candidate.address}`);
   if (hash[0] % 5 || outcomes.filter(row => row.initialDecision === 'HARD_REJECT').length >= 200) return outcomes;
   outcomes.push({ chain: candidate.chain, address: candidate.address, symbol: candidate.symbol,
     baselineAt: now, baselinePrice: candidate.price, initialDecision: 'HARD_REJECT',
