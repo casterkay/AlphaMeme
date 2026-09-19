@@ -99,6 +99,15 @@ test('rejects nonzero or malformed envelopes and never accepts string zero as su
   });
 });
 
+test('verification fails closed when HTTP 401 contains a success-shaped envelope', async () => {
+  const client = clientWith(async () => new Response(JSON.stringify({ code: 0, data: { rank: [] } }), { status: 401 }));
+  await assert.rejects(client.verifyApiKey(apiKey), error => {
+    assert.equal(error.code, 'GMGN_AUTH_FAILED');
+    assert.equal(error.status, 401);
+    return true;
+  });
+});
+
 test('bounds response bytes before parsing a provider payload', async () => {
   const client = clientWith(async () => new Response('x'.repeat(65)), { maxResponseBytes: 64 });
   await assert.rejects(client.tokenInfo('bsc', address), error => {
@@ -146,6 +155,20 @@ test('preserves body and header reset times while translating 429, 401, 403, tim
   assert.equal(translateGmgnError({ code: 'GMGN_NETWORK_ERROR' }).code, 'GMGN_NETWORK_ERROR');
 });
 
+test('non-JSON HTTP 429 preserves its reset header and enters the shared cooldown', async () => {
+  const headerResetAtUnix = Math.ceil(Date.now() / 1000) + 120;
+  const client = clientWith(async () => new Response('temporarily unavailable', {
+    status: 429, headers: { 'x-ratelimit-reset': String(headerResetAtUnix) }
+  }));
+  await assert.rejects(client.tokenInfo('bsc', address), error => {
+    assert.equal(error.code, 'GMGN_RATE_LIMITED');
+    assert.equal(error.status, 429);
+    assert.equal(error.headerResetAtUnix, headerResetAtUnix);
+    return true;
+  });
+  assert.ok(client.nextAllowedAt > now);
+});
+
 test('trenches locally sorts, deduplicates, and caps a provider response that ignores its limit', async () => {
   const client = clientWith(async () => new Response(JSON.stringify({ code: 0, data: {
     completed: [
@@ -156,6 +179,29 @@ test('trenches locally sorts, deduplicates, and caps a provider response that ig
   } }), { status: 200 }));
   const data = await client.trenches('bsc', { types: ['completed'], limit: 1 });
   assert.deepEqual(data.completed, [{ address: '0x' + 'b'.repeat(40), volume_1h: 3 }]);
+  assert.deepEqual(data._coverage, {
+    selectedCategories: ['completed'], localLimit: 1,
+    categories: {
+      completed: {
+        returnedCount: 3, dedupedCount: 2, retainedCount: 1,
+        providerExceededLimit: true, locallyCapped: true, locallyDeduplicated: true
+      }
+    }
+  });
+});
+
+test('discovery health keeps trenches coverage when the upstream ignores a cap', async () => {
+  const rows = Array.from({ length: 81 }, (_, index) => ({
+    address: `0x${index.toString(16).padStart(40, '0')}`, volume_1h: index
+  }));
+  const client = clientWith(async (_url, init) => new Response(JSON.stringify({ code: 0, data:
+    init.method === 'POST' ? { completed: rows } : { rank: [] }
+  }), { status: 200 }));
+  await client.discover('bsc');
+  assert.deepEqual(client.lastDiscoveryHealth.trenches.coverage.categories.completed, {
+    returnedCount: 81, dedupedCount: 81, retainedCount: 80,
+    providerExceededLimit: true, locallyCapped: true, locallyDeduplicated: false
+  });
 });
 
 test('public client exposes only read operations and high-level read helpers, never trading or a command bridge', () => {
