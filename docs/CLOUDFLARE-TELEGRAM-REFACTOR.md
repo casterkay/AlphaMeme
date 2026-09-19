@@ -17,6 +17,7 @@
 | 7 | 只改 meme-radar | 不动 MemeHarness |
 | 8 | 不遵守 EDITION-BOUNDARY.md | 我们不是原作者，该文档的「专业服务不可接收用户 API Key」等约束不适用 |
 | 9 | Telegram 复刻主要 web 界面，按需打开 | 活跃榜、表现验证、近30分钟深审等由 command 打开带 inline keyboard 的消息面板；仅需要人工查看的代币或信息主动推送，常规数据更新不推送 |
+| 10 | 实现中英双语本地化支持 | 通过 `src/render/telegram.mjs` 的 HTML 模板 + i18n 字典，支持中文和英文；命令、按钮、提示、错误信息等都可本地化；默认中文，用户可 `/lang en` 切换 |
 
 ## 1. 铁律：什么必须原样保留
 
