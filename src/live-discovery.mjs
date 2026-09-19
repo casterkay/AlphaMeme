@@ -1,4 +1,4 @@
-import { normalizeList } from './gmgn.mjs';
+import { normalizeList } from './providers/gmgn.mjs';
 import { discoveryScreen, knownRiskReasons } from './scoring/index.mjs';
 import { config } from './config.mjs';
 
@@ -16,12 +16,6 @@ const safeUrl = value => {
   try { const url = new URL(String(value)); return url.protocol === 'https:' && !url.username && !url.password ? url.href.slice(0, 500) : ''; }
   catch { return ''; }
 };
-
-export function liveRequestArgs(chain) {
-  return ['market', 'trending', '--chain', chain, '--interval', '1m', '--limit', '100',
-    '--order-by', 'volume', '--direction', 'desc', '--min-created', '5m',
-    '--min-marketcap', '10000', '--max-marketcap', '500000', '--min-liquidity', '3000', '--raw'];
-}
 
 // This is a discovery snapshot, never an audit verdict. No extra per-token reads.
 export function normalizeLiveRows(input, chain, previous = [], at = Date.now(), initialized = false) {
@@ -101,7 +95,11 @@ export class LiveDiscovery {
       if (!await this.gmgn.configured()) {
         this.states.set(chain, { ...old, status: 'AUTH_REQUIRED', lastAttemptAt: at }); return;
       }
-      const result = await this.gmgn.run(liveRequestArgs(chain), { deadline: Date.now() + 25000 });
+      const result = await this.gmgn.marketRank(chain, '1m', {
+        limit: 100, order_by: 'volume', direction: 'desc', min_created: '5m',
+        min_marketcap: 10_000, max_marketcap: 500_000, min_liquidity: 3_000,
+        deadline: Date.now() + 25_000
+      });
       if (this.stopped || epoch !== this.gmgn.keyEpoch) return;
       let payload = result;
       for (let i = 0; i < 3 && payload && !Array.isArray(payload) && payload.data != null; i++) payload = payload.data;

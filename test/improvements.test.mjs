@@ -7,7 +7,7 @@ import vm from 'node:vm';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { config } from '../src/config.mjs';
-import { GmgnClient, requestWeight, tokenInfoPrice, translateGmgnError } from '../src/gmgn.mjs';
+import { GmgnClient, tokenInfoPrice, translateGmgnError } from '../src/providers/gmgn.mjs';
 import { collectOutcomeSamples, dueOutcomeJobs, horizons, outcomeCoverage, sampleRejected } from '../src/scoring/outcomes.mjs';
 import { sha256Bytes, sha256Hex } from '../src/util/crypto.mjs';
 import { atomicJson, readJsonWithBackup } from '../src/storage/store.mjs';
@@ -24,19 +24,25 @@ const address = '0x' + '1'.repeat(40);
 const temp = t => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-v3-test-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return dir; };
 
 test('weighted request pacing, bounded cache and credential invalidation', async () => {
-  assert.equal(requestWeight(['token','holders']), 5);
-  assert.equal(requestWeight(['market','trenches']), 3);
-  const client = new GmgnClient();
+  const client = new GmgnClient({ minRequestGapMs: 0 });
   let calls = 0;
-  client.run = async () => ({ count: ++calls });
-  const args = ['token','security','--chain','bsc','--address',address];
-  assert.equal((await client.cachedRead(args, 60000)).count, 1);
-  assert.equal((await client.cachedRead(args, 60000)).count, 1);
+  const read = () => ({ count: ++calls });
+  client.tokenInfo = async () => read();
+  client.tokenSecurity = async () => read();
+  client.tokenPoolInfo = async () => read();
+  client.tokenTopHolders = async () => read();
+  client.tokenTopTraders = async () => read();
+  client.tokenKline = async () => ({ list: [] });
+  await client.audit(address, 1_800_000_000, 'bsc');
+  assert.equal(calls, 5);
+  await client.audit(address, 1_800_000_000, 'bsc');
+  assert.equal(calls, 5);
   client.nextAllowedAt = Date.now() + 60000;
   client.resetCredentials();
-  assert.equal((await client.cachedRead(args, 60000)).count, 2);
+  await client.audit(address, 1_800_000_000, 'bsc');
+  assert.equal(calls, 10);
   assert.ok(client.nextAllowedAt > Date.now());
-  assert.equal(client.metrics.cacheHits, 1);
+  assert.equal(client.metrics.cacheHits, 6);
   assert.equal(tokenInfoPrice({ price: { price: '0.025' } }), 0.025);
   assert.equal(tokenInfoPrice({ price: '' }), null);
   const cooldown = translateGmgnError({ status: 429, resetAtUnix: Math.ceil(Date.now()/1000) + 120 });
@@ -45,7 +51,12 @@ test('weighted request pacing, bounded cache and credential invalidation', async
 
 test('confirmed static rejection skips expensive wallet and candle reads', async () => {
   const client = new GmgnClient(); const commands = [];
-  client.run = async args => { commands.push(args[1]); return { data: { is_honeypot: 'yes' } }; };
+  client.tokenInfo = async () => { commands.push('info'); return { is_honeypot: 'yes' }; };
+  client.tokenSecurity = async () => { commands.push('security'); return { is_honeypot: 'yes' }; };
+  client.tokenPoolInfo = async () => { commands.push('pool'); return { is_honeypot: 'yes' }; };
+  client.tokenTopHolders = async () => { commands.push('holders'); return { list: [] }; };
+  client.tokenTopTraders = async () => { commands.push('traders'); return { list: [] }; };
+  client.tokenKline = async () => { commands.push('kline'); return { list: [] }; };
   const audit = await client.audit(address, 1800000000, 'bsc', { shouldStopEarly: partial => partial.security.is_honeypot === 'yes' });
   assert.deepEqual(commands, ['info','security','pool']);
   assert.equal(audit._meta.earlyExit, true);
@@ -72,7 +83,7 @@ test('historical samples survive delisting; missing prices stay missing and retr
 test('priceAt selects timestamped closed candles, not current price or future bars', async () => {
   const client = new GmgnClient();
   const target = Date.now() - 86400000;
-  client.run = async () => ({ list: [{ time: target - 60000, close: '2' }, { time: Date.now()+60000, close:'99' }] });
+  client.tokenKline = async () => ({ list: [{ time: target - 60000, close: '2' }, { time: Date.now() + 60000, close: '99' }] });
   assert.deepEqual(await client.priceAt(address, target, 'bsc'), { at: target, price:2, source:'GMGN_1M_CLOSE' });
 });
 

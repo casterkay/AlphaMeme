@@ -6,8 +6,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { config } from '../src/config.mjs';
-import { LiveDiscovery, liveRequestArgs, normalizeLiveRows } from '../src/live-discovery.mjs';
-import { executeReadOnly } from '../src/gmgn-readonly-worker.mjs';
+import { LiveDiscovery, normalizeLiveRows } from '../src/live-discovery.mjs';
 import { Scanner } from '../src/scanner.mjs';
 import { RadarState } from '../src/state.mjs';
 import { createServer } from '../src/server.mjs';
@@ -19,14 +18,14 @@ const token = (id = 1, overrides = {}) => ({ address:'0x'+id.toString(16).padSta
   holder_count:100,smart_degen_count:3,rug_ratio:.1,bundler_rate:.1,rat_trader_amount_rate:.1,is_wash_trading:false,is_honeypot:0,...overrides });
 const options = gmgn => ({gmgn,now:()=>now,schedule:()=>({unref(){}}),cancel:()=>{}});
 
-test('live requests use a one-minute read with no deep-audit or trading calls', async () => {
+test('live requests use a one-minute rank read with no deep-audit or trading calls', async () => {
   let called;
-  const client={ getTrendingSwaps:async (...args)=>{called=args;return {rank:[]};} };
-  await executeReadOnly(client,liveRequestArgs('sol'));
+  const client={keyEpoch:0,configured:async()=>true,marketRank:async (...args)=>{called=args;return {rank:[]};}};
+  const live=new LiveDiscovery(options(client));
+  live.touch('sol'); await live.poll();
   assert.equal(called[0],'sol');assert.equal(called[1],'1m');
   assert.equal(called[2].min_created,'5m'); assert.equal(called[2].limit,100);
-  await assert.rejects(executeReadOnly(client,['market','trending','--chain','sol','--interval','0m']));
-  await assert.rejects(executeReadOnly(client,['swap','buy','--chain','sol']));
+  assert.equal(typeof client.swap, 'undefined');
 });
 
 test('quick discovery drops explicit hazards and newborns, preserves unknowns and case-sensitive Solana addresses', () => {
@@ -52,7 +51,7 @@ test('snapshot changes use actual elapsed time; first load is not a stream of fa
 
 test('visible-client leases share one in-flight request and one global cadence across chains', async () => {
   let clock=now,calls=0,finish;
-  const gmgn={keyEpoch:0,configured:async()=>true,run:async()=>{calls++;return new Promise(resolve=>{finish=resolve;});}};
+  const gmgn={keyEpoch:0,configured:async()=>true,marketRank:async()=>{calls++;return new Promise(resolve=>{finish=resolve;});}};
   const live=new LiveDiscovery({...options(gmgn),now:()=>clock});
   live.touch('bsc');const pending=live.poll();await new Promise(resolve=>setImmediate(resolve));
   live.touch('bsc');live.touch('sol');await live.poll();assert.equal(calls,1);
@@ -64,19 +63,19 @@ test('visible-client leases share one in-flight request and one global cadence a
 
 test('global rate-limit cooldown is honored; failed responses preserve old timestamps and stale flags', async () => {
   let clock=now,calls=0;
-  const gmgn={keyEpoch:0,nextAllowedAt:now+60000,configured:async()=>true,run:async()=>{calls++;return {rank:[token()]};}};
+  const gmgn={keyEpoch:0,nextAllowedAt:now+60000,configured:async()=>true,marketRank:async()=>{calls++;return {rank:[token()]};}};
   const live=new LiveDiscovery({...options(gmgn),now:()=>clock});
   live.touch('bsc');await live.poll();assert.equal(calls,0);assert.equal(live.snapshot('bsc').status,'RATE_LIMITED');
   clock+=61000;live.touch('bsc');await live.poll();assert.equal(calls,1);
   const success=live.snapshot('bsc').lastSuccessAt;
-  gmgn.run=async()=>{throw new Error('secret upstream failure');};clock+=65000;live.touch('bsc');await live.poll();
+  gmgn.marketRank=async()=>{throw new Error('secret upstream failure');};clock+=65000;live.touch('bsc');await live.poll();
   assert.equal(live.snapshot('bsc').lastSuccessAt,success);assert.equal(live.snapshot('bsc').stale,true);
   assert.doesNotMatch(JSON.stringify(live.snapshot('bsc')),/secret upstream/);
 });
 
 test('credential changes discard in-flight data; unconfigured feed never requests upstream', async () => {
   let finish,calls=0;
-  const gmgn={keyEpoch:0,configured:async()=>false,run:async()=>{calls++;return new Promise(resolve=>{finish=resolve;});}};
+  const gmgn={keyEpoch:0,configured:async()=>false,marketRank:async()=>{calls++;return new Promise(resolve=>{finish=resolve;});}};
   const live=new LiveDiscovery(options(gmgn));live.touch('bsc');await live.poll();assert.equal(calls,0);
   gmgn.configured=async()=>true;live.nextPollAt=0;
   const pending=live.poll();await new Promise(resolve=>setImmediate(resolve));
@@ -85,11 +84,11 @@ test('credential changes discard in-flight data; unconfigured feed never request
 });
 
 test('malformed successful payloads are errors, not fake empty live updates; audit input has no mislabeled 1m counters', async () => {
-  const gmgn={keyEpoch:0,configured:async()=>true,run:async()=>({rank:[token()]})};
+  const gmgn={keyEpoch:0,configured:async()=>true,marketRank:async()=>({rank:[token()]})};
   const live=new LiveDiscovery(options(gmgn));live.touch('bsc');await live.poll();
   const audit=live.auditRow('bsc',token().address);
   assert.equal(audit.volume,undefined);assert.equal(audit.buys,undefined);assert.equal(audit.swaps,undefined);
-  live.nextPollAt=0;gmgn.run=async()=>({unexpected:true});await live.poll();
+  live.nextPollAt=0;gmgn.marketRank=async()=>({unexpected:true});await live.poll();
   assert.equal(live.snapshot('bsc').status,'ERROR');assert.equal(live.snapshot('bsc').pollCount,1);
 });
 

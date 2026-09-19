@@ -97,6 +97,10 @@ export class GmgnKeyStore {
     }
   }
 
+  hasPending() {
+    return Boolean(this.readSigningKey(this.pendingSigningFile));
+  }
+
   activatePending() {
     const pending = this.readSigningKey(this.pendingSigningFile);
     if (!pending) return false;

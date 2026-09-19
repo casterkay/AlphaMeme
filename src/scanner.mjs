@@ -2,7 +2,7 @@ import { config } from './config.mjs';
 import { CHART_RISK_VERSION, applyRiskExclusion } from './scoring/chart-risk.mjs';
 import { discoveryScreen, deepScreen, marketCap, createdAt } from './scoring/index.mjs';
 import { socialGate } from './social.mjs';
-import { tokenInfoPrice } from './gmgn.mjs';
+import { tokenInfoPrice } from './providers/gmgn.mjs';
 import { collectOutcomeSamples, dueOutcomeJobs, outcomeCoverage, sampleRejected } from './scoring/outcomes.mjs';
 import { tokenKey } from './storage/controls.mjs';
 import { sha256Hex } from './util/crypto.mjs';

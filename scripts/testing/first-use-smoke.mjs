@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { config } from '../../src/config.mjs';
 import { GmgnKeyStore } from '../../src/gmgn-key-store.mjs';
 import { GmgnConnection } from '../../src/gmgn-connection.mjs';
-import { GmgnClient } from '../../src/gmgn.mjs';
+import { GmgnClient } from '../../src/providers/gmgn.mjs';
 import { RadarState } from '../../src/state.mjs';
 import { Scanner } from '../../src/scanner.mjs';
 import { createServer } from '../../src/server.mjs';
@@ -17,14 +17,12 @@ const valid = `gmgn_${'a'.repeat(32)}`;
 const invalid = `gmgn_${'b'.repeat(32)}`;
 const keyStore = new GmgnKeyStore(temporary);
 const state = new RadarState(temporary);
-const gmgn = new GmgnClient({ apiKeyProvider: () => keyStore.get(), legacyKeyProvider: () => '',
-  privateKeyProvider: () => keyStore.verificationPrivateKey() });
-gmgn.run = async (_args, options = {}) => {
-  const key = options.apiKey || gmgn.apiKey();
-  if (key !== valid) throw Object.assign(new Error('synthetic rejected key'), { code: 'GMGN_AUTH_FAILED' });
-  gmgn.lastVerifiedKey = key;
-  return [];
-};
+const gmgn = new GmgnClient({ apiKeyProvider: () => keyStore.get(), legacyKeyProvider: () => '', minRequestGapMs: 0,
+  fetch: async (_url, options) => {
+    const key = options.headers['X-APIKEY'];
+    if (key !== valid) return new Response(JSON.stringify({ code: 401, error: 'AUTH_KEY_INVALID' }), { status: 401 });
+    return new Response(JSON.stringify({ code: 0, data: { completed: [], rank: [], list: [] } }));
+  } });
 const scanner = new Scanner({ gmgn, state });
 const connection = new GmgnConnection({ gmgn, keyStore, scanner });
 const settings = { ...config, port: 0 };
