@@ -120,7 +120,7 @@ async function readLimitedText(response, maxBytes) {
   }
 
   const text = await response.text();
-  if (Buffer.byteLength(text, 'utf8') > maxBytes) {
+  if (new TextEncoder().encode(text).byteLength > maxBytes) {
     const error = new Error('response too large');
     error.code = 'RESPONSE_TOO_LARGE';
     throw error;
