@@ -1,0 +1,29 @@
+README.md
+  s_c2a1e43fa75e7b::t_bf3424227fed3d 120
+THIRD_PARTY_NOTICES.md
+  s_c2a1e43fa75e7b::t_bf3424227fed3d 3,7
+package-lock.json
+  s_c2a1e43fa75e7b::t_45823beaefc2a4 12,40-42
+package.json
+  s_c2a1e43fa75e7b::t_6cd8851a4bf039 30
+scripts/testing/clean-install.mjs
+  s_c2a1e43fa75e7b::t_bf3424227fed3d 26,28
+pnpm-lock.yaml
+  s_c2a1e43fa75e7b::t_835889b4a258b0 12-13,25-26,52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8e707b4a33eb5f75dee382b87a43560407da12a9",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": null
+    }
+  }
+}
