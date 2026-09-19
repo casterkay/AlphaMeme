@@ -1,0 +1,16 @@
+docs/CLOUDFLARE-TELEGRAM-REFACTOR.md
+  h_0528fe13c98664 20
+AGENTS.md
+  h_0528fe13c98664 1-233
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4cceb860d997cd376330a1d79bc8e7eb3851fdbf",
+  "prompts": {},
+  "humans": {
+    "h_0528fe13c98664": {
+      "author": "casterkay <poetrycoder>"
+    }
+  }
+}
