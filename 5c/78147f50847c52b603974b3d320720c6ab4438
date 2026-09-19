@@ -1,0 +1,52 @@
+test/live-discovery.test.mjs
+  s_c2a1e43fa75e7b::t_5cb36123a86bb0 9,21,23-25,28,54,66,71,78,87,91
+src/live-discovery.mjs
+  s_c2a1e43fa75e7b::t_5fc6a09b7a39f3 1,98-102
+test/gmgn-onboarding.test.mjs
+  s_c2a1e43fa75e7b::t_43ca305c8e84fc 83-91
+  s_c2a1e43fa75e7b::t_33be563f2afb9c 6,27,33,35-43,46,48-54,56-60,63-69,72,74-75,77-80,145-146
+  s_c2a1e43fa75e7b::t_9442f10dda1d53 129
+  s_c2a1e43fa75e7b::t_702217a39fa0f4 105-106
+  s_c2a1e43fa75e7b::t_186ddb0ca95533 81-82
+src/main.mjs
+  s_c2a1e43fa75e7b::t_2f7314fc6bc199 16
+  s_c2a1e43fa75e7b::t_1135f98abd0e44 3
+test/improvements.test.mjs
+  s_c2a1e43fa75e7b::t_57530c0b74162d 86
+  s_c2a1e43fa75e7b::t_a6f030a0246024 10,27,29-39,42-43,45,54-59
+src/providers/gmgn.mjs
+  s_c2a1e43fa75e7b::t_9d844b718f1a6f 308,311
+  s_c2a1e43fa75e7b::t_57530c0b74162d 407
+  s_c2a1e43fa75e7b::t_4972862afc6c75 2-17,42,62-66,70-77,79-80,82-90,92-93,95-96,98-99,101-102,104,107,110-211,213-232,236-237,239,243-245,261,264-265,268-272,275-277,280-283,285-287,290-292,295-297,300-303,305,309-310,312-320,325-330,334-337,339-343,351,355,360-361,366-373,380-385,387-388,397-399,402-406,408-489
+scripts/testing/first-use-smoke.mjs
+  s_c2a1e43fa75e7b::t_1135f98abd0e44 10,21-25
+  s_c2a1e43fa75e7b::t_c2d92aa7e6b735 20
+src/gmgn-connection.mjs
+  s_c2a1e43fa75e7b::t_2f7314fc6bc199 29
+  s_c2a1e43fa75e7b::t_9442f10dda1d53 30-32
+src/gmgn-key-store.mjs
+  s_c2a1e43fa75e7b::t_9442f10dda1d53 100-103
+test/gmgn.test.mjs
+  s_c2a1e43fa75e7b::t_0935611bdd0bde 3-19,26-38,40,42-53,55-60,62-70,72-75,77-80,83-98,102-110,130-165
+  s_c2a1e43fa75e7b::t_5d56f425cfbc85 111-128
+  s_c2a1e43fa75e7b::t_7e0ce4562b8c47 71,76
+  s_c2a1e43fa75e7b::t_e0dcc25fd0d8aa 39,61
+src/scanner.mjs
+  s_c2a1e43fa75e7b::t_1135f98abd0e44 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5c78147f50847c52b603974b3d320720c6ab4438",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
