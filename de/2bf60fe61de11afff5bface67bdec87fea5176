@@ -1,0 +1,41 @@
+src/render/whitelist.mjs
+  s_c2a1e43fa75e7b::t_804aab14370a09 1-423
+src/providers/secondary.mjs
+  s_c2a1e43fa75e7b::t_93f0bf97acccb8 1-481
+test/whitelist.test.mjs
+  s_c2a1e43fa75e7b::t_34cdd4616c932f 1-54
+src/main.mjs
+  s_c2a1e43fa75e7b::t_93f0bf97acccb8 8
+test/secondary.test.mjs
+  s_c2a1e43fa75e7b::t_34cdd4616c932f 3
+src/server.mjs
+  s_c2a1e43fa75e7b::t_8fed87f7a0a369 6
+  s_c2a1e43fa75e7b::t_fd355e923a0fd6 7
+  s_c2a1e43fa75e7b::t_93f0bf97acccb8 9-11,160,181-182,186,191-197,428
+  s_c2a1e43fa75e7b::t_29abb71a7ebe38 25-28,30
+  s_f145007518b157::t_356ed078049020 33-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "de2bf60fe61de11afff5bface67bdec87fea5176",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_f145007518b157": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b940-2ff1-7111-98e8-c4acca35a2b2",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
