@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { atomicJson, readJsonWithBackup } from './local-store.mjs';
+import { atomicJson, readJsonWithBackup } from './storage/store.mjs';
 
 function cleanCandidate(candidate) {
   if (!candidate || typeof candidate !== 'object') return candidate;

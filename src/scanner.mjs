@@ -4,7 +4,7 @@ import { discoveryScreen, deepScreen, marketCap, createdAt } from './scoring/ind
 import { socialGate } from './social.mjs';
 import { tokenInfoPrice } from './gmgn.mjs';
 import { collectOutcomeSamples, dueOutcomeJobs, outcomeCoverage, sampleRejected } from './scoring/outcomes.mjs';
-import { tokenKey } from './local-store.mjs';
+import { tokenKey } from './storage/controls.mjs';
 import { sha256Hex } from './util/crypto.mjs';
 
 const numberOrNull = value => {

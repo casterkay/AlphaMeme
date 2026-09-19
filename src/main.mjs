@@ -7,7 +7,7 @@ import { RadarState } from './state.mjs';
 import { Scanner } from './scanner.mjs';
 import { SecondaryValidator } from './providers/secondary.mjs';
 import { createServer, toPublicStatus } from './server.mjs';
-import { RadarControls } from './local-store.mjs';
+import { RadarControls } from './storage/controls.mjs';
 import { LiveDiscovery } from './live-discovery.mjs';
 import { configureWindowsSystemProxy } from './windows-proxy.mjs';
 
