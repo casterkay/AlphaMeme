@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { config } from './config.mjs';
-import { GmgnClient } from './gmgn.mjs';
+import { GmgnClient } from './providers/gmgn.mjs';
 import { GmgnKeyStore } from './gmgn-key-store.mjs';
 import { GmgnConnection } from './gmgn-connection.mjs';
 import { RadarState } from './state.mjs';
@@ -13,7 +13,7 @@ import { configureWindowsSystemProxy } from './windows-proxy.mjs';
 
 // Browsers use the Windows system proxy automatically, while Node normally
 // only sees proxy environment variables. Mirror the effective Windows proxy
-// before any GMGN worker is launched so the portable build follows the same
+// before any GMGN request is sent so the portable build follows the same
 // network route as the user's browser.
 const proxy = configureWindowsSystemProxy();
 if (process.platform === 'win32') {
@@ -27,7 +27,6 @@ const keyStore = new GmgnKeyStore(config.stateDir);
 // user's shell or a pre-existing global GMGN CLI configuration.
 const gmgn = new GmgnClient({
   apiKeyProvider: () => keyStore.get(),
-  privateKeyProvider: () => keyStore.verificationPrivateKey(),
   legacyKeyProvider: () => ''
 });
 if (keyStore.disconnected()) gmgn.resetCredentials({ disabled: true });

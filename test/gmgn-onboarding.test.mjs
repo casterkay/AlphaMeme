@@ -3,17 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { GmgnClient, gmgnChildEnvironment, discoveryRequestArgs } from '../src/gmgn.mjs';
-import { executeReadOnly } from '../src/gmgn-readonly-worker.mjs';
+import { GmgnClient } from '../src/providers/gmgn.mjs';
 import { GmgnConnection } from '../src/gmgn-connection.mjs';
 import { GmgnKeyStore, legacyGmgnApiKey } from '../src/gmgn-key-store.mjs';
 import { supportedNode } from '../scripts/setup.mjs';
 
-const exec = promisify(execFile);
-const root = fileURLToPath(new URL('../', import.meta.url));
 const fakeKey = letter => `gmgn_${letter.repeat(32)}`;
 
 test('UI key overrides both legacy configuration and environment, with no mutation of either', async () => {
@@ -30,61 +24,71 @@ test('UI key overrides both legacy configuration and environment, with no mutati
     assert.equal(client.apiKey(), fakeKey('b'));
     store.save(fakeKey('c'));
     assert.equal(client.apiKey(), fakeKey('c'));
-    assert.equal(client.childEnvironment().GMGN_PRIVATE_KEY, undefined);
+    assert.equal(typeof client.privateKey, 'undefined');
     assert.equal(fs.readFileSync(file, 'utf8'), old);
     assert.equal(source.GMGN_API_KEY, fakeKey('b'));
   } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 });
 
-test('production GMGN worker ignores project/global dotenv and sends exactly the submitted key', async () => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-worker-'));
+test('direct provider sends only the submitted key in exist-auth and never a command environment', async () => {
   const key = fakeKey('c');
-  try {
-    fs.writeFileSync(path.join(temporary, '.env'), `GMGN_API_KEY=${fakeKey('a')}\nGMGN_DEBUG=1\nGMGN_PRIVATE_KEY=old-private\n`);
-    const args = ['--import', path.join(root, 'scripts/testing/gmgn-fixture.mjs'), path.join(root, 'src/gmgn-readonly-worker.mjs'),
-      'market', 'trending', '--chain', 'bsc', '--interval', '5m', '--limit', '1', '--raw'];
-    const env = { ...gmgnChildEnvironment({}, key), RADAR_TEST_EXPECTED_KEY: key };
-    const result = await exec(process.execPath, args, { cwd: temporary, env });
-    assert.deepEqual(JSON.parse(result.stdout).rank[0], { keyMatches: true, noPrivateKey: true, noDebug: true, path: '/v1/market/rank' });
-    assert.equal(result.stderr, '');
-    await assert.rejects(exec(process.execPath, args, { cwd: temporary, env: { ...env, RADAR_TEST_REJECT: '1' } }), error => {
-      assert.equal(JSON.parse(error.stderr).code, 'GMGN_AUTH_FAILED');
-      assert.equal(error.stderr.includes(key), false);
-      assert.equal(error.stdout.includes(key), false);
-      return true;
-    });
-  } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+  const requests = [];
+  const client = new GmgnClient({ apiKeyProvider: () => key, legacyKeyProvider: () => '', minRequestGapMs: 0,
+    randomUUID: () => '11111111-1111-4111-8111-111111111111',
+    fetch: async (url, init) => { requests.push({ url: new URL(url), init }); return new Response(JSON.stringify({ code: 0, data: { rank: [] } })); } });
+  await client.marketRank('bsc', '5m', { limit: 1 });
+  assert.equal(requests[0].init.headers['X-APIKEY'], key);
+  assert.equal(requests[0].init.headers['X-Signature'], undefined);
+  assert.doesNotMatch(requests[0].url.toString(), new RegExp(key));
+  assert.equal(typeof client.childEnvironment, 'undefined');
 });
 
-test('adapter preserves discovery filters and candle milliseconds while forbidding trading', async () => {
+test('provider preserves discovery filters and candle milliseconds while forbidding trading', async () => {
   const calls = [];
-  const client = new Proxy({}, { get: (_, method) => async (...args) => { calls.push({ method, args }); return {}; } });
-  const spec = discoveryRequestArgs('bsc');
-  await executeReadOnly(client, spec.trenches);
-  await executeReadOnly(client, spec.trending);
-  const address = '0x' + '1'.repeat(40);
-  await executeReadOnly(client, ['market', 'kline', '--chain', 'bsc', '--address', address, '--resolution', '1m', '--from', '100', '--to', '200', '--raw']);
-  await executeReadOnly(client, ['auth', 'verify-read', '--raw']);
-  assert.deepEqual(calls[0], { method: 'getTrenches', args: ['bsc', ['completed'], undefined, 80, {
+  const client = new GmgnClient({ apiKeyProvider: () => fakeKey('d'), legacyKeyProvider: () => '', minRequestGapMs: 0,
+    fetch: async (url, init) => { calls.push({ url: new URL(url), init }); return new Response(JSON.stringify({ code: 0, data: { completed: [], rank: [], list: [] } })); } });
+  await client.trenches('bsc', { types: ['completed'], limit: 80, filters: {
     max_rug_ratio: .3, max_bundler_rate: .3, max_insider_ratio: .3,
     min_created: '5m', max_created: '10080m', min_marketcap: 10000, max_marketcap: 150000, min_liquidity: 3000
-  }] });
-  assert.equal(calls[1].method, 'getTrendingSwaps');
-  assert.deepEqual(calls[2].args, ['bsc', address, '1m', 100000, 200000]);
-  assert.deepEqual(calls[3], { method: 'getUserInfo', args: [] });
-  await assert.rejects(executeReadOnly(client, ['swap', 'buy', '--chain', 'bsc']));
-  await assert.rejects(executeReadOnly(client, ['token', 'info', '--chain', 'bsc', '--address', address, '--host', 'https://invalid.example']));
-  assert.equal(calls.length, 4);
+  } });
+  await client.marketRank('bsc', '5m', { limit: 100, order_by: 'volume', direction: 'desc', min_created: '5m', max_created: '10080m' });
+  const address = '0x' + '1'.repeat(40);
+  await client.tokenKline('bsc', address, '1m', 100000, 200000);
+  await client.verifyApiKey(fakeKey('d'));
+  assert.deepEqual(JSON.parse(calls[0].init.body), { version: 'v2', completed: {
+    filters: ['offchain', 'onchain'], launchpad_platform_v2: true, limit: 80,
+    quote_address_type: [6, 7, 1, 16, 8, 3, 9, 10, 2, 17, 18, 0],
+    max_rug_ratio: .3, max_bundler_rate: .3, max_insider_ratio: .3,
+    min_created: '5m', max_created: '10080m', min_marketcap: 10000, max_marketcap: 150000, min_liquidity: 3000
+  } });
+  assert.equal(calls[1].url.pathname, '/v1/market/rank');
+  assert.equal(calls[2].url.searchParams.get('from'), '100000');
+  assert.equal(calls[2].url.searchParams.get('to'), '200000');
+  assert.equal(calls[3].url.pathname, '/v1/market/rank');
+  assert.equal(typeof client.swap, 'undefined');
+  assert.equal(typeof client.followWallet, 'undefined');
 });
 
-test('API connection verifies read access without consuming signed follow-wallet quota', async () => {
-  const gmgn = new GmgnClient({ privateKeyProvider: () => 'pending-local-key', legacyKeyProvider: () => '' });
+test('API connection verifies read access through a lightweight rank read without a signing surface', async () => {
   let captured;
-  gmgn.run = async (args, options) => { captured = { args, options }; return { verified: true }; };
+  const gmgn = new GmgnClient({ legacyKeyProvider: () => '', minRequestGapMs: 0,
+    fetch: async (url, init) => { captured = { url: new URL(url), init }; return new Response(JSON.stringify({ code: 0, data: { rank: [] } })); } });
   assert.deepEqual(await gmgn.verifyApiKey(fakeKey('v')), { verified: true });
-  assert.deepEqual(captured.args, ['auth', 'verify-read', '--raw']);
-  assert.equal(captured.options.apiKey, fakeKey('v'));
-  assert.equal(captured.options.privateKey, undefined);
+  assert.equal(captured.url.pathname, '/v1/market/rank');
+  assert.equal(captured.url.searchParams.get('limit'), '1');
+  assert.equal(captured.init.headers['X-APIKEY'], fakeKey('v'));
+  assert.equal(captured.init.headers['X-Signature'], undefined);
+});
+
+test('connection rejects a key without pending onboarding before making a provider request', async () => {
+  let verified = 0;
+  const connection = new GmgnConnection({
+    gmgn: { verifyApiKey: async () => { verified++; return { verified: true }; } },
+    keyStore: { hasPending: () => false, activatePending: () => true, save() {} },
+    scanner: { requestCycle() {} }
+  });
+  await assert.rejects(connection.apply(fakeKey('z')), { code: 'GMGN_ONBOARDING_REQUIRED' });
+  assert.equal(verified, 0);
 });
 
 test('first launch stays unconfigured; failed validation preserves key and successful validation requests a scan', async () => {
@@ -98,6 +102,8 @@ test('first launch stays unconfigured; failed validation preserves key and succe
     assert.deepEqual(connection.snapshot(), { configured: false, status: 'UNCONFIGURED' });
     assert.equal(await gmgn.configured(), false);
     gmgn.verifyApiKey = async () => { throw Object.assign(new Error('bad'), { code: 'GMGN_AUTH_FAILED' }); };
+    await assert.rejects(connection.apply(fakeKey('a')), { code: 'GMGN_ONBOARDING_REQUIRED' });
+    keyStore.onboarding();
     await assert.rejects(connection.apply(fakeKey('a')), { code: 'GMGN_AUTH_FAILED' });
     assert.equal(keyStore.get(), '');
     keyStore.save(fakeKey('b'));
@@ -108,7 +114,6 @@ test('first launch stays unconfigured; failed validation preserves key and succe
       gmgn.lastVerifiedKey = key;
       return { verified: true };
     };
-    keyStore.onboarding();
     await connection.apply(fakeKey('c'));
     assert.equal(keyStore.get(), fakeKey('c'));
     assert.equal(scans, 1);
@@ -121,7 +126,7 @@ test('concurrent key submissions cannot overwrite a key under validation', async
   let saved = '';
   const connection = new GmgnConnection({
     gmgn: { verifyApiKey: () => new Promise(resolve => { finish = resolve; }) },
-    keyStore: { activatePending: () => true, save: key => { saved = key; } }, scanner: { activeChain: 'bsc', requestCycle() {} }
+    keyStore: { hasPending: () => true, activatePending: () => true, save: key => { saved = key; } }, scanner: { activeChain: 'bsc', requestCycle() {} }
   });
   const first = connection.apply(fakeKey('a'));
   await assert.rejects(connection.apply(fakeKey('b')), { code: 'GMGN_CHECK_BUSY' });
@@ -137,7 +142,8 @@ test('runtime check rejects Node versions without the proxy flag used by the sca
 
 test('an authenticated empty discovery is an empty scan, not a connection failure', async () => {
   const gmgn = new GmgnClient({ legacyKeyProvider: () => '' });
-  gmgn.run = async () => [];
+  gmgn.trenches = async () => ({ completed: [] });
+  gmgn.marketRank = async () => ({ rank: [] });
   assert.deepEqual(await gmgn.discover('sol'), []);
   assert.equal(gmgn.lastDiscoveryHealth.complete, true);
 });

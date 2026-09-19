@@ -26,8 +26,10 @@ export class GmgnConnection {
     const generation = this.generation;
     try {
       // The mandatory Agent/public-key pairing already happened on GMGN's key
-      // creation page. Verify only the read permission used by this scanner;
-      // never consume the stricter signed follow-wallet /trade route here.
+      // creation page. Verify only the read permission used by this scanner.
+      if (!this.keyStore.hasPending()) {
+        throw Object.assign(new Error('GMGN onboarding is required'), { code: 'GMGN_ONBOARDING_REQUIRED' });
+      }
       const result = await this.gmgn.verifyApiKey(apiKey);
       if (result?.verified !== true) throw Object.assign(new Error('Verification did not complete'), { code: 'GMGN_REQUEST_FAILED' });
       if (generation !== this.generation) throw Object.assign(new Error('Connection cancelled'), { code: 'GMGN_CHECK_CANCELLED' });
