@@ -27,6 +27,6 @@
     "test": "node --test"
   },
   "dependencies": {
-    "gmgn-cli": "1.5.7"
+    "gmgn-cli": "1.6.4"
   }
 }
