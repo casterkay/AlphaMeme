@@ -1,0 +1,27 @@
+test/scoring.test.mjs
+  s_c2a1e43fa75e7b::t_839255799f627c 6
+test/risk-filters.test.mjs
+  s_c2a1e43fa75e7b::t_839255799f627c 6,8
+src/live-discovery.mjs
+  s_c2a1e43fa75e7b::t_6dd29cf099899c 2
+src/scanner.mjs
+  s_c2a1e43fa75e7b::t_6dd29cf099899c 2,4
+src/server.mjs
+  s_c2a1e43fa75e7b::t_6dd29cf099899c 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "1a7b8e4e05a15f96dcc4d7faf76ff85e202ddc78",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
