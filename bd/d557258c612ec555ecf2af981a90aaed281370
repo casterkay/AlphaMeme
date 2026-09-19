@@ -1,0 +1,23 @@
+package.json
+  s_c2a1e43fa75e7b::t_6cd8851a4bf039 30
+package-lock.json
+  s_c2a1e43fa75e7b::t_45823beaefc2a4 12,40-42
+pnpm-lock.yaml
+  s_c2a1e43fa75e7b::t_835889b4a258b0 12-13,25-26,52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "bdd557258c612ec555ecf2af981a90aaed281370",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
