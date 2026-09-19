@@ -5,7 +5,7 @@ import path from 'node:path';
 import { normalizeGmgnApiKey } from './gmgn-key-store.mjs';
 import { secondaryChainSupport } from './secondary.mjs';
 import { tokenKey } from './local-store.mjs';
-import { CHART_RISK_VERSION, applyRiskExclusion } from './chart-risk.mjs';
+import { CHART_RISK_VERSION, applyRiskExclusion } from './scoring/chart-risk.mjs';
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const CHAIN_IDS = new Set(['sol', 'bsc', 'base', 'eth', 'robinhood', 'arc', 'stable']);

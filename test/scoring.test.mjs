@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { config } from '../src/config.mjs';
 import {
   discoveryScreen, analyzeWallets, observeFiveMinutes, deepScreen, empiricalSellability, marketBehaviorScreen
-} from '../src/scoring.mjs';
+} from '../src/scoring/index.mjs';
 
 const nowSec = 1_800_000_000;
 const address = '0x1111111111111111111111111111111111111111';

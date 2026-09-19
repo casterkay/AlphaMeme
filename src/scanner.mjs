@@ -1,7 +1,7 @@
 import { config } from './config.mjs';
-import { CHART_RISK_VERSION, applyRiskExclusion } from './chart-risk.mjs';
+import { CHART_RISK_VERSION, applyRiskExclusion } from './scoring/chart-risk.mjs';
 import crypto from 'node:crypto';
-import { discoveryScreen, deepScreen, marketCap, createdAt } from './scoring.mjs';
+import { discoveryScreen, deepScreen, marketCap, createdAt } from './scoring/index.mjs';
 import { socialGate } from './social.mjs';
 import { tokenInfoPrice } from './gmgn.mjs';
 import { collectOutcomeSamples, dueOutcomeJobs, outcomeCoverage, sampleRejected } from './outcomes.mjs';

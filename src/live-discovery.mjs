@@ -1,5 +1,5 @@
 import { normalizeList } from './gmgn.mjs';
-import { discoveryScreen, knownRiskReasons } from './scoring.mjs';
+import { discoveryScreen, knownRiskReasons } from './scoring/index.mjs';
 import { config } from './config.mjs';
 
 const number = value => value === null || value === undefined || value === '' || typeof value === 'boolean'
