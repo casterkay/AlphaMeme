@@ -1,0 +1,26 @@
+src/scanner.mjs
+  s_c2a1e43fa75e7b::t_0461778bfad775 6,8,68,70,77,620,651
+test/improvements.test.mjs
+  s_c2a1e43fa75e7b::t_3dfb7a4e92e03d 12,77-80,82-84,86,96,102-107,152,162-168
+  s_c2a1e43fa75e7b::t_e57038503f07d5 11,81,88-94
+src/scoring/outcomes.mjs
+  s_c2a1e43fa75e7b::t_0461778bfad775 1,5,9
+src/util/crypto.mjs
+  s_c2a1e43fa75e7b::t_0461778bfad775 1-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "73221172a47e19f8d0f5ef7a9d0db1c047a85674",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
