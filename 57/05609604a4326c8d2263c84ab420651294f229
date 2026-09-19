@@ -1,0 +1,31 @@
+src/providers/gmgn.mjs
+  s_c2a1e43fa75e7b::t_093dfe08ef1bab 182-183,188-192,195,198,228,230,232,237-243,245,363-365
+test/gmgn.test.mjs
+  s_c2a1e43fa75e7b::t_0c3b479e6d7804 193-204
+  s_c2a1e43fa75e7b::t_f1ec1f5ed41f43 102-110,158-171,182-191
+  s_19a9090ccac945::t_1e2f782dc4f5dd 192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5705609604a4326c8d2263c84ab420651294f229",
+  "prompts": {},
+  "sessions": {
+    "s_19a9090ccac945": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0b48f-64a4-7310-9ed3-8a8e7ad47b56",
+        "model": "deepseek-v4-pro"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
