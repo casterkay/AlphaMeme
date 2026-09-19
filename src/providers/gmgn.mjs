@@ -179,17 +179,23 @@ async function boundedResponseText(response, maximumBytes) {
 }
 
 function parseEnvelope(response, body) {
+  const status = Number(response?.status);
+  const headerResetAtUnix = validUnixSeconds(response.headers?.get?.('x-ratelimit-reset'));
   let envelope;
   try {
     envelope = JSON.parse(body);
   } catch {
+    if (status < 200 || status >= 300) {
+      throw errorWith('GMGN_HTTP_ERROR', 'GMGN returned an HTTP error', {
+        status, headerResetAtUnix, resetAtUnix: headerResetAtUnix
+      });
+    }
     throw errorWith('GMGN_INVALID_RESPONSE', 'Response was not JSON', { status: response.status });
   }
-  if (!envelope || typeof envelope !== 'object' || envelope.code !== 0) {
-    const headerResetAtUnix = validUnixSeconds(response.headers?.get?.('x-ratelimit-reset'));
+  if (status < 200 || status >= 300 || !envelope || typeof envelope !== 'object' || envelope.code !== 0) {
     const bodyResetAtUnix = validUnixSeconds(envelope?.reset_at);
     throw errorWith('GMGN_API_ERROR', 'GMGN envelope reported an error', {
-      status: response.status,
+      status,
       apiCode: envelope?.code,
       apiError: envelope?.error,
       apiMessage: envelope?.message,
@@ -219,16 +225,24 @@ function buildTrenchesBody(chain, types, limit, filters) {
 function compactTrenches(value, chain, types, limit) {
   if (!value || typeof value !== 'object') return value;
   const compacted = { ...value };
+  const coverage = { selectedCategories: [...types], localLimit: limit, categories: {} };
   for (const type of types) {
-    if (!Array.isArray(value[type])) continue;
+    const rows = Array.isArray(value[type]) ? value[type] : [];
     const unique = new Map();
-    for (const row of [...value[type]].sort((left, right) => Number(right?.volume_1h || 0) - Number(left?.volume_1h || 0))) {
+    for (const row of [...rows].sort((left, right) => Number(right?.volume_1h || 0) - Number(left?.volume_1h || 0))) {
       if (!row?.address) continue;
       const key = chain === 'sol' ? String(row.address) : String(row.address).toLowerCase();
       if (!unique.has(key)) unique.set(key, row);
     }
-    compacted[type] = [...unique.values()].slice(0, limit);
+    const retained = [...unique.values()].slice(0, limit);
+    coverage.categories[type] = {
+      returnedCount: rows.length, dedupedCount: unique.size, retainedCount: retained.length,
+      providerExceededLimit: rows.length > limit, locallyCapped: unique.size > limit,
+      locallyDeduplicated: rows.length !== unique.size
+    };
+    if (Array.isArray(value[type])) compacted[type] = retained;
   }
+  compacted._coverage = coverage;
   return compacted;
 }
 
@@ -346,7 +360,9 @@ export class GmgnClient {
     const trendingRows = trending.status === 'fulfilled' ? normalizeList(trending.value, ['rank']) : [];
     this.lastDiscoveryHealth = {
       complete: trenches.status === 'fulfilled' && trending.status === 'fulfilled',
-      trenches: trenches.status === 'fulfilled' ? { ok: true, count: trenchRows.length } : errorSummary(trenches.reason),
+      trenches: trenches.status === 'fulfilled'
+        ? { ok: true, count: trenchRows.length, coverage: trenches.value?._coverage }
+        : errorSummary(trenches.reason),
       trending: trending.status === 'fulfilled' ? { ok: true, count: trendingRows.length } : errorSummary(trending.reason),
       checkedAt: this.now()
     };
