@@ -31,6 +31,11 @@ function cursor(rows) {
   };
 }
 
+function tableSql(definition) {
+  const columns = definition.columns.map(column => `  ${column.name} ${column.type}`);
+  return `CREATE TABLE ${definition.name} (\n${[...columns, `  PRIMARY KEY (${definition.primaryKey.join(', ')})`, ...definition.constraints.map(constraint => `  ${constraint}`)].join(',\n')}\n)`;
+}
+
 class FakeSqlStorage {
   constructor(schemaTables) {
     this.schemaTables = new Map(schemaTables.map(table => [table.name, table]));
@@ -38,6 +43,7 @@ class FakeSqlStorage {
     this.preferences = new Map();
     this.schedulerState = new Map();
     this.registrySchema = new Map();
+    this.explicitIndexes = new Map();
   }
 
   snapshot() {
@@ -45,7 +51,8 @@ class FakeSqlStorage {
       tables: [...this.tables.entries()],
       preferences: [...this.preferences.entries()],
       schedulerState: [...this.schedulerState.entries()],
-      registrySchema: [...this.registrySchema.entries()]
+      registrySchema: [...this.registrySchema.entries()],
+      explicitIndexes: [...this.explicitIndexes.entries()]
     });
   }
 
@@ -54,10 +61,21 @@ class FakeSqlStorage {
     this.preferences = new Map(snapshot.preferences);
     this.schedulerState = new Map(snapshot.schedulerState);
     this.registrySchema = new Map(snapshot.registrySchema);
+    this.explicitIndexes = new Map(snapshot.explicitIndexes);
   }
 
   exec(query, ...bindings) {
     const statement = query.trim().replace(/\s+/g, ' ');
+
+    if (statement.startsWith("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")) {
+      const table = this.tables.get(bindings[0]);
+      return cursor(table === undefined ? [] : [{ sql: table.sql ?? tableSql(table) }]);
+    }
+
+    if (statement.startsWith("SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL")) {
+      return cursor([...this.explicitIndexes.keys()].sort().map(name => ({ name })));
+    }
+
     if (statement.startsWith("SELECT name FROM sqlite_master")) {
       const names = [...this.tables.keys()].filter(name => !statement.includes('name NOT IN') || !['__cf_kv', '__miniflare_do_name'].includes(name));
       return cursor(names.sort().map(name => ({ name })));
@@ -68,7 +86,7 @@ class FakeSqlStorage {
       const table = this.schemaTables.get(create[1]);
       if (!table) throw new Error(`unexpected table ${create[1]}`);
       if (this.tables.has(table.name)) throw new Error(`table already exists: ${table.name}`);
-      this.tables.set(table.name, table);
+      this.tables.set(table.name, { ...table, sql: tableSql(table) });
       return cursor([]);
     }
 
@@ -188,6 +206,31 @@ test('schema initialization fails loudly for unknown and corrupt recorded versio
   assert.throws(() => initializeRadarSchema(storage), error => error instanceof SchemaError && error.code === 'SCHEMA_VERSION_CORRUPT');
 });
 
+test('Radar schema rejects altered types, defaults, checks, uniqueness, and indexes', () => {
+  const alteredContracts = [
+    ['candidates', sql => sql.replace('market_cap REAL', 'market_cap TEXT')],
+    ['manual_marks', sql => sql.replace('mark_version INTEGER NOT NULL DEFAULT 0', 'mark_version INTEGER NOT NULL DEFAULT 1')],
+    ['manual_marks', sql => sql.replace("decision TEXT CHECK (decision IN ('passed', 'ignored'))", 'decision TEXT')],
+    ['outbox', sql => sql.replace(',\n  UNIQUE (tenant_id, event_id)', '')]
+  ];
+
+  for (const [tableName, alter] of alteredContracts) {
+    const storage = new FakeStorage();
+    initializeRadarSchema(storage);
+    const definition = storage.sql.tables.get(tableName);
+    storage.sql.tables.set(tableName, { ...definition, sql: alter(tableSql(definition)) });
+
+    assert.throws(() => initializeRadarSchema(storage), error =>
+      error instanceof SchemaError && error.code === 'SCHEMA_TABLE_CONTRACT_MISMATCH');
+  }
+
+  const indexed = new FakeStorage();
+  initializeRadarSchema(indexed);
+  indexed.sql.explicitIndexes.set('candidates_status', 'CREATE INDEX candidates_status ON candidates (status)');
+  assert.throws(() => initializeRadarSchema(indexed), error =>
+    error instanceof SchemaError && error.code === 'SCHEMA_INDEX_CONTRACT_MISMATCH');
+});
+
 test('GMGN admission state persists every cross-restart field and rejects corrupt JSON', () => {
   const storage = new FakeStorage();
   initializeRadarSchema(storage);
@@ -271,4 +314,27 @@ test('tenant registry refuses versionless, unknown, and corrupt schemas', () => 
   storage.sql.registrySchema.set(1, 'not-an-integer');
   assert.throws(() => initializeTenantRegistrySchema(storage), error =>
     error instanceof TenantRegistrySchemaError && error.code === 'TENANT_REGISTRY_SCHEMA_VERSION_CORRUPT');
+});
+
+test('tenant registry rejects altered type or check contracts and explicit indexes', () => {
+  const alteredContracts = [
+    ['tenant_registry_schema', sql => sql.replace('version INTEGER NOT NULL', 'version TEXT NOT NULL')],
+    ['tenant_registry_schema', sql => sql.replace(',\n  CHECK (singleton = 1)', '')]
+  ];
+
+  for (const [tableName, alter] of alteredContracts) {
+    const storage = new FakeStorage(TENANT_REGISTRY_TABLES);
+    initializeTenantRegistrySchema(storage);
+    const definition = storage.sql.tables.get(tableName);
+    storage.sql.tables.set(tableName, { ...definition, sql: alter(tableSql(definition)) });
+
+    assert.throws(() => initializeTenantRegistrySchema(storage), error =>
+      error instanceof TenantRegistrySchemaError && error.code === 'TENANT_REGISTRY_SCHEMA_TABLE_CONTRACT_MISMATCH');
+  }
+
+  const indexed = new FakeStorage(TENANT_REGISTRY_TABLES);
+  initializeTenantRegistrySchema(indexed);
+  indexed.sql.explicitIndexes.set('tenant_registry_registered_at', 'CREATE INDEX tenant_registry_registered_at ON tenant_registry (registered_at)');
+  assert.throws(() => initializeTenantRegistrySchema(indexed), error =>
+    error instanceof TenantRegistrySchemaError && error.code === 'TENANT_REGISTRY_SCHEMA_INDEX_CONTRACT_MISMATCH');
 });

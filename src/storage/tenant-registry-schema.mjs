@@ -49,14 +49,21 @@ function assertTableSet(actual) {
   }
 }
 
-function assertTableShape(sql, definition) {
-  const columns = sql.exec(`PRAGMA table_info(${definition.name})`).toArray();
-  const actualNames = columns.map(column => column.name);
-  const expectedNames = definition.columns.map(column => column.name);
-  const actualPrimaryKey = columns.filter(column => column.pk > 0).sort((left, right) => left.pk - right.pk).map(column => column.name);
-  if (actualNames.length !== expectedNames.length || actualNames.some((name, index) => name !== expectedNames[index])
-    || actualPrimaryKey.length !== definition.primaryKey.length || actualPrimaryKey.some((name, index) => name !== definition.primaryKey[index])) {
-    throw new TenantRegistrySchemaError('TENANT_REGISTRY_SCHEMA_TABLE_SHAPE_MISMATCH', `table ${definition.name} does not match the supported tenant registry schema`);
+function normalizeDdl(value) {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().toUpperCase() : '';
+}
+
+function assertTableContract(sql, definition) {
+  const rows = sql.exec("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", definition.name).toArray();
+  if (rows.length !== 1 || normalizeDdl(rows[0].sql) !== normalizeDdl(createTableSql(definition))) {
+    throw new TenantRegistrySchemaError('TENANT_REGISTRY_SCHEMA_TABLE_CONTRACT_MISMATCH', `table ${definition.name} does not match the supported tenant registry schema contract`);
+  }
+}
+
+function assertNoExplicitIndexes(sql) {
+  const indexes = sql.exec("SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL ORDER BY name").toArray();
+  if (indexes.length !== 0) {
+    throw new TenantRegistrySchemaError('TENANT_REGISTRY_SCHEMA_INDEX_CONTRACT_MISMATCH', 'tenant registry contains unsupported explicit indexes');
   }
 }
 
@@ -83,7 +90,8 @@ export function initializeTenantRegistrySchema(storage) {
   if (existingTables.length === 0) createFreshSchema(storage);
   else assertTableSet(existingTables);
 
-  for (const definition of TENANT_REGISTRY_TABLES) assertTableShape(storage.sql, definition);
+  for (const definition of TENANT_REGISTRY_TABLES) assertTableContract(storage.sql, definition);
+  assertNoExplicitIndexes(storage.sql);
   const version = readSchemaVersion(storage.sql);
   if (version !== TENANT_REGISTRY_SCHEMA_VERSION) {
     throw new TenantRegistrySchemaError('TENANT_REGISTRY_SCHEMA_VERSION_UNSUPPORTED', `unsupported tenant registry schema version ${version}`);
