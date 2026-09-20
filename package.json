@@ -25,8 +25,5 @@
     "release:audit": "node scripts/release-audit.mjs",
     "once": "node --use-env-proxy src/main.mjs --once",
     "test": "node --test"
-  },
-  "dependencies": {
-    "gmgn-cli": "1.5.7"
   }
 }

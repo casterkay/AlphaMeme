@@ -13,11 +13,7 @@ export function supportedNode(version) {
 
 export async function dependenciesReady(root = projectRoot) {
   try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-    const installed = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', 'gmgn-cli', 'package.json'), 'utf8'));
-    if (installed.version !== manifest.dependencies['gmgn-cli']) return false;
-    await import(pathToFileURL(path.join(root, 'node_modules/gmgn-cli/dist/client/OpenApiClient.js')).href);
-    await import(pathToFileURL(path.join(root, 'node_modules/gmgn-cli/dist/output.js')).href);
+    await import(pathToFileURL(path.join(root, 'src/providers/gmgn.mjs')).href);
     return true;
   } catch { return false; }
 }

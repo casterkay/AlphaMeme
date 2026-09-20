@@ -49,6 +49,19 @@ test('open-source release metadata uses AGPL and remains blocked from accidental
   assert.equal(fs.existsSync(path.join(root, 'LICENSE')), true);
 });
 
+test('distribution uses the native GMGN provider without the legacy CLI dependency', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const npmLock = fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8');
+  const pnpmLock = fs.readFileSync(path.join(root, 'pnpm-lock.yaml'), 'utf8');
+  const provider = fs.readFileSync(path.join(root, 'src/providers/gmgn.mjs'), 'utf8');
+
+  assert.equal(manifest.dependencies?.['gmgn-cli'], undefined);
+  assert.doesNotMatch(npmLock, /gmgn-cli/);
+  assert.doesNotMatch(pnpmLock, /gmgn-cli/);
+  assert.match(provider, /this\.fetch\(/);
+  assert.doesNotMatch(provider, /gmgn-cli|child_process|execFile/);
+});
+
 test('community entry point never inherits a global GMGN key', () => {
   const main = fs.readFileSync(path.join(root, 'src/main.mjs'), 'utf8');
   assert.match(main, /legacyKeyProvider:\s*\(\)\s*=>\s*''/);
