@@ -3,12 +3,23 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { GmgnClient } from '../src/providers/gmgn.mjs';
 import { GmgnConnection } from '../src/gmgn-connection.mjs';
 import { GmgnKeyStore, legacyGmgnApiKey } from '../src/gmgn-key-store.mjs';
-import { supportedNode } from '../scripts/setup.mjs';
+import { dependenciesReady, supportedNode } from '../scripts/setup.mjs';
 
 const fakeKey = letter => `gmgn_${letter.repeat(32)}`;
+
+test('setup accepts the checked-in native provider without installing the retired GMGN CLI', async () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-native-provider-'));
+  try {
+    fs.cpSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src'), path.join(temporary, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(temporary, 'package.json'), JSON.stringify({ type: 'module' }));
+    assert.equal(fs.existsSync(path.join(temporary, 'node_modules', 'gmgn-cli')), false);
+    assert.equal(await dependenciesReady(temporary), true);
+  } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+});
 
 test('UI key overrides both legacy configuration and environment, with no mutation of either', async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-credentials-'));

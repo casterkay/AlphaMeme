@@ -42,7 +42,7 @@
 只换三样东西：
 
 1. 运行时：Node 长驻进程 + `setTimeout` → Cloudflare Worker + Durable Object alarm
-2. GMGN 传输：`child_process.execFile`（gmgn-cli）→ `fetch` 直连 OpenAPI
+2. GMGN 传输：Node 子进程桥 → `fetch` 直连 OpenAPI
 3. UI：浏览器（`public/` + `server.mjs` 路由）→ Telegram bot
 
 ## 2. 目标架构
@@ -239,15 +239,17 @@ DISCOVER(request_i) → SCREEN → BUILD_QUEUE
 `gmgn.mjs` 的 `runNow` 现在 `execFileAsync(binary, [workerPath, ...args])`。改为直接 `fetch`：
 
 - 认证用 exist-auth 模式：`X-APIKEY: <key>` + `client_id` + `timestamp` 查询参数（与 GMGN 官方
-  客户端一致；本仓库原 gmgn-cli 内部即此协议）。
+  `GMGNAI/gmgn-skills` 的 `OpenApiClient` 源码一致；参数形态固定参考提交
+  `016535ffcf500f56f28aa8797b3c6bf6ebce794a`）。
 - 8 个数据读端点（`token info/security/pool`、`token holders/traders`、`market kline/trending/trenches`）
   逐一定义 URL 与 query 参数，**只读白名单就是这组方法本身**。
 - `requestWeight`、显式串行队列、`nextAllowedAt`、退避因子与 TTL 缓存语义保留；
   请求间隔预留与代际检查按 §4.1 持久化。缓存失效按原 TTL/keyEpoch，冷启动 miss 可重读。
 - `translateGmgnError` 保留（429/401/403/timeout/network 的翻译与 `retryAfterMs`），
   但 `error.stderr` 解析改为 `response.status` / `response.json().code`。
-- 依赖变更：`package.json` 移除 `gmgn-cli` 运行时依赖（Worker 不能跑 Node 子进程）；端点的
-  参数形态以 gmgn-cli 源码为**文档参考**，移植进 `providers/gmgn.mjs`。
+- 依赖变更：`package.json` 不保留 GMGN CLI 运行时依赖（Worker 不能跑 Node 子进程）；端点的
+  参数形态以官方 `GMGNAI/gmgn-skills` 的 `OpenApiClient` 源码提交
+  `016535ffcf500f56f28aa8797b3c6bf6ebce794a` 为**文档参考**，移植进 `providers/gmgn.mjs`。
 
 ### 4.3 状态：磁盘 JSON → DO SQLite
 
@@ -696,7 +698,8 @@ npx wrangler deploy --dry-run
 1. **Workers WebCrypto 是否支持 Ed25519**（`crypto.subtle.generateKey({name:"Ed25519"})`）。
    不支持则启用 `nodejs_compat` 用 `node:crypto`。**先 spike**（M3 之前）。
 2. **GMGN 读端点（info/security/pool/holders/traders/kline/trending/trenches）的 exist-auth
-   参数形态**：以 gmgn-cli 源码为准逐一对齐，避免"看起来对、实则 401"。
+   参数形态**：以 `GMGNAI/gmgn-skills` 的 `OpenApiClient` 源码提交
+   `016535ffcf500f56f28aa8797b3c6bf6ebce794a` 为准逐一对齐，避免"看起来对、实则 401"。
 3. **DO alarm 的成本与上限**（M2/M4 前）：live 目标 20s 一次，但请求级扫描、命令、
    outbox 及卡片刷新会额外触发 alarm；测算完整负载与等待 I/O 的计费，不按每分钟三次估算。
    单租户成本需测算；若超预算，再回到决策 4 与用户确认（**默认不改**）。

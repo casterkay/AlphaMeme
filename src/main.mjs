@@ -24,7 +24,7 @@ const once = process.argv.includes('--once');
 const state = new RadarState(config.stateDir);
 const keyStore = new GmgnKeyStore(config.stateDir);
 // Community installations must be explicit: never inherit an API key from the
-// user's shell or a pre-existing global GMGN CLI configuration.
+// user's shell or a pre-existing global GMGN configuration.
 const gmgn = new GmgnClient({
   apiKeyProvider: () => keyStore.get(),
   legacyKeyProvider: () => ''
