@@ -1,0 +1,37 @@
+scripts/setup.mjs
+  s_c2a1e43fa75e7b::t_1d1eb5853323d7 16
+THIRD_PARTY_NOTICES.md
+  s_c2a1e43fa75e7b::t_84e16684765f3f 3
+docs/CLOUDFLARE-TELEGRAM-REFACTOR.md
+  s_c2a1e43fa75e7b::t_84e16684765f3f 45,242-243,250-252,701-702
+test/gmgn-onboarding.test.mjs
+  s_c2a1e43fa75e7b::t_f5c331f30c9cfd 6
+  s_c2a1e43fa75e7b::t_009bf910aad2ee 10,14-22
+  s_c2a1e43fa75e7b::t_7bdb944030f018 23
+scripts/testing/clean-install.mjs
+  s_c2a1e43fa75e7b::t_51417485ea590d 26-29
+test/distribution.test.mjs
+  s_c2a1e43fa75e7b::t_51417485ea590d 52-64
+src/main.mjs
+  s_c2a1e43fa75e7b::t_84e16684765f3f 27
+README.md
+  s_c2a1e43fa75e7b::t_84e16684765f3f 120
+pnpm-lock.yaml
+  s_c2a1e43fa75e7b::t_725c0d7b5c87ab 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e238249355278257140ad11afbeeb97ce9b82b7b",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
