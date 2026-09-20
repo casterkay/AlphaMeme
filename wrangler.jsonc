@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "meme-radar",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-09-20",
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "RADAR",
+        "class_name": "RadarAgent"
+      },
+      {
+        "name": "TENANT_REGISTRY",
+        "class_name": "TenantRegistry"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RadarAgent", "TenantRegistry"]
+    }
+  ]
+  // Secrets are set out of band with `wrangler secret put`, never in this file:
+  // OPERATOR_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, MASTER_ENC_KEY.
+}

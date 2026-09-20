@@ -24,6 +24,11 @@
     "doctor": "node scripts/setup.mjs --check",
     "release:audit": "node scripts/release-audit.mjs",
     "once": "node --use-env-proxy src/main.mjs --once",
-    "test": "node --test"
+    "test": "node --test",
+    "types": "wrangler types",
+    "types:check": "wrangler types --check"
+  },
+  "devDependencies": {
+    "wrangler": "4.135.0"
   }
 }
