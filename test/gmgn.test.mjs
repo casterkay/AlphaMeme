@@ -308,6 +308,20 @@ test('persisted rate-limit cooldown survives credential changes and blocks every
   assert.equal(requests, 0);
 });
 
+test('bootstrap state cannot shorten a durable cooldown after reconstruction', async () => {
+  const cooldownUntil = now + 60_000;
+  const store = durableAdmissionStore({ nextAllowedAt: cooldownUntil });
+  let requests = 0;
+  const client = clientWith(async () => { requests++; return response({ rank: [] }); }, { admissionStateStore: store });
+
+  client.nextAllowedAt = 0;
+
+  await assert.rejects(client.marketRank('bsc', '1m', { limit: 1 }), { code: 'GMGN_RATE_LIMITED' });
+  assert.equal(requests, 0);
+  assert.equal(store.state.nextAllowedAt, cooldownUntil);
+  assert.ok(store.writes.every(entry => entry.nextAllowedAt >= cooldownUntil));
+});
+
 test('cache entries are invalidated by the persisted credential epoch', async () => {
   const store = durableAdmissionStore();
   let calls = 0;

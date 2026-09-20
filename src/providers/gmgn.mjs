@@ -127,6 +127,9 @@ const ADMISSION_STATE_DEFAULTS = Object.freeze({
   spacingReadyAt: 0,
   keyEpoch: 0
 });
+const MONOTONIC_ADMISSION_FIELDS = new Set([
+  'nextAllowedAt', 'spacingReadyAt', 'backoffFactor', 'lastRequestAt', 'keyEpoch'
+]);
 
 function nonnegativeNumber(value, fallback) {
   const number = Number(value);
@@ -148,6 +151,16 @@ function admissionState(value = {}) {
     spacingReadyAt: nonnegativeNumber(value.spacingReadyAt, 0),
     keyEpoch: Math.trunc(nonnegativeNumber(value.keyEpoch, 0))
   };
+}
+
+function mergeBootstrapAdmissionState(persisted, overrides) {
+  const merged = { ...persisted };
+  for (const [field, value] of Object.entries(overrides)) {
+    merged[field] = MONOTONIC_ADMISSION_FIELDS.has(field)
+      ? Math.max(persisted[field], value)
+      : value;
+  }
+  return admissionState(merged);
 }
 
 // A later DO migration supplies this small read/write boundary with versioned
@@ -313,6 +326,7 @@ export class GmgnClient {
     this.admissionOverrides = new Map();
     this.admissionInitialization = null;
     this.admissionFailure = null;
+    this.admissionLoaded = false;
     this.pendingCredentialChanges = 0;
     this.lastVerifiedKey = '';
     this.queue = Promise.resolve();
@@ -599,8 +613,11 @@ export class GmgnClient {
 
   #overrideAdmission(field, value) {
     const next = admissionState({ ...this.admission, [field]: value });
-    this.admission = next;
-    this.admissionOverrides.set(field, next[field]);
+    const resolved = this.admissionLoaded && MONOTONIC_ADMISSION_FIELDS.has(field)
+      ? Math.max(this.admission[field], next[field])
+      : next[field];
+    this.admission = admissionState({ ...this.admission, [field]: resolved });
+    this.admissionOverrides.set(field, resolved);
   }
 
   async #ensureAdmissionState() {
@@ -620,11 +637,12 @@ export class GmgnClient {
     }
     let next = admissionState(await this.admissionStateStore.read());
     if (this.admissionOverrides.size) {
-      next = admissionState({ ...next, ...Object.fromEntries(this.admissionOverrides) });
+      next = mergeBootstrapAdmissionState(next, Object.fromEntries(this.admissionOverrides));
       await this.admissionStateStore.write(structuredClone(next));
       this.admissionOverrides.clear();
     }
     this.admission = next;
+    this.admissionLoaded = true;
   }
 
   async #persistAdmission(next) {
