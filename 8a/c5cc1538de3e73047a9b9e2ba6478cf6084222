@@ -1,0 +1,32 @@
+src/main.mjs
+  s_c2a1e43fa75e7b::t_c08f27ea3487d6 32
+src/gmgn-connection.mjs
+  s_c2a1e43fa75e7b::t_c08f27ea3487d6 41,48,51
+test/gmgn.test.mjs
+  s_c2a1e43fa75e7b::t_47bd71f4eb40d7 21-48,241-352
+src/providers/gmgn.mjs
+  s_c2a1e43fa75e7b::t_c08f27ea3487d6 153-155
+  s_c2a1e43fa75e7b::t_b15327505c10d5 121-152,156-169
+  s_c2a1e43fa75e7b::t_faf205f7b2224c 300-301,310-316,324-337,351-360
+  s_c2a1e43fa75e7b::t_04b4716fe144df 504,506-508,514,521-525,531,541-542,547-554,569-572,574-575,578,586-591,599-644
+test/gmgn-onboarding.test.mjs
+  s_c2a1e43fa75e7b::t_d92dfcbe72deab 149-174
+src/server.mjs
+  s_c2a1e43fa75e7b::t_c08f27ea3487d6 266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8ac5cc1538de3e73047a9b9e2ba6478cf6084222",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
