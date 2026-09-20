@@ -38,17 +38,17 @@ export class GmgnConnection {
         throw Object.assign(new Error('GMGN onboarding is required'), { code: 'GMGN_ONBOARDING_REQUIRED' });
       }
       this.keyStore.save(apiKey);
-      this.gmgn.resetCredentials?.();
+      await this.gmgn.resetCredentials?.();
       this.gmgn.lastVerifiedKey = apiKey;
       this.scanner.requestCycle();
       return { configured: true, verified: true };
     } finally { this.checking = false; }
   }
 
-  disconnect() {
+  async disconnect() {
     this.generation++;
     this.keyStore.disconnect();
-    this.gmgn.resetCredentials({ disabled: true });
+    await this.gmgn.resetCredentials({ disabled: true });
     this.scanner.requestCycle();
     return { disconnected: true };
   }

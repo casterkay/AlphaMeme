@@ -263,7 +263,7 @@ export function createServer({ state, settings, controls, switchChain, saveGmgnK
         if (!body || typeof body !== 'object' || Array.isArray(body)) return sendJson(res, 400, { error: 'invalid_settings' }, csp);
         if (url.pathname === '/api/gmgn-disconnect') {
           if (Object.keys(body).length || !disconnectGmgnKey) return sendJson(res, 400, { error: 'invalid_settings' }, csp);
-          return sendJson(res, 200, disconnectGmgnKey(), csp);
+          return sendJson(res, 200, await disconnectGmgnKey(), csp);
         }
         if (!controls) return sendJson(res, 503, { error: 'settings_unavailable' }, csp);
         if (url.pathname === '/api/scan-chains') {
