@@ -1,0 +1,67 @@
+src/storage/tenant-registry-schema.mjs
+  s_c2a1e43fa75e7b::t_2f6c0a1b8397e5 1-5,7-15,17-19,22-27,29-35,37-39,42-73,76-92
+  s_c2a1e43fa75e7b::t_f2b8588d0483da 6,40-41
+  s_c2a1e43fa75e7b::t_596c08deb1b241 16,20-21,28,36,74-75
+src/worker-auth.mjs
+  s_c2a1e43fa75e7b::t_0972feb1b16496 17-18,25-33
+  s_c2a1e43fa75e7b::t_01b77e341bc58d 1-16,19-24,34
+test/worker-auth.test.mjs
+  s_c2a1e43fa75e7b::t_0972feb1b16496 3,14-24
+  s_c2a1e43fa75e7b::t_f315f0b2a51c53 1-2,4-13,25
+src/radar-agent.mjs
+  s_c2a1e43fa75e7b::t_6930f70296d27e 1-43
+.gitignore
+  s_c2a1e43fa75e7b::t_d2ebde5f91bb7f 4-5
+  s_c2a1e43fa75e7b::t_dbcd648eeb5448 10,30
+wrangler.jsonc
+  s_c2a1e43fa75e7b::t_0972feb1b16496 18
+  s_c2a1e43fa75e7b::t_6930f70296d27e 1-17,19-40
+src/storage/schema.mjs
+  s_c2a1e43fa75e7b::t_f2b8588d0483da 5,141-142
+  s_c2a1e43fa75e7b::t_01b77e341bc58d 1-4,6-140,143-197
+src/storage/gmgn-admission-state.mjs
+  s_c2a1e43fa75e7b::t_01b77e341bc58d 1-6,8-20,22,26-32,37-38,40,42-44,46-57,59-69,71-80,98
+  s_c2a1e43fa75e7b::t_7bdcad9dc20cc9 21,58,70
+  s_c2a1e43fa75e7b::t_db03795f2c6117 39,41
+  s_c2a1e43fa75e7b::t_0972feb1b16496 7,33-36,45,81-97
+  s_c2a1e43fa75e7b::t_596c08deb1b241 23-25
+src/tenant-registry.mjs
+  s_c2a1e43fa75e7b::t_6930f70296d27e 1-2,4-8,10-29
+  s_c2a1e43fa75e7b::t_2f6c0a1b8397e5 3,9
+src/worker.mjs
+  s_c2a1e43fa75e7b::t_6930f70296d27e 1-2,5-20,27-33,35-51,53-57,59-64,66-75
+  s_c2a1e43fa75e7b::t_596c08deb1b241 4,21-26
+  s_c2a1e43fa75e7b::t_0fd084197a029d 52,65
+  s_c2a1e43fa75e7b::t_0972feb1b16496 3,34,58
+package.json
+  s_c2a1e43fa75e7b::t_0fd084197a029d 27-32
+test/schema.test.mjs
+  s_c2a1e43fa75e7b::t_dcc98953b8b672 10-15,17-18,40,47-48,56,111-117,123-124,210-229,237-246,257-273
+  s_c2a1e43fa75e7b::t_596c08deb1b241 19,109-110,230-236
+  s_c2a1e43fa75e7b::t_db03795f2c6117 179-190
+  s_c2a1e43fa75e7b::t_0473ac5d52d776 1-9,16,20-39,41-46,49-55,57-61,64-108,118-122,125-168,191-209,274
+  s_c2a1e43fa75e7b::t_f2b8588d0483da 62,169,172,176,249,252,256
+  s_c2a1e43fa75e7b::t_82676577a0c3bf 63,170-171,173-175,177-178,247-248,250-251,253-255
+.gitattributes
+  s_c2a1e43fa75e7b::t_9152f7d6f2f3b3 1-3
+package-lock.json
+  s_c2a1e43fa75e7b::t_a4dfeff4881c62 11-13,17-1545
+worker-configuration.d.ts
+  s_c2a1e43fa75e7b::t_0ad5a19a79b680 1-15729
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7bb072ec48cae99b5b479b1cb6ff81703033c259",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
