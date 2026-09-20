@@ -163,7 +163,8 @@ function assertTableSet(actual) {
 }
 
 function normalizeDdl(value) {
-  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().toUpperCase() : '';
+  // SQLite CHECK literals are case-sensitive, so this contract is otherwise byte-exact.
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function assertTableContract(sql, definition) {
