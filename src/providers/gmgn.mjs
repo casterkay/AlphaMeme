@@ -118,6 +118,55 @@ function requestWeight(operation) {
   return ({ tokenTopHolders: 5, tokenTopTraders: 5, trenches: 3, tokenKline: 2 })[operation] || 1;
 }
 
+const ADMISSION_STATE_DEFAULTS = Object.freeze({
+  nextAllowedAt: 0,
+  backoffFactor: 1,
+  lastRequestAt: 0,
+  lastWeight: 1,
+  successStreak: 0,
+  spacingReadyAt: 0,
+  keyEpoch: 0
+});
+
+function nonnegativeNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function positiveInteger(value, fallback) {
+  const number = Math.trunc(Number(value));
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function admissionState(value = {}) {
+  return {
+    nextAllowedAt: nonnegativeNumber(value.nextAllowedAt, 0),
+    backoffFactor: Math.max(1, nonnegativeNumber(value.backoffFactor, 1)),
+    lastRequestAt: nonnegativeNumber(value.lastRequestAt, 0),
+    lastWeight: positiveInteger(value.lastWeight, 1),
+    successStreak: Math.trunc(nonnegativeNumber(value.successStreak, 0)),
+    spacingReadyAt: nonnegativeNumber(value.spacingReadyAt, 0),
+    keyEpoch: Math.trunc(nonnegativeNumber(value.keyEpoch, 0))
+  };
+}
+
+// A later DO migration supplies this small read/write boundary with versioned
+// SQLite. Keeping the local implementation here preserves fail-closed admission
+// semantics without introducing a competing schema.
+export class MemoryGmgnAdmissionStateStore {
+  constructor(initial = ADMISSION_STATE_DEFAULTS) {
+    this.value = admissionState(initial);
+  }
+
+  async read() {
+    return structuredClone(this.value);
+  }
+
+  async write(next) {
+    this.value = admissionState(next);
+  }
+}
+
 function validateChain(chain) {
   if (!CHAINS.has(chain)) throw errorWith('GMGN_INVALID_REQUEST', 'Unsupported chain');
 }
@@ -248,7 +297,8 @@ function compactTrenches(value, chain, types, limit) {
 
 export class GmgnClient {
   constructor({ timeoutMs = 15_000, maxResponseBytes = MAX_RESPONSE_BYTES, minRequestGapMs = 1_100, apiKeyProvider = null,
-    legacyKeyProvider = legacyGmgnApiKey, fetch = globalThis.fetch, now = Date.now, randomUUID = () => globalThis.crypto.randomUUID() } = {}) {
+    legacyKeyProvider = legacyGmgnApiKey, fetch = globalThis.fetch, now = Date.now, randomUUID = () => globalThis.crypto.randomUUID(),
+    wait = delay, admissionStateStore = new MemoryGmgnAdmissionStateStore() } = {}) {
     this.timeoutMs = timeoutMs;
     this.maxResponseBytes = maxResponseBytes;
     this.minRequestGapMs = minRequestGapMs;
@@ -257,18 +307,33 @@ export class GmgnClient {
     this.fetch = fetch;
     this.now = now;
     this.randomUUID = randomUUID;
+    this.wait = wait;
+    this.admissionStateStore = admissionStateStore;
+    this.admission = admissionState();
+    this.admissionOverrides = new Map();
+    this.admissionInitialization = null;
+    this.admissionFailure = null;
+    this.pendingCredentialChanges = 0;
     this.lastVerifiedKey = '';
-    this.lastRequestAt = 0;
-    this.nextAllowedAt = 0;
     this.queue = Promise.resolve();
     this.cache = new Map();
-    this.keyEpoch = 0;
     this.disabled = false;
-    this.backoffFactor = 1;
-    this.successStreak = 0;
-    this.lastWeight = 1;
     this.metrics = { requests: 0, cacheHits: 0, rateLimits: 0 };
   }
+
+  get nextAllowedAt() { return this.admission.nextAllowedAt; }
+  set nextAllowedAt(value) { this.#overrideAdmission('nextAllowedAt', value); }
+  get backoffFactor() { return this.admission.backoffFactor; }
+  set backoffFactor(value) { this.#overrideAdmission('backoffFactor', value); }
+  get lastRequestAt() { return this.admission.lastRequestAt; }
+  set lastRequestAt(value) { this.#overrideAdmission('lastRequestAt', value); }
+  get lastWeight() { return this.admission.lastWeight; }
+  set lastWeight(value) { this.#overrideAdmission('lastWeight', value); }
+  get successStreak() { return this.admission.successStreak; }
+  set successStreak(value) { this.#overrideAdmission('successStreak', value); }
+  get spacingReadyAt() { return this.admission.spacingReadyAt; }
+  set spacingReadyAt(value) { this.#overrideAdmission('spacingReadyAt', value); }
+  get keyEpoch() { return this.admission.keyEpoch + this.pendingCredentialChanges; }
 
   apiKey() {
     if (this.disabled) return '';
@@ -280,10 +345,19 @@ export class GmgnClient {
   }
 
   resetCredentials({ disabled = false } = {}) {
-    this.keyEpoch++;
     this.disabled = disabled;
     this.cache.clear();
     this.lastVerifiedKey = '';
+    this.pendingCredentialChanges++;
+    const task = this.#enqueue(async () => {
+      try {
+        await this.#ensureAdmissionState();
+        await this.#persistAdmission({ ...this.admission, keyEpoch: this.admission.keyEpoch + 1 });
+      } finally {
+        this.pendingCredentialChanges--;
+      }
+    });
+    return task;
   }
 
   async tokenInfo(chain, address, options = {}) {
@@ -427,27 +501,34 @@ export class GmgnClient {
   }
 
   async #cachedRead(key, operation, ttlMs) {
+    await this.#ensureAdmissionState();
     const epoch = this.keyEpoch;
-    const cached = this.cache.get(key);
-    if (!this.disabled && cached && cached.epoch === epoch && this.now() - cached.at < ttlMs) {
+    const cacheKey = `${epoch}:${key}`;
+    const cached = this.cache.get(cacheKey);
+    if (!this.disabled && cached && this.now() - cached.at < ttlMs) {
       this.metrics.cacheHits++;
       return structuredClone(cached.value);
     }
     const value = await operation();
     if (!this.disabled && epoch === this.keyEpoch) {
-      this.cache.set(key, { value, at: this.now(), epoch });
+      this.cache.set(cacheKey, { value, at: this.now() });
       if (this.cache.size > 500) this.cache.delete(this.cache.keys().next().value);
     }
     return value;
   }
 
   async #read(operation, method, path, query, body, options) {
-    const task = this.queue.then(() => this.#readNow(operation, method, path, query, body, options));
+    return this.#enqueue(() => this.#readNow(operation, method, path, query, body, options));
+  }
+
+  #enqueue(operation) {
+    const task = this.queue.then(operation);
     this.queue = task.catch(() => {});
     return task;
   }
 
   async #readNow(operation, method, path, query, body, { apiKey = this.apiKey(), deadline = Infinity, verification = false } = {}) {
+    await this.#ensureAdmissionState();
     if (this.disabled && !verification) throw translateGmgnError(errorWith('GMGN_AUTH_FAILED', 'invalid api key'));
     if (!apiKey) throw translateGmgnError(errorWith('GMGN_AUTH_FAILED', 'invalid api key'));
     const epoch = this.keyEpoch;
@@ -457,14 +538,20 @@ export class GmgnClient {
         code: 'GMGN_RATE_LIMITED', retryAfterMs: this.nextAllowedAt - startedAt
       });
     }
-    const waitMs = Math.max(0, this.lastRequestAt + this.minRequestGapMs * this.lastWeight * this.backoffFactor - startedAt);
-    if (waitMs) await delay(waitMs);
+    const waitMs = Math.max(0, this.spacingReadyAt - startedAt);
+    if (waitMs) await this.wait(waitMs);
     if ((this.disabled && !verification) || epoch !== this.keyEpoch) throw translateGmgnError(errorWith('GMGN_AUTH_FAILED', 'invalid api key'));
     const remainingMs = Math.min(this.timeoutMs, deadline - this.now());
     if (!(remainingMs > 0)) throw translateGmgnError(errorWith('GMGN_TIMEOUT', 'request deadline expired'));
 
-    this.lastRequestAt = this.now();
-    this.lastWeight = requestWeight(operation);
+    const requestAt = this.now();
+    const weight = requestWeight(operation);
+    await this.#persistAdmission({
+      ...this.admission,
+      lastRequestAt: requestAt,
+      lastWeight: weight,
+      spacingReadyAt: requestAt + this.minRequestGapMs * weight * this.backoffFactor
+    });
     this.metrics.requests++;
     const controller = new AbortController();
     let timedOut = false;
@@ -479,13 +566,16 @@ export class GmgnClient {
         signal: controller.signal
       });
       const data = parseEnvelope(response, await boundedResponseText(response, this.maxResponseBytes));
-      if (!this.disabled && epoch === this.keyEpoch) this.lastVerifiedKey = apiKey;
-      if (++this.successStreak >= 30) {
-        this.backoffFactor = Math.max(1, this.backoffFactor - 0.25);
-        this.successStreak = 0;
+      const nextAdmission = { ...this.admission, successStreak: this.successStreak + 1 };
+      if (nextAdmission.successStreak >= 30) {
+        nextAdmission.backoffFactor = Math.max(1, this.backoffFactor - 0.25);
+        nextAdmission.successStreak = 0;
       }
+      await this.#persistAdmission(nextAdmission);
+      if (!this.disabled && epoch === this.keyEpoch) this.lastVerifiedKey = apiKey;
       return data;
     } catch (error) {
+      if (error?.code === 'GMGN_ADMISSION_STATE_UNAVAILABLE') throw error;
       const source = timedOut
         ? errorWith('GMGN_TIMEOUT', 'request timed out')
         : error?.code
@@ -493,14 +583,63 @@ export class GmgnClient {
           : errorWith('GMGN_NETWORK_ERROR', 'network request failed');
       const translated = translateGmgnError(source);
       if (translated.code === 'GMGN_RATE_LIMITED') {
-        this.nextAllowedAt = this.now() + translated.retryAfterMs;
-        this.backoffFactor = Math.min(8, this.backoffFactor * 2);
-        this.successStreak = 0;
+        await this.#persistAdmission({
+          ...this.admission,
+          nextAllowedAt: Math.max(this.nextAllowedAt, this.now() + translated.retryAfterMs),
+          backoffFactor: Math.min(8, this.backoffFactor * 2),
+          successStreak: 0
+        });
         this.metrics.rateLimits++;
       }
       throw translated;
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  #overrideAdmission(field, value) {
+    const next = admissionState({ ...this.admission, [field]: value });
+    this.admission = next;
+    this.admissionOverrides.set(field, next[field]);
+  }
+
+  async #ensureAdmissionState() {
+    if (this.admissionFailure) throw this.admissionFailure;
+    if (!this.admissionInitialization) {
+      this.admissionInitialization = this.#loadAdmissionState().catch(error => {
+        this.admissionFailure = this.#admissionFailure(error);
+        throw this.admissionFailure;
+      });
+    }
+    return this.admissionInitialization;
+  }
+
+  async #loadAdmissionState() {
+    if (!this.admissionStateStore || typeof this.admissionStateStore.read !== 'function' || typeof this.admissionStateStore.write !== 'function') {
+      throw new Error('invalid admission state store');
+    }
+    let next = admissionState(await this.admissionStateStore.read());
+    if (this.admissionOverrides.size) {
+      next = admissionState({ ...next, ...Object.fromEntries(this.admissionOverrides) });
+      await this.admissionStateStore.write(structuredClone(next));
+      this.admissionOverrides.clear();
+    }
+    this.admission = next;
+  }
+
+  async #persistAdmission(next) {
+    if (this.admissionFailure) throw this.admissionFailure;
+    const value = admissionState(next);
+    try {
+      await this.admissionStateStore.write(structuredClone(value));
+    } catch (error) {
+      this.admissionFailure = this.#admissionFailure(error);
+      throw this.admissionFailure;
+    }
+    this.admission = value;
+  }
+
+  #admissionFailure(_error) {
+    return errorWith('GMGN_ADMISSION_STATE_UNAVAILABLE', 'GMGN request admission state is unavailable');
   }
 }

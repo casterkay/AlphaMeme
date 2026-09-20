@@ -18,6 +18,34 @@ function clientWith(fetch, options = {}) {
   });
 }
 
+function durableAdmissionStore(initial = {}, { failWrites = false } = {}) {
+  const state = {
+    nextAllowedAt: 0,
+    backoffFactor: 1,
+    lastRequestAt: 0,
+    lastWeight: 1,
+    successStreak: 0,
+    spacingReadyAt: 0,
+    keyEpoch: 0,
+    ...initial
+  };
+  const writes = [];
+  return {
+    writes,
+    state,
+    async read() { return structuredClone(state); },
+    async write(next) {
+      if (failWrites) throw new Error('durable store unavailable');
+      writes.push(structuredClone(next));
+      Object.assign(state, structuredClone(next));
+    }
+  };
+}
+
+function response(data = {}) {
+  return new Response(JSON.stringify({ code: 0, data }), { status: 200 });
+}
+
 test('normalizes nested GMGN list shapes without guessing token fields', () => {
   assert.deepEqual(normalizeList({ data: { rank: [{ address: 'a' }] } }), [{ address: 'a' }]);
   assert.deepEqual(normalizeList({ data: { data: { completed: [{ address: 'b' }] } } }, ['completed']), [{ address: 'b' }]);
@@ -209,4 +237,116 @@ test('public client exposes only read operations and high-level read helpers, ne
   for (const name of ['run', 'runNow', 'cachedRead', 'childEnvironment', 'privateKey', 'swap', 'order', 'followWallet', 'getUserInfo']) {
     assert.equal(typeof client[name], 'undefined', name);
   }
+});
+
+test('one durable admission queue serializes concurrent audit, live and key verification reads', async () => {
+  const store = durableAdmissionStore();
+  let active = 0;
+  let maximumActive = 0;
+  const client = clientWith(async (_url, init) => {
+    active++;
+    maximumActive = Math.max(maximumActive, active);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    active--;
+    return response(init.method === 'POST' ? { completed: [] } : { rank: [], list: [] });
+  }, { admissionStateStore: store });
+
+  await Promise.all([
+    client.audit(address, now / 1000, 'bsc'),
+    client.marketRank('bsc', '1m', { limit: 1 }),
+    client.verifyApiKey(apiKey)
+  ]);
+
+  assert.equal(maximumActive, 1);
+  assert.ok(store.writes.length > 0);
+});
+
+test('reconstructed clients honor persisted weighted spacing reservations before fetch', async () => {
+  const store = durableAdmissionStore();
+  let current = now;
+  const waits = [];
+  const first = clientWith(async () => response({ list: [] }), {
+    admissionStateStore: store,
+    minRequestGapMs: 100,
+    now: () => current,
+    wait: async milliseconds => { waits.push(milliseconds); current += milliseconds; }
+  });
+  await first.tokenTopHolders('bsc', address);
+  assert.deepEqual(store.state, {
+    nextAllowedAt: 0,
+    backoffFactor: 1,
+    lastRequestAt: now,
+    lastWeight: 5,
+    successStreak: 1,
+    spacingReadyAt: now + 500,
+    keyEpoch: 0
+  });
+
+  const second = clientWith(async () => response({ rank: [] }), {
+    admissionStateStore: store,
+    minRequestGapMs: 100,
+    now: () => current,
+    wait: async milliseconds => { waits.push(milliseconds); current += milliseconds; }
+  });
+  await second.marketRank('bsc', '1m', { limit: 1 });
+
+  assert.deepEqual(waits, [500]);
+  assert.equal(store.state.lastWeight, 1);
+  assert.equal(store.state.spacingReadyAt, now + 600);
+});
+
+test('persisted rate-limit cooldown survives credential changes and blocks every later read', async () => {
+  const store = durableAdmissionStore({ nextAllowedAt: now + 60_000 });
+  let requests = 0;
+  const client = clientWith(async () => { requests++; return response({ rank: [] }); }, { admissionStateStore: store });
+
+  await client.resetCredentials();
+
+  assert.equal(store.state.nextAllowedAt, now + 60_000);
+  assert.equal(store.state.keyEpoch, 1);
+  await assert.rejects(client.marketRank('bsc', '1m', { limit: 1 }), { code: 'GMGN_RATE_LIMITED' });
+  assert.equal(requests, 0);
+});
+
+test('cache entries are invalidated by the persisted credential epoch', async () => {
+  const store = durableAdmissionStore();
+  let calls = 0;
+  const client = clientWith(async () => { calls++; return response({ list: [] }); }, { admissionStateStore: store });
+  const audit = () => client.audit(address, now / 1000, 'bsc', { shouldStopEarly: () => true });
+
+  await audit();
+  await audit();
+  assert.equal(calls, 3);
+  await client.resetCredentials();
+  await audit();
+
+  assert.equal(calls, 6);
+  assert.equal(store.state.keyEpoch, 1);
+});
+
+test('429 backoff is persisted before the admission queue accepts another request', async () => {
+  const store = durableAdmissionStore();
+  const resetAtUnix = Math.ceil((now + 60_000) / 1000);
+  const client = clientWith(async () => new Response(JSON.stringify({ code: 429, error: 'RATE_LIMIT_EXCEEDED' }), {
+    status: 429,
+    headers: { 'x-ratelimit-reset': String(resetAtUnix) }
+  }), { admissionStateStore: store });
+
+  await assert.rejects(client.tokenInfo('bsc', address), { code: 'GMGN_RATE_LIMITED' });
+
+  assert.ok(store.state.nextAllowedAt >= now + 60_000);
+  assert.equal(store.state.backoffFactor, 2);
+  assert.equal(store.state.successStreak, 0);
+  assert.equal(client.metrics.rateLimits, 1);
+  assert.ok(store.writes.some(entry => entry.nextAllowedAt >= now + 60_000));
+});
+
+test('admission persistence failure fails closed before a GMGN request is sent', async () => {
+  const store = durableAdmissionStore({}, { failWrites: true });
+  let requests = 0;
+  const client = clientWith(async () => { requests++; return response({ rank: [] }); }, { admissionStateStore: store });
+
+  await assert.rejects(client.marketRank('bsc', '1m', { limit: 1 }), { code: 'GMGN_ADMISSION_STATE_UNAVAILABLE' });
+
+  assert.equal(requests, 0);
 });

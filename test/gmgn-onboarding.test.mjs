@@ -146,6 +146,32 @@ test('concurrent key submissions cannot overwrite a key under validation', async
   assert.equal(saved, fakeKey('a'));
 });
 
+test('connection waits for credential epoch persistence before scheduling a scan', async () => {
+  let resetStarted;
+  let finishReset;
+  const resetPending = new Promise(resolve => { finishReset = resolve; });
+  let scans = 0;
+  const connection = new GmgnConnection({
+    gmgn: {
+      verifyApiKey: async () => ({ verified: true }),
+      resetCredentials: () => {
+        resetStarted();
+        return resetPending;
+      }
+    },
+    keyStore: { hasPending: () => true, activatePending: () => true, save() {} },
+    scanner: { requestCycle() { scans++; } }
+  });
+  const resetObserved = new Promise(resolve => { resetStarted = resolve; });
+
+  const applying = connection.apply(fakeKey('d'));
+  await resetObserved;
+  assert.equal(scans, 0);
+  finishReset();
+  await applying;
+  assert.equal(scans, 1);
+});
+
 test('runtime check rejects Node versions without the proxy flag used by the scanner', () => {
   for (const version of ['20.20.0', '22.22.0', '23.0.0', '24.4.0']) assert.equal(supportedNode(version), false);
   for (const version of ['22.23.0', '22.23.1', '24.5.0', '25.0.0']) assert.equal(supportedNode(version), true);

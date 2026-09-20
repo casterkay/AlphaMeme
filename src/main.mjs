@@ -29,7 +29,7 @@ const gmgn = new GmgnClient({
   apiKeyProvider: () => keyStore.get(),
   legacyKeyProvider: () => ''
 });
-if (keyStore.disconnected()) gmgn.resetCredentials({ disabled: true });
+if (keyStore.disconnected()) await gmgn.resetCredentials({ disabled: true });
 gmgn.nextAllowedAt = Math.max(0, Number(state.value.retryAt) || 0);
 const controls = new RadarControls(config.stateDir, config.supportedChains, state.value.activeChain || config.chain);
 const scanner = new Scanner({ gmgn, secondary: new SecondaryValidator(), state, controls });
