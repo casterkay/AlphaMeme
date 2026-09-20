@@ -211,6 +211,7 @@ test('Radar schema rejects altered types, defaults, checks, uniqueness, and inde
     ['candidates', sql => sql.replace('market_cap REAL', 'market_cap TEXT')],
     ['manual_marks', sql => sql.replace('mark_version INTEGER NOT NULL DEFAULT 0', 'mark_version INTEGER NOT NULL DEFAULT 1')],
     ['manual_marks', sql => sql.replace("decision TEXT CHECK (decision IN ('passed', 'ignored'))", 'decision TEXT')],
+    ['manual_marks', sql => sql.replace("'passed', 'ignored'", "'PASSED', 'IGNORED'")],
     ['outbox', sql => sql.replace(',\n  UNIQUE (tenant_id, event_id)', '')]
   ];
 
