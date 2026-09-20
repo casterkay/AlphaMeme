@@ -1,0 +1,23 @@
+src/storage/tenant-registry-schema.mjs
+  s_c2a1e43fa75e7b::t_94f5f2c28b2d16 52-66,93-94
+test/schema.test.mjs
+  s_c2a1e43fa75e7b::t_59a80acc6adc6e 34-38,46,54-55,64,69-78,89,209-233,318-340
+src/storage/schema.mjs
+  s_c2a1e43fa75e7b::t_94f5f2c28b2d16 165-179,202-203
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9126949bf318ae681b609875389940e375e40a5e",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
