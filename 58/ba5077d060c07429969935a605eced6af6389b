@@ -1,0 +1,21 @@
+workers/durable-objects.runtime.mjs
+  s_c2a1e43fa75e7b::t_90f09d6555c241 2,6,35-37
+vitest.workers.config.mjs
+  s_c2a1e43fa75e7b::t_90f09d6555c241 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "58ba5077d060c07429969935a605eced6af6389b",
+  "prompts": {},
+  "sessions": {
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
