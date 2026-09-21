@@ -68,15 +68,21 @@ export function readGmgnAdmissionState(storage, value) {
 
 export function writeGmgnAdmissionState(storage, value, nextState) {
   const tenantId = normalizeTenantId(value);
-  const state = validateState(nextState, 'GMGN_ADMISSION_STATE_INVALID');
   storage.transactionSync(() => {
-    storage.sql.exec(
-      'INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json',
-      tenantId,
-      GMGN_ADMISSION_STATE_KEY,
-      JSON.stringify(state)
-    );
+    writeGmgnAdmissionStateInTransaction(storage, tenantId, nextState);
   });
+  return { ...validateState(nextState, 'GMGN_ADMISSION_STATE_INVALID') };
+}
+
+export function writeGmgnAdmissionStateInTransaction(storage, value, nextState) {
+  const tenantId = normalizeTenantId(value);
+  const state = validateState(nextState, 'GMGN_ADMISSION_STATE_INVALID');
+  storage.sql.exec(
+    'INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json',
+    tenantId,
+    GMGN_ADMISSION_STATE_KEY,
+    JSON.stringify(state)
+  );
   return { ...state };
 }
 

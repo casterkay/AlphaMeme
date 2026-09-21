@@ -77,7 +77,7 @@ class FakeSqlStorage {
     }
 
     if (statement.startsWith("SELECT name FROM sqlite_master")) {
-      const names = [...this.tables.keys()].filter(name => !statement.includes('name NOT IN') || !['__cf_kv', '__miniflare_do_name'].includes(name));
+      const names = [...this.tables.keys()].filter(name => !statement.includes('name NOT IN') || !['_cf_KV', '__cf_kv', '__miniflare_do_name'].includes(name));
       return cursor(names.sort().map(name => ({ name })));
     }
 
@@ -186,10 +186,12 @@ test('schema initialization refuses a non-empty, versionless database instead of
 
 test('schema initialization ignores only documented Worker and local SQLite metadata', () => {
   const storage = new FakeStorage();
+  storage.sql.tables.set('_cf_KV', { name: '_cf_KV', columns: [], primaryKey: [] });
   storage.sql.tables.set('__cf_kv', { name: '__cf_kv', columns: [], primaryKey: [] });
   storage.sql.tables.set('__miniflare_do_name', { name: '__miniflare_do_name', columns: [], primaryKey: [] });
 
   assert.equal(initializeRadarSchema(storage), RADAR_SCHEMA_VERSION);
+  assert.ok(storage.sql.tables.has('_cf_KV'));
   assert.ok(storage.sql.tables.has('__cf_kv'));
   assert.ok(storage.sql.tables.has('__miniflare_do_name'));
 });
@@ -292,10 +294,12 @@ test('tenant registry creates only version metadata and tenant routes', () => {
 
 test('tenant registry initialization ignores Worker and local SQLite metadata', () => {
   const storage = new FakeStorage(TENANT_REGISTRY_TABLES);
+  storage.sql.tables.set('_cf_KV', { name: '_cf_KV', columns: [], primaryKey: [] });
   storage.sql.tables.set('__cf_kv', { name: '__cf_kv', columns: [], primaryKey: [] });
   storage.sql.tables.set('__miniflare_do_name', { name: '__miniflare_do_name', columns: [], primaryKey: [] });
 
   assert.equal(initializeTenantRegistrySchema(storage), TENANT_REGISTRY_SCHEMA_VERSION);
+  assert.ok(storage.sql.tables.has('_cf_KV'));
   assert.ok(storage.sql.tables.has('__cf_kv'));
   assert.ok(storage.sql.tables.has('__miniflare_do_name'));
 });

@@ -2,7 +2,9 @@ export const RADAR_SCHEMA_VERSION = 1;
 
 const SCHEMA_TENANT_ID = '__schema__';
 const SCHEMA_VERSION_KEY = 'schema.version';
-const PLATFORM_STORAGE_TABLES = Object.freeze(['__cf_kv', '__miniflare_do_name']);
+
+// `__cf_kv` is Cloudflare's hidden DO KV table; `_cf_KV` is its exact Workers-test-runtime spelling.
+const PLATFORM_STORAGE_TABLES = Object.freeze(['_cf_KV', '__cf_kv', '__miniflare_do_name']);
 
 export class SchemaError extends Error {
   constructor(code, message) {
@@ -128,7 +130,8 @@ export const JSON_CONTAINERS = Object.freeze({
   events: Object.freeze(['data_json']),
   schedulerState: Object.freeze([
     'gmgn.admission.v1', 'runtime.global', 'runtime.chains', 'runtime.sourceHealth',
-    'runtime.policy', 'runtime.requestMetrics', 'runtime.rejected', 'notification.baseline'
+    'runtime.policy', 'runtime.requestMetrics', 'runtime.rejected', 'notification.baseline',
+    'scheduler.instance.v1', 'scheduler.runtime.v1', 'scheduler.tasks.v1'
   ])
 });
 

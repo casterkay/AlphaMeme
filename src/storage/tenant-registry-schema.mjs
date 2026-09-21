@@ -3,7 +3,9 @@ export const TENANT_REGISTRY_SCHEMA_VERSION = 1;
 const REGISTRY_SCHEMA_TABLE = 'tenant_registry_schema';
 const REGISTRY_TABLE = 'tenant_registry';
 const SCHEMA_SINGLETON = 1;
-const PLATFORM_STORAGE_TABLES = Object.freeze(['__cf_kv', '__miniflare_do_name']);
+
+// `__cf_kv` is Cloudflare's hidden DO KV table; `_cf_KV` is its exact Workers-test-runtime spelling.
+const PLATFORM_STORAGE_TABLES = Object.freeze(['_cf_KV', '__cf_kv', '__miniflare_do_name']);
 
 export class TenantRegistrySchemaError extends Error {
   constructor(code, message) {
