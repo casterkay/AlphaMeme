@@ -1,0 +1,85 @@
+workers/durable-objects.runtime.mjs
+  s_c2a1e43fa75e7b::t_c8225dace38aa3 150-175
+  s_c2a1e43fa75e7b::t_bc014a931eb3fb 100-107,122-124,126-148
+  s_c2a1e43fa75e7b::t_dd285d2e3f49e9 235
+  s_c2a1e43fa75e7b::t_f571aa98e920ae 205-233
+  s_c2a1e43fa75e7b::t_e9dee1352e3137 125
+  s_c2a1e43fa75e7b::t_caa0b99cbd6ced 200-204
+  s_c2a1e43fa75e7b::t_d121d048d5e3ea 20-30,32-34
+  s_c2a1e43fa75e7b::t_0b9280d9fba540 2,149,176-199,234,236-242
+  s_c2a1e43fa75e7b::t_8ab625fb58f919 6-19,31,35-42
+test/schema.test.mjs
+  s_c2a1e43fa75e7b::t_31e0b90f3625f5 80,189,194,297,302
+src/storage/scheduler-state.mjs
+  s_c2a1e43fa75e7b::t_6b3466998b0a21 126-128
+  s_c2a1e43fa75e7b::t_1bb3b86fb757fc 1-125,129-139
+src/storage/gmgn-admission-state.mjs
+  s_c2a1e43fa75e7b::t_f9196dd1621674 72,74-85
+test/scheduler.test.mjs
+  s_c2a1e43fa75e7b::t_aa0a4564870c7b 197-262
+  s_c2a1e43fa75e7b::t_191080a080d3a5 438,441
+  s_c2a1e43fa75e7b::t_46eaad88191e17 1-160,165-196,263-313,444-452
+  s_c2a1e43fa75e7b::t_886dd830b73433 335-354
+  s_c2a1e43fa75e7b::t_11f643b3eafc05 402-417,419-428,431-436,439,442-443
+  s_c2a1e43fa75e7b::t_f29d30f66941ab 381
+  s_c2a1e43fa75e7b::t_61f227ffe96e69 355-380,382-401
+  s_c2a1e43fa75e7b::t_18810b185bc1ec 161-164
+  s_c2a1e43fa75e7b::t_31efc8b5ba922e 314-334
+  s_c2a1e43fa75e7b::t_d473f59fb364e9 418,429-430,437,440
+src/storage/schema.mjs
+  s_c2a1e43fa75e7b::t_31e0b90f3625f5 7
+  s_c2a1e43fa75e7b::t_f29a5714cb49e5 133-134
+  s_c2a1e43fa75e7b::t_aa0a4564870c7b 6
+  s_c2a1e43fa75e7b::t_5a67c40fe10004 5
+src/radar-agent.mjs
+  s_c2a1e43fa75e7b::t_f29a5714cb49e5 8,39,41-57,61-63,67-75,81-94,96
+  s_c2a1e43fa75e7b::t_8ab625fb58f919 9,12-13,20,24,34,38,76-80,95
+  s_c2a1e43fa75e7b::t_a8a31535c62ec4 40
+src/tenant-registry.mjs
+  s_c2a1e43fa75e7b::t_bc014a931eb3fb 6-7,31-60
+  s_c2a1e43fa75e7b::t_031e9a3a050167 4-5
+src/scheduler.mjs
+  s_c2a1e43fa75e7b::t_6b04ce783fde21 419-423,464-470,478,480,491,499,610
+  s_c2a1e43fa75e7b::t_18810b185bc1ec 510
+  s_c2a1e43fa75e7b::t_61f227ffe96e69 504,512-521,536-549,551-566,569-570,572-574
+  s_c2a1e43fa75e7b::t_486d7d32f20531 106,310
+  s_c2a1e43fa75e7b::t_aa0a4564870c7b 12,93-105,113,350,619,621-623,629-634
+  s_c2a1e43fa75e7b::t_31efc8b5ba922e 332,339-340,349,522-535
+  s_c2a1e43fa75e7b::t_96f3f5a4f108bc 1-11,13-92,107-112,114-309,311-329,333-338,341-344,346-348,351-418,424-463,471-473,475-477,479,481-490,492-498,500-503,505-507,509,511,550,567-568,571,575-609,611-618,620,624-628,635-643
+  s_c2a1e43fa75e7b::t_8ab625fb58f919 330-331,345,474,508
+  s_c2a1e43fa75e7b::t_128a5ef6b0050f 644-645
+src/worker.mjs
+  s_c2a1e43fa75e7b::t_bc014a931eb3fb 73
+src/storage/tenant-registry-schema.mjs
+  s_c2a1e43fa75e7b::t_31e0b90f3625f5 8
+  s_c2a1e43fa75e7b::t_5a67c40fe10004 6
+  s_c2a1e43fa75e7b::t_aa0a4564870c7b 7
+src/tenant-watchdog.mjs
+  s_2ea8bc219df263::t_9de9082f4a2c1d 1-42
+test/tenant-watchdog.test.mjs
+  s_2ea8bc219df263::t_e373b526da1cad 1-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9caa9a12c289db38b6bf87d2c67a3fb5fade1b3a",
+  "prompts": {},
+  "sessions": {
+    "s_2ea8bc219df263": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c3e4-1bfe-77d1-8739-1a649d0dbfd3",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_c2a1e43fa75e7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b93b-9dc1-7560-b478-ef619ad3cea6",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
