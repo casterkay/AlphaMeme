@@ -24,11 +24,15 @@
     "doctor": "node scripts/setup.mjs --check",
     "release:audit": "node scripts/release-audit.mjs",
     "once": "node --use-env-proxy src/main.mjs --once",
-    "test": "node --test",
+    "test": "npm run test:node && npm run test:workers",
+    "test:node": "node --test test/*.test.mjs",
+    "test:workers": "vitest run --config vitest.workers.config.mjs",
     "types": "wrangler types",
     "types:check": "wrangler types --check"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.13",
+    "vitest": "4.1.11",
     "wrangler": "4.135.0"
   }
 }
