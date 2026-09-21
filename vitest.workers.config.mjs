@@ -8,6 +8,6 @@ export default defineConfig({
     })
   ],
   test: {
-    include: ['test/workers/**/*.test.mjs']
+    include: ['workers/**/*.runtime.mjs']
   }
 });

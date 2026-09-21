@@ -1,9 +1,9 @@
 import { env } from 'cloudflare:workers';
-import { runInDurableObject } from 'cloudflare:test';
+import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
 describe('M2 Durable Object bindings', () => {
-  it('persists Radar admission state in its SQLite schema and isolates distinct object identities', async () => {
+  it('persists Radar admission state in its SQLite schema across eviction and isolates distinct object identities', async () => {
     const persistedTenantId = '16001';
     const isolatedTenantId = '16002';
     const persistedState = {
@@ -19,9 +19,6 @@ describe('M2 Durable Object bindings', () => {
     const persistedRadar = env.RADAR.get(env.RADAR.idFromName(`radar:${persistedTenantId}`));
     await persistedRadar.setGmgnAdmissionState(persistedTenantId, persistedState);
 
-    const sameRadarIdentity = env.RADAR.get(env.RADAR.idFromName(`radar:${persistedTenantId}`));
-    expect(await sameRadarIdentity.getGmgnAdmissionState(persistedTenantId)).toEqual(persistedState);
-
     await runInDurableObject(persistedRadar, async (_instance, state) => {
       const version = state.storage.sql
         .exec('SELECT value_json FROM preferences WHERE tenant_id = ? AND key = ?', '__schema__', 'schema.version')
@@ -34,6 +31,9 @@ describe('M2 Durable Object bindings', () => {
       expect(JSON.parse(admitted.value_json)).toEqual(persistedState);
       expect(state.storage.sql.databaseSize).toBeGreaterThan(0);
     });
+
+    await evictDurableObject(persistedRadar);
+    expect(await persistedRadar.getGmgnAdmissionState(persistedTenantId)).toEqual(persistedState);
 
     const isolatedRadar = env.RADAR.get(env.RADAR.idFromName(`radar:${isolatedTenantId}`));
     expect(await isolatedRadar.getGmgnAdmissionState(isolatedTenantId)).toEqual({
