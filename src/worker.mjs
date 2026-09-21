@@ -70,6 +70,6 @@ export default {
   async scheduled(controller, env) {
     const registry = env.TENANT_REGISTRY.getByName('tenant-registry');
     const result = await registry.scheduledWake();
-    console.log(JSON.stringify({ event: 'scheduled_skeleton', cron: controller.cron, registeredTenantCount: result.registeredTenantCount }));
+    console.log(JSON.stringify({ event: 'scheduler_watchdog', cron: controller.cron, ...result }));
   }
 };
