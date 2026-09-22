@@ -14,13 +14,15 @@ import { externalRequestHandler, localTransactionHandler, OneAlarmScheduler, Sch
 import { readGmgnApiKey, saveGmgnApiKey } from './storage/gmgn-credential.mjs';
 import { SqliteControlStateStore, assertCheckpointGeneration } from './storage/control-state.mjs';
 import { prepareCredentialVerification, verifyAndActivatePendingCredential } from './auth/connection.mjs';
-import { SqliteRecoverableScannerStore } from './storage/recoverable-scanner.mjs';
+import { RecoverableScannerError, SqliteRecoverableScannerStore } from './storage/recoverable-scanner.mjs';
 import {
   enableSchedulerEligibilityInTransaction,
   ensureSchedulerTenant,
+  readSchedulerStateInTransaction,
   readSchedulerTenant,
   scheduleRecoverableScanTaskInTransaction,
-  SqliteSchedulerStore
+  SqliteSchedulerStore,
+  writeSchedulerStateInTransaction
 } from './storage/scheduler-state.mjs';
 import { validateTelegramReceipt } from './telegram-intake.mjs';
 
@@ -109,11 +111,11 @@ export class RadarAgent extends DurableObject {
     const tenantId = this.#boundTenantId(value?.tenantId);
     const controlStore = new SqliteControlStateStore(this.ctx.storage, tenantId);
     const control = controlStore.resume();
-    const checkpoint = value?.cycleId
-      ? this.#recoverableScannerForCycle({ tenantId, cycleId: value.cycleId }).resumeCheckpoint(value.cycleId)
-      : null;
+    const checkpoints = value?.cycleId
+      ? [this.#recoverableScannerForCycle({ tenantId, cycleId: value.cycleId }).resumeCheckpoint(value.cycleId)]
+      : this.#resumeRecoverableCycles(tenantId);
     const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
-    return { ...control, checkpoint, dueAt };
+    return { ...control, checkpoint: value?.cycleId ? checkpoints[0] : null, checkpoints, dueAt };
   }
 
   async switchChain(value) {
@@ -241,6 +243,36 @@ export class RadarAgent extends DurableObject {
       throw error;
     }
     return new RecoverableScanner({ store, settings: checkpoint.partial.settings });
+  }
+
+  #resumeRecoverableCycles(tenantId) {
+    const store = new SqliteRecoverableScannerStore(this.ctx.storage, tenantId);
+    const checkpoints = [];
+    for (const checkpoint of store.list()) {
+      const scanner = new RecoverableScanner({ store, settings: checkpoint.partial.settings });
+      try {
+        checkpoints.push(scanner.resumeCheckpoint(checkpoint.cycleId));
+      } catch (error) {
+        if (!(error instanceof RecoverableScannerError) || ![
+          'CYCLE_KEY_EPOCH_STALE', 'CYCLE_DEADLINE_EXPIRED', 'CYCLE_EVIDENCE_STALE'
+        ].includes(error.code)) {
+          throw error;
+        }
+        this.#discardRecoverableCycle(tenantId, checkpoint.cycleId);
+      }
+    }
+    return checkpoints;
+  }
+
+  #discardRecoverableCycle(tenantId, cycleId) {
+    this.ctx.storage.transactionSync(() => {
+      const state = readSchedulerStateInTransaction(this.ctx.storage, tenantId);
+      writeSchedulerStateInTransaction(this.ctx.storage, tenantId, {
+        ...state,
+        tasks: state.tasks.filter(task => task.id !== `scan:${cycleId}`)
+      });
+      this.ctx.storage.sql.exec('DELETE FROM cycle_checkpoint WHERE tenant_id = ? AND cycle_id = ?', tenantId, cycleId);
+    });
   }
 
   #scheduler(store) {
