@@ -1,0 +1,19 @@
+workers/telegram-intake.runtime.mjs
+  s_5cda0c8df10d0c::t_4c1f68ef8d6768 70,81,93-94,96-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d6e2e258d6422184269efdcd119779d8147ce747",
+  "prompts": {},
+  "sessions": {
+    "s_5cda0c8df10d0c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-5b42-7f12-8cab-3a3ea0ea6bd0",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
