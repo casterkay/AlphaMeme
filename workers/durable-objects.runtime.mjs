@@ -222,6 +222,7 @@ describe('M2 Durable Object bindings', () => {
           nextLeaseEpoch: 1,
           inFlight: null,
           eligibility: { paused: false, configured: false },
+          live: { subscribed: false, leaseUntil: 0 },
           fairness: { outbox: null },
           retries: {},
           checkpoints: {},

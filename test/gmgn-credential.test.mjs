@@ -57,6 +57,16 @@ test('GMGN credentials use unique AES-GCM envelopes bound to their tenant', asyn
     error instanceof GmgnCredentialError && error.code === 'GMGN_CREDENTIAL_DECRYPT_FAILED');
 });
 
+test('GMGN credential envelopes cannot be substituted between active and pending fields', async () => {
+  const active = await encryptGmgnApiKey(MASTER_KEY, '1001', API_KEY, { field: 'gmgn-api-key' });
+  const pending = await encryptGmgnApiKey(MASTER_KEY, '1001', API_KEY, { field: 'gmgn-pending-api-key' });
+
+  await assert.rejects(() => decryptGmgnApiKey(MASTER_KEY, '1001', active, { field: 'gmgn-pending-api-key' }), error =>
+    error instanceof GmgnCredentialError && error.code === 'GMGN_CREDENTIAL_DECRYPT_FAILED');
+  await assert.rejects(() => decryptGmgnApiKey(MASTER_KEY, '1001', pending, { field: 'gmgn-api-key' }), error =>
+    error instanceof GmgnCredentialError && error.code === 'GMGN_CREDENTIAL_DECRYPT_FAILED');
+});
+
 test('GMGN credential reads fail closed for missing master material, records, and corruption', async () => {
   const storage = new MemoryCredentialStorage();
   await assert.rejects(() => saveGmgnApiKey(storage, '', '1001', API_KEY), error =>
