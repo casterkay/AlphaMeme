@@ -16,6 +16,7 @@ import {
   GmgnAdmissionStateError,
   SqliteGmgnAdmissionStateStore,
   defaultGmgnAdmissionState,
+  mergeGmgnAdmissionState,
   normalizeTenantId,
   readGmgnAdmissionState,
   writeGmgnAdmissionState
@@ -277,6 +278,31 @@ test('GMGN admission adapter matches the provider state-store boundary and refus
   assert.equal((await adapter.read()).lastWeight, 5);
   assert.throws(() => writeGmgnAdmissionState(storage, '1001', { ...defaultGmgnAdmissionState(), lastWeight: 0 }), error =>
     error instanceof GmgnAdmissionStateError && error.code === 'GMGN_ADMISSION_STATE_INVALID');
+});
+
+test('GMGN admission merges stale responses without blocking current backoff recovery', () => {
+  const current = {
+    nextAllowedAt: 2_000,
+    backoffFactor: 2,
+    lastRequestAt: 1_500,
+    lastWeight: 1,
+    successStreak: 29,
+    spacingReadyAt: 2_000,
+    keyEpoch: 4
+  };
+  assert.deepEqual(mergeGmgnAdmissionState(current, {
+    ...current,
+    backoffFactor: 1.75,
+    successStreak: 0
+  }), { ...current, backoffFactor: 1.75, successStreak: 0 });
+  assert.deepEqual(mergeGmgnAdmissionState(current, {
+    ...current,
+    keyEpoch: 3,
+    nextAllowedAt: 0,
+    spacingReadyAt: 0,
+    backoffFactor: 1,
+    successStreak: 30
+  }), current);
 });
 
 test('tenant IDs use the canonical decimal String(chat_id) representation', () => {

@@ -161,6 +161,7 @@ export class MemoryGmgnAdmissionStateStore {
 
   async write(next) {
     this.value = admissionState(next);
+    return structuredClone(this.value);
   }
 }
 
@@ -642,12 +643,13 @@ export class GmgnClient {
     if (this.admissionFailure) throw this.admissionFailure;
     const value = admissionState(next);
     try {
-      await this.admissionStateStore.write(structuredClone(value));
+      const persisted = await this.admissionStateStore.write(structuredClone(value));
+      this.admission = admissionState(persisted === undefined ? value : persisted);
     } catch (error) {
       this.admissionFailure = this.#admissionFailure(error);
       throw this.admissionFailure;
     }
-    this.admission = value;
+    return this.admission;
   }
 
   #reservation(value) {

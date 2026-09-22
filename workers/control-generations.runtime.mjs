@@ -2,7 +2,12 @@ import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it, vi } from 'vitest';
 import { prepareCredentialVerification } from '../src/auth/connection.mjs';
+import { GmgnClient } from '../src/providers/gmgn.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
+import {
+  SqliteGmgnAdmissionStateStore,
+  writeGmgnAdmissionState
+} from '../src/storage/gmgn-admission-state.mjs';
 
 const settings = Object.freeze({
   maxDeepAuditsPerCycle: 1,
@@ -164,5 +169,47 @@ describe('Radar control generations', () => {
     } finally {
       encryptSpy.mockRestore();
     }
+  });
+
+  it('does not let a late GMGN response rewind a newer credential epoch or cooldown', async () => {
+    const tenantId = '19107';
+    const radar = await configuredRadar(tenantId);
+    let startFetch;
+    let finishFetch;
+    const started = new Promise(resolve => { startFetch = resolve; });
+    const finished = new Promise(resolve => { finishFetch = resolve; });
+
+    await runInDurableObject(radar, async (_instance, state) => {
+      const admissionStore = new SqliteGmgnAdmissionStateStore(state.storage, tenantId);
+      const client = new GmgnClient({
+        apiKeyProvider: () => `gmgn_${'a'.repeat(32)}`,
+        admissionStateStore: admissionStore,
+        minRequestGapMs: 1,
+        fetch: async () => {
+          startFetch();
+          await finished;
+          return new Response(JSON.stringify({ code: 0, data: {} }), { status: 200 });
+        }
+      });
+      const request = client.tokenInfo('bsc', `0x${'1'.repeat(40)}`);
+      await started;
+      const cooldownUntil = Date.now() + 60_000;
+      writeGmgnAdmissionState(state.storage, tenantId, {
+        ...await admissionStore.read(),
+        keyEpoch: 1,
+        nextAllowedAt: cooldownUntil,
+        spacingReadyAt: cooldownUntil,
+        backoffFactor: 2
+      });
+      finishFetch();
+      await request;
+
+      expect(await admissionStore.read()).toMatchObject({
+        keyEpoch: 1,
+        nextAllowedAt: cooldownUntil,
+        spacingReadyAt: cooldownUntil,
+        backoffFactor: 2
+      });
+    });
   });
 });
