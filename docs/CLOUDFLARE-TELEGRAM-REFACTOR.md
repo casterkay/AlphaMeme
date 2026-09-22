@@ -3,6 +3,10 @@
 > 本计划只改本仓库（meme-radar）。不涉及 MemeHarness。
 > 目标：把本地只读 Node web 应用，重构为 Cloudflare Worker 服务，Telegram bot 作为唯一用户界面。
 > 状态：设计稿，已纳入本轮评审修订；本次只更新计划，不代表实现或平台 spike 已通过。
+>
+> Telegram 详细交互设计见 [TELEGRAM-M3-INTERFACE-DESIGN.md](TELEGRAM-M3-INTERFACE-DESIGN.md)：
+> 包含面板、双语文案、回调/状态契约与验收矩阵，并提议将 GitHub #26–29 从 M4 移入 M3。
+> 该里程碑调整仍是提案；下文阶段划分与 GitHub 尚未因此变更。
 
 ## 0. 已确认的决策
 
