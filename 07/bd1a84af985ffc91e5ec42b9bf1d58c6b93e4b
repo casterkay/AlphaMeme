@@ -1,0 +1,25 @@
+src/storage/recoverable-scanner.mjs
+  s_92be46b83b7cae::t_62fb0ab66bffc0 221,223-224,255,530,568
+src/storage/scheduler-state.mjs
+  s_92be46b83b7cae::t_06ac2d93b75c60 239,242-243,247
+workers/control-generations.runtime.mjs
+  s_92be46b83b7cae::t_c922bc6b0847c7 237,252-253
+workers/radar-agent.runtime.mjs
+  s_92be46b83b7cae::t_657b9576663402 432,466,511
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "07bd1a84af985ffc91e5ec42b9bf1d58c6b93e4b",
+  "prompts": {},
+  "sessions": {
+    "s_92be46b83b7cae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7c0-87ec-7cd1-bdd9-078c0c1afbc8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
