@@ -1,0 +1,33 @@
+src/radar-agent.mjs
+  s_1c3716fde7ef24::t_d9994d6c3793d3 8,10,67-83,113-128
+src/storage/scheduler-state.mjs
+  s_1c3716fde7ef24::t_efd5c94f18b09d 137-211
+src/telegram-intake.mjs
+  s_1c3716fde7ef24::t_2c41e04b2095ee 1-117
+src/worker-rpc.mjs
+  s_1c3716fde7ef24::t_313bd4b91c87b8 1-25
+src/worker.mjs
+  s_1c3716fde7ef24::t_172d5f94d97b37 5-8,23-44,63-100,117,123-131,143
+test/telegram-intake.test.mjs
+  s_1c3716fde7ef24::t_0dd024b3ad0aee 1-82
+test/worker-rpc.test.mjs
+  s_1c3716fde7ef24::t_1210b0c91c083a 1-45
+workers/telegram-intake.runtime.mjs
+  s_1c3716fde7ef24::t_8a1dc4d8dcf892 1-209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e9b593c7239d4f2e02584e439b68c7df99582d30",
+  "prompts": {},
+  "sessions": {
+    "s_1c3716fde7ef24": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c415-261c-7cc3-9d4d-807454d45380",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
