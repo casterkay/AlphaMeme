@@ -2,6 +2,10 @@ import { RadarAgent } from './radar-agent.mjs';
 import { TenantRegistry } from './tenant-registry.mjs';
 import { isAuthorizedBearer, isAuthorizedTelegramWebhookSecret } from './worker-auth.mjs';
 import { normalizeTenantId } from './storage/gmgn-admission-state.mjs';
+import { parseTelegramUpdate } from './telegram-intake.mjs';
+import { callWorkerRpc } from './worker-rpc.mjs';
+
+const MAX_TELEGRAM_UPDATE_BYTES = 256 * 1024;
 
 export { RadarAgent, TenantRegistry };
 
@@ -14,6 +18,28 @@ function json(value, init = {}) {
 
 function methodNotAllowed() {
   return json({ error: 'method_not_allowed' }, { status: 405, headers: { allow: 'GET' } });
+}
+
+function operatorStatus(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.lifecycle !== 'string' || !Number.isSafeInteger(value.schemaVersion)
+    || !value.gmgnAdmission || typeof value.gmgnAdmission !== 'object' || Array.isArray(value.gmgnAdmission)) {
+    throw new Error('Radar status has an unsupported shape');
+  }
+  const admission = value.gmgnAdmission;
+  if (!Number.isSafeInteger(admission.nextAllowedAt) || !Number.isSafeInteger(admission.spacingReadyAt)
+    || !Number.isFinite(admission.backoffFactor) || !Number.isSafeInteger(admission.keyEpoch)) {
+    throw new Error('Radar admission status has an unsupported shape');
+  }
+  return {
+    lifecycle: value.lifecycle,
+    schemaVersion: value.schemaVersion,
+    gmgnAdmission: {
+      nextAllowedAt: admission.nextAllowedAt,
+      spacingReadyAt: admission.spacingReadyAt,
+      backoffFactor: admission.backoffFactor,
+      keyEpoch: admission.keyEpoch
+    }
+  };
 }
 
 function tenantIdFromSearch(url) {
@@ -34,6 +60,44 @@ async function telegramWebhookAuthorized(request, env) {
   return isAuthorizedTelegramWebhookSecret(request.headers.get('x-telegram-bot-api-secret-token'), env.TELEGRAM_WEBHOOK_SECRET);
 }
 
+async function readBoundedJson(request) {
+  const contentLength = request.headers.get('content-length');
+  if (contentLength !== null && (!/^\d+$/.test(contentLength) || Number(contentLength) > MAX_TELEGRAM_UPDATE_BYTES)) return null;
+  if (!request.body) return null;
+  const reader = request.body.getReader();
+  const chunks = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > MAX_TELEGRAM_UPDATE_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(concatenate(chunks, length)));
+  } catch {
+    return null;
+  }
+}
+
+function concatenate(chunks, length) {
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -50,14 +114,21 @@ export default {
         const tenantId = tenantIdFromSearch(url);
         if (!tenantId) return json({ error: 'tenant_id_required' }, { status: 400 });
         const id = env.RADAR.idFromName('radar:' + tenantId);
-        return json(await env.RADAR.get(id).getStatus(tenantId));
+        return json(operatorStatus(await callWorkerRpc(() => env.RADAR.get(id).getStatus(tenantId))));
       }
 
       if (url.pathname === '/webhook/telegram') {
         if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, { status: 405, headers: { allow: 'POST' } });
         if (!(await telegramWebhookAuthorized(request, env))) return json({ error: 'forbidden' }, { status: 403 });
-        // Do not acknowledge a Telegram delivery before #13 durably receives and deduplicates it.
-        return json({ error: 'webhook_not_ready' }, { status: 503 });
+        const update = await readBoundedJson(request);
+        const parsed = parseTelegramUpdate(update);
+        if (parsed.kind !== 'accepted') return json({ accepted: false });
+
+        const registry = env.TENANT_REGISTRY.getByName('tenant-registry');
+        await callWorkerRpc(() => registry.registerTenant(parsed.receipt.tenantId));
+        const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${parsed.receipt.tenantId}`));
+        const result = await callWorkerRpc(() => radar.receiveTelegramUpdate(parsed.receipt));
+        return json({ accepted: result.accepted === true });
       }
 
       return json({ error: 'not_found' }, { status: 404 });
@@ -69,7 +140,7 @@ export default {
 
   async scheduled(controller, env) {
     const registry = env.TENANT_REGISTRY.getByName('tenant-registry');
-    const result = await registry.scheduledWake();
+    const result = await callWorkerRpc(() => registry.scheduledWake());
     console.log(JSON.stringify({ event: 'scheduler_watchdog', cron: controller.cron, ...result }));
   }
 };

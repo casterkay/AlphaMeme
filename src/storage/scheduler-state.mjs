@@ -134,6 +134,81 @@ export class SqliteSchedulerStore {
     if (typeof callback !== 'function') throw new SchedulerStateError('SCHEDULER_TRANSACTION_INVALID', 'scheduler local transaction must be a function');
     return this.storage.transactionSync(callback);
   }
+
+  recordTelegramInboxReceipt(receipt, receivedAt) {
+    if (!receipt || typeof receipt !== 'object' || receipt.tenantId !== this.tenantId || !Number.isSafeInteger(receivedAt) || receivedAt < 0) {
+      throw new SchedulerStateError('SCHEDULER_INBOX_RECEIPT_INVALID', 'Telegram inbox receipt is invalid');
+    }
+    return this.storage.transactionSync(() => {
+      const current = this.read();
+      const tenant = this.storage.sql.exec('SELECT owner_user_id FROM tenants WHERE tenant_id = ?', this.tenantId).toArray()[0];
+      if (tenant && tenant.owner_user_id !== receipt.actorUserId) {
+        return { accepted: false, reason: 'owner_mismatch' };
+      }
+      if (!tenant) {
+        this.storage.sql.exec(
+          'INSERT INTO tenants (tenant_id, owner_user_id, gmgn_api_key_enc, onboard_state, created_at) VALUES (?, ?, ?, ?, ?)',
+          this.tenantId,
+          receipt.actorUserId,
+          null,
+          'none',
+          receivedAt
+        );
+      }
+
+      const existing = this.storage.sql
+        .exec('SELECT actor_user_id, command_type, status, next_at FROM inbox WHERE tenant_id = ? AND update_id = ?', this.tenantId, receipt.updateId)
+        .toArray()[0];
+      if (existing && (existing.actor_user_id !== receipt.actorUserId || existing.command_type !== receipt.commandType)) {
+        throw new SchedulerStateError('SCHEDULER_INBOX_RECEIPT_CONFLICT', 'Telegram inbox update identity conflicts with its durable receipt');
+      }
+      if (!existing) {
+        this.storage.sql.exec(
+          'INSERT INTO inbox (tenant_id, update_id, actor_user_id, command_type, payload_json, payload_enc, status, generation, received_at, attempts, next_at, expires_at, message_date, source_message_id, result_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          this.tenantId,
+          receipt.updateId,
+          receipt.actorUserId,
+          receipt.commandType,
+          JSON.stringify(receipt.payload),
+          null,
+          'RECEIVED',
+          1,
+          receivedAt,
+          0,
+          receipt.dueAt,
+          null,
+          receipt.messageDate,
+          receipt.sourceMessageId,
+          null
+        );
+      }
+
+      const keepScheduled = !existing || existing.status === 'RECEIVED' || existing.status === 'RUNNING';
+      const dueAt = existing ? existing.next_at : receipt.dueAt;
+      if (!Number.isSafeInteger(dueAt) || dueAt < 0) {
+        throw new SchedulerStateError('SCHEDULER_INBOX_RECEIPT_INVALID', 'Telegram inbox receipt has an invalid durable due time');
+      }
+      const taskId = `inbox:${receipt.updateId}`;
+      const task = { id: taskId, kind: 'command', dueAt, enabled: true, needsGmgn: false, gmgnWeight: 1 };
+      const tasks = keepScheduled
+        ? current.tasks.some(candidate => candidate.id === taskId)
+          ? current.tasks.map(candidate => candidate.id === taskId ? task : candidate)
+          : [...current.tasks, task]
+        : current.tasks.filter(candidate => candidate.id !== taskId);
+      writeRecord(this.storage, this.tenantId, TASKS_KEY, taskRecord({ version: 1, tasks }));
+      return { accepted: true, duplicate: Boolean(existing) };
+    });
+  }
+
+  telegramInboxStatus(updateId) {
+    if (typeof updateId !== 'string' || !/^(0|[1-9]\d*)$/.test(updateId)) {
+      throw new SchedulerStateError('SCHEDULER_INBOX_RECEIPT_INVALID', 'Telegram inbox update id is invalid');
+    }
+    const row = this.storage.sql
+      .exec('SELECT status FROM inbox WHERE tenant_id = ? AND update_id = ?', this.tenantId, updateId)
+      .toArray()[0];
+    return row?.status || null;
+  }
 }
 
 export const SCHEDULER_STATE_KEYS = Object.freeze({ INSTANCE_KEY, RUNTIME_KEY, TASKS_KEY });
