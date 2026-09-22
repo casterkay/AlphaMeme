@@ -5,8 +5,9 @@ import {
   writeGmgnAdmissionState
 } from './storage/gmgn-admission-state.mjs';
 import { initializeRadarSchema } from './storage/schema.mjs';
-import { OneAlarmScheduler } from './scheduler.mjs';
+import { localTransactionHandler, OneAlarmScheduler, SchedulerStepError } from './scheduler.mjs';
 import { ensureSchedulerTenant, readSchedulerTenant, SqliteSchedulerStore } from './storage/scheduler-state.mjs';
+import { validateTelegramReceipt } from './telegram-intake.mjs';
 
 export class RadarAgent extends DurableObject {
   #schedulerHandlers;
@@ -63,6 +64,23 @@ export class RadarAgent extends DurableObject {
     return scheduler.wake();
   }
 
+  async receiveTelegramUpdate(value) {
+    const receipt = validateTelegramReceipt(value);
+    const existingTenant = this.ctx.storage.sql
+      .exec('SELECT owner_user_id FROM tenants WHERE tenant_id = ?', receipt.tenantId)
+      .toArray()[0];
+    if (existingTenant && existingTenant.owner_user_id !== receipt.actorUserId) {
+      return { accepted: false, reason: 'owner_mismatch' };
+    }
+
+    const store = new SqliteSchedulerStore(this.ctx.storage, receipt.tenantId);
+    const result = store.recordTelegramInboxReceipt(receipt, Date.now());
+    if (!result.accepted) return result;
+
+    const dueAt = await this.#scheduler(store).recomputeAlarm();
+    return { ...result, dueAt };
+  }
+
   async alarm() {
     const scheduler = this.#schedulerForPersistedTenant();
     if (!scheduler) {
@@ -92,7 +110,22 @@ export class RadarAgent extends DurableObject {
         setAlarm: at => this.ctx.storage.setAlarm(at),
         deleteAlarm: () => this.ctx.storage.deleteAlarm()
       },
-      handlers: this.#schedulerHandlers
+      handlers: { command: this.#receivedInboxHandler(store), ...this.#schedulerHandlers }
+    });
+  }
+
+  #receivedInboxHandler(store) {
+    return localTransactionHandler(({ task, transaction }) => {
+      if (!task.id.startsWith('inbox:')) {
+        throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', `no bounded handler is registered for ${task.kind}`);
+      }
+      const updateId = task.id.slice('inbox:'.length);
+      return transaction(() => {
+        const status = store.telegramInboxStatus(updateId);
+        if (status !== 'RECEIVED' && status !== 'RUNNING') return { status: 'success', complete: true };
+        // M3 owns command execution. Until it is installed, retain the durable receipt without exhausting retries.
+        return { status: 'success', complete: false, nextDueAt: Date.now() + 60_000 };
+      });
     });
   }
 }
