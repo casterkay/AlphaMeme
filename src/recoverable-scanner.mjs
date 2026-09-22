@@ -2,7 +2,20 @@ import { CHART_RISK_VERSION } from './scoring/chart-risk.mjs';
 import { deepScreen, discoveryScreen } from './scoring/index.mjs';
 import { normalizeGmgnList, tokenInfoPrice, unwrapGmgn } from './providers/gmgn-normalize.mjs';
 import { dueOutcomeJobs, horizons, sampleRejected } from './scoring/outcomes.mjs';
-import { sha256Hex } from './util/crypto.mjs';
+import {
+  classifyDeepResult as classifyRecoverableDeepResult,
+  mergeSecondaryClassification as mergeRecoverableSecondaryClassification
+} from './scoring/classification.mjs';
+import { aggregateSecondarySources } from './providers/secondary.mjs';
+import {
+  addressKey,
+  buildQueue,
+  nextAuditDelay,
+  publicToken,
+  reviewRevision as reviewEvidence,
+  selectAuditQueue,
+  socialFrom
+} from './scanner-parity.mjs';
 import { RecoverableScannerError, SCAN_PHASES } from './storage/recoverable-scanner.mjs';
 
 const AUDIT_ENDPOINTS = Object.freeze(['info', 'security', 'pool', 'holders', 'traders', 'candles']);
@@ -27,11 +40,6 @@ function first(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
 }
 
-function addressKey(value) {
-  const address = String(value ?? '').trim();
-  return /^0x[0-9a-f]{40}$/i.test(address) ? address.toLowerCase() : address;
-}
-
 function tokenKey(chain, address) {
   return `${chain}:${addressKey(address)}`;
 }
@@ -41,6 +49,38 @@ function requestError(error) {
     code: typeof error?.code === 'string' && error.code ? error.code : 'REQUEST_FAILED',
     message: typeof error?.message === 'string' && error.message ? error.message : '请求失败'
   };
+}
+
+function outcomeReadLimit(settings) {
+  return Number.isSafeInteger(settings.outcomeReadsPerCycle) && settings.outcomeReadsPerCycle > 0
+    ? settings.outcomeReadsPerCycle : 4;
+}
+
+function monitorItem(row) {
+  return {
+    row: {
+      address: String(row.address),
+      symbol: String(row.symbol || String(row.address).slice(0, 6)),
+      name: String(row.name || ''),
+      price: row.price,
+      market_cap: row.marketCap,
+      liquidity: row.liquidity,
+      creation_timestamp: row.createdAt,
+      _monitorOnly: true
+    },
+    screen: {
+      mc: num(row.marketCap),
+      liquidity: num(row.liquidity),
+      ageSec: num(row.ageSec),
+      priorityBand: true,
+      score: 0
+    }
+  };
+}
+
+function isAuditDeadlineBoundary(checkpoint, now) {
+  return checkpoint.deadlineAt !== null && now >= checkpoint.deadlineAt
+    && checkpoint.phase === 'AUDIT' && checkpoint.endpointIndex === 0 && checkpoint.tokenIndex > 0;
 }
 
 function boundedRows(value) {
@@ -73,7 +113,7 @@ function auditValue(record, name) {
     : unwrapGmgn(record.value) || {};
 }
 
-function auditFromPartial(partial, now) {
+function auditFromPartial(partial) {
   const responses = partial.audit?.responses || {};
   const endpoints = Object.fromEntries(AUDIT_ENDPOINTS.map(name => [name,
     responses[name]?.error ? { ok: false, ...responses[name].error } : responses[name] ? { ok: true } : { ok: false, code: 'NOT_REQUESTED', message: '端点尚未请求' }
@@ -86,143 +126,30 @@ function auditFromPartial(partial, now) {
     holders: auditValue(responses.holders, 'holders'),
     traders: auditValue(responses.traders, 'traders'),
     candles: auditValue(responses.candles, 'candles'),
-    _meta: { complete, earlyExit: Boolean(partial.audit?.earlyExit), endpoints, auditedAt: now }
+    _meta: {
+      complete,
+      earlyExit: Boolean(partial.audit?.earlyExit),
+      endpoints,
+      auditedAt: Math.max(0, ...Object.values(responses).map(record =>
+        Number.isSafeInteger(record?.collectedAt) && record.collectedAt >= 0 ? record.collectedAt : 0
+      ))
+    }
   };
 }
 
-function secondaryFromPartial(partial) {
-  if (partial.secondary?.result) return partial.secondary.result;
+function secondaryFromPartial(partial, { chain, address, primary }) {
   const responses = partial.secondary?.sources;
-  if (!responses || !Object.keys(responses).length) return null;
-  const sources = Object.fromEntries(SECONDARY_SOURCES.map(source => {
-    const response = responses[source];
-    return [source, response?.error ? { status: 'ERROR', errorCode: response.error.code } : { status: 'ERROR', errorCode: 'NORMALIZATION_MISSING' }];
-  }));
-  return {
-    status: 'DEGRADED', complete: false, sources,
-    market: { complete: false, websites: [] },
-    security: { complete: false, verdict: 'UNKNOWN', fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null },
-    conflicts: []
-  };
-}
-
-function queueSort(left, right) {
-  return Number(right.priorityBand) - Number(left.priorityBand)
-    || num(left.firstSeenAt) - num(right.firstSeenAt)
-    || num(right.score) - num(left.score);
-}
-
-export function selectRecoverableAuditQueue(queue, availableAddresses, now, cycleNumber, limit) {
-  const available = new Set([...availableAddresses].map(addressKey));
-  const due = queue.filter(item => available.has(addressKey(item.address)) && num(item.nextAuditAt) <= now);
-  const never = due.filter(item => !num(item.lastAuditedAt)).sort(queueSort);
-  const rechecks = due.filter(item => num(item.lastAuditedAt)).sort(queueSort);
-  const selected = [];
-  while (selected.length < limit && (never.length || rechecks.length)) {
-    const slot = cycleNumber + selected.length;
-    const urgent = rechecks.findIndex(row => row.status === 'X_REVIEW' || row.watched);
-    if (urgent >= 0 && slot % 3 !== 1) selected.push(...rechecks.splice(urgent, 1));
-    else if (slot % 5 === 0 && never.length) {
-      const oldest = never.reduce((left, right) => num(left.firstSeenAt) < num(right.firstSeenAt) ? left : right);
-      selected.push(...never.splice(never.indexOf(oldest), 1));
-    } else selected.push((slot % 3 === 0 ? rechecks.shift() : never.shift()) || rechecks.shift() || never.shift());
+  if (partial.secondary?.result && Object.values(responses || {}).some(response => response?.value?.result)) {
+    return partial.secondary.result;
   }
-  return selected.filter(Boolean);
-}
-
-function buildQueue(previous, prequalified, now, settings) {
-  const byAddress = new Map((previous || []).map(item => [addressKey(item.address), { ...item }]));
-  for (const { row, screen } of prequalified) {
-    const old = byAddress.get(addressKey(row.address));
-    byAddress.set(addressKey(row.address), {
-      address: String(row.address),
-      firstSeenAt: num(old?.firstSeenAt, now),
-      lastSeenAt: now,
-      lastAuditedAt: num(old?.lastAuditedAt),
-      nextAuditAt: num(old?.nextAuditAt),
-      attempts: num(old?.attempts),
-      status: old?.status || 'QUEUED',
-      priorityBand: Boolean(screen.priorityBand),
-      score: screen.score,
-      watched: Boolean(row._monitorOnly)
-    });
+  if (responses && Object.keys(responses).length) {
+    return aggregateSecondarySources({ chain, tokenAddress: address, primary, sources: responses });
   }
-  return [...byAddress.values()].filter(item => now - num(item.lastSeenAt, item.firstSeenAt) <= settings.queueRetentionMs);
+  return partial.secondary?.result || null;
 }
 
-function nextAuditDelay(status, settings) {
-  if (status === 'HARD_REJECT') return settings.hardRejectRecheckMs;
-  if (status === 'X_REVIEW') return settings.chainPassRecheckMs;
-  return settings.dynamicRecheckMs;
-}
-
-export function classifyRecoverableDeepResult(deep, auditMeta = {}) {
-  const failed = new Set(deep?.failed || []);
-  const unknown = new Set(deep?.blockingUnknownFields || deep?.unknownFields || []);
-  const unknownCheck = name => {
-    const prefixes = {
-      openSource: ['openSource'], ownerRenounced: ['ownerRenounced', 'renouncedMint', 'renouncedFreezeAccount'],
-      lpLocked: ['lockRate'], notHoneypot: ['honeypot', 'sellability.'], tax: ['buyTax', 'sellTax'],
-      rug: ['rugRatio'], concentration: ['top10'], dev: ['devHold'], insider: ['insider'],
-      bundler: ['bundler'], sniper: ['sniperHold'], wash: ['wash'], liquidity: ['liquidity'],
-      wallets: ['holders.'], observation: ['candles'], chartRisk: ['chartRisk.']
-    }[name] || [];
-    return [...unknown].some(field => prefixes.some(prefix => field === prefix || field.startsWith(prefix)));
-  };
-  const transient = new Set(['wallets', 'observation', 'marketBehavior']);
-  if (deep?.honeypotEvidence !== '检测到貔貅') transient.add('notHoneypot');
-  const hardFailed = [...failed].filter(name => !transient.has(name) && !unknownCheck(name));
-  const waitingFailed = [...failed].filter(name => transient.has(name) || unknownCheck(name));
-  if (auditMeta.complete === false) waitingFailed.push('auditIncomplete');
-  if (hardFailed.length) return { status: 'HARD_REJECT', hardFailed, waitingFailed };
-  if (!deep?.chainPass || auditMeta.complete === false) return { status: 'WAIT_RECHECK', hardFailed, waitingFailed };
-  return { status: 'X_REVIEW', hardFailed: [], waitingFailed: [] };
-}
-
-export function mergeRecoverableSecondaryClassification(baseClassification, secondary) {
-  const base = baseClassification || { status: 'WAIT_RECHECK', hardFailed: [], waitingFailed: [] };
-  if (!secondary) return { ...base, secondaryReason: '' };
-  const sources = Object.values(secondary.sources || {});
-  const supported = sources.some(source => source?.status !== 'UNSUPPORTED');
-  const fatal = secondary.security?.verdict === 'FATAL';
-  const blockingConflicts = (secondary.conflicts || []).filter(conflict => ['MARKET_MISMATCH', 'SECURITY_MISMATCH'].includes(conflict?.type));
-  const incomplete = supported && (secondary.status !== 'COMPLETE' || secondary.security?.verdict === 'UNKNOWN');
-  return {
-    ...base,
-    status: fatal ? 'HARD_REJECT' : base.status === 'X_REVIEW' && (incomplete || blockingConflicts.length) ? 'WAIT_RECHECK' : base.status,
-    secondaryReason: fatal ? '第二安全源触发一票否决' : incomplete ? '第二数据源不完整，等待复查'
-      : blockingConflicts.length ? '多源数据冲突，等待复查' : (!supported ? '当前链暂无第二数据源，仅供人工查看' : '')
-  };
-}
-
-function publicToken(row, screen, chain) {
-  const twitter = String(first(row.twitter, row.twitter_username, row.link?.twitter_username) || '');
-  return {
-    address: addressKey(row.address), chain, symbol: String(row.symbol || '?').slice(0, 30), name: String(row.name || '').slice(0, 80),
-    marketCap: num(first(row.market_cap, row.usd_market_cap, row.mcp)), liquidity: num(row.liquidity),
-    price: numberOrNull(first(row.price, row.price_usd, row.usd_price)), createdAt: num(first(row.creation_timestamp, row.created_timestamp, row.open_timestamp)),
-    ageSec: screen.ageSec, priorityBand: screen.priorityBand, discoveryScore: screen.score,
-    holders: num(row.holder_count), volume1h: num(first(row.volume_1h, row.volume)), buys: num(first(row.buys_24h, row.buys)),
-    sells: num(first(row.sells_24h, row.sells)), twitter, gmgnUrl: String(row.link?.gmgn || '')
-  };
-}
-
-function socialFrom(token) {
-  return token.twitter
-    ? { twitter: token.twitter, status: 'UNVERIFIED', score: 0, reason: '当前采用X人工复核模式' }
-    : { twitter: '', status: 'FAIL', score: 0, reason: '没有X账号' };
-}
-
-async function reviewEvidence(candidate) {
-  const security = candidate.deep?.security || {};
-  return (await sha256Hex(JSON.stringify({
-    status: candidate.status, checks: candidate.deep?.checks, failed: candidate.deep?.failed,
-    owner: security.ownerRenounced, mint: security.renouncedMint, freeze: security.renouncedFreezeAccount,
-    honeypot: security.honeypot, buyTax: security.buyTax, sellTax: security.sellTax,
-    lock: security.lockRate, burned: security.lpBurned, secondary: candidate.secondary?.security?.verdict,
-    conflicts: candidate.secondary?.conflicts, website: candidate.info?.website, twitter: candidate.info?.twitter
-  }))).slice(0, 24);
-}
+export { classifyRecoverableDeepResult, mergeRecoverableSecondaryClassification };
+export { selectAuditQueue as selectRecoverableAuditQueue };
 
 function phaseError(message) {
   return new RecoverableScannerError('CYCLE_CHECKPOINT_PHASE_CONFLICT', message);
@@ -250,13 +177,45 @@ function outcomeWithSample(outcome, job, sample, error, now) {
   return next;
 }
 
+async function outcomeForClassification(store, chain, candidate, now) {
+  const outcomes = typeof store.readOutcomes === 'function' ? store.readOutcomes(chain) : [];
+  const existing = outcomes.find(row => addressKey(row.address) === addressKey(candidate.address));
+  if (existing) {
+    return {
+      ...existing,
+      latestDecision: candidate.status,
+      latestFailed: clone(candidate.deep?.failed || []),
+      lastAuditedAt: candidate.auditedAt
+    };
+  }
+  if (candidate.status === 'X_REVIEW' && candidate.price > 0) {
+    return {
+      address: candidate.address,
+      initialDecision: 'X_REVIEW',
+      latestDecision: candidate.status,
+      baselineAt: now,
+      baselinePrice: candidate.price,
+      lastAuditedAt: candidate.auditedAt,
+      symbol: candidate.symbol,
+      latestFailed: clone(candidate.deep?.failed || []),
+      samples: {}
+    };
+  }
+  if (candidate.status === 'HARD_REJECT' && candidate.price > 0 && typeof store.readOutcomes === 'function') {
+    await sampleRejected(outcomes, candidate, now);
+    return outcomes.find(row => addressKey(row.address) === addressKey(candidate.address)) || null;
+  }
+  return null;
+}
+
 export class RecoverableScanner {
   constructor({ store, settings, now = () => Date.now() }) {
     if (!store || typeof store.begin !== 'function' || typeof store.advance !== 'function') {
       throw new RecoverableScannerError('RECOVERABLE_SCANNER_STORE_INVALID', 'recoverable scanner requires a durable checkpoint store');
     }
     if (!settings || typeof settings !== 'object' || !Number.isSafeInteger(settings.maxDeepAuditsPerCycle)
-      || !Number.isSafeInteger(settings.auditCycleBudgetMs) || !Number.isSafeInteger(settings.queueRetentionMs)) {
+      || !Number.isSafeInteger(settings.auditCycleBudgetMs) || !Number.isSafeInteger(settings.queueRetentionMs)
+      || !Number.isSafeInteger(settings.scanIntervalMs)) {
       throw new RecoverableScannerError('RECOVERABLE_SCANNER_SETTINGS_INVALID', 'recoverable scanner settings are incomplete');
     }
     this.store = store;
@@ -267,7 +226,7 @@ export class RecoverableScanner {
   begin({ cycleId, chain, keyEpoch, controlEpoch, deadlineAt, partial = {}, afterBegin }) {
     const startedAt = this.now();
     return this.store.begin({ cycleId, chain, keyEpoch, controlEpoch, deadlineAt, phase: 'DISCOVER', tokenIndex: 0, endpointIndex: 0,
-      partial: { ...clone(partial), startedAt, settings: clone(this.settings) }, updatedAt: startedAt, afterBegin });
+      partial: { ...clone(partial), rootCycleId: partial.rootCycleId || cycleId, startedAt, settings: clone(this.settings) }, updatedAt: startedAt, afterBegin });
   }
 
   checkpoint(cycleId) {
@@ -277,7 +236,7 @@ export class RecoverableScanner {
   nextRequest(cycleId) {
     const checkpoint = this.checkpoint(cycleId);
     if (!checkpoint) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
-    if (checkpoint.deadlineAt !== null && this.now() >= checkpoint.deadlineAt && ['DISCOVER', 'AUDIT', 'SECONDARY', 'OUTCOMES_SAMPLE'].includes(checkpoint.phase)) {
+    if (isAuditDeadlineBoundary(checkpoint, this.now())) {
       return Object.freeze({ kind: 'DEADLINE_EXPIRED', checkpoint });
     }
     if (checkpoint.phase === 'DISCOVER') {
@@ -332,8 +291,8 @@ export class RecoverableScanner {
       const item = partial.queue?.selected?.[tokenIndex];
       if (!item) throw phaseError('audit token cursor is exhausted');
       if (endpointIndex === 3 || endpointIndex === AUDIT_ENDPOINTS.length) {
-        const completedAudit = auditFromPartial(partial, collectedAt);
-        const completedDeep = deepScreen({ discovery: item.row, audit: completedAudit, nowMs: collectedAt }, {
+        const completedAudit = auditFromPartial(partial);
+        const completedDeep = deepScreen({ discovery: item.row, audit: completedAudit, nowMs: completedAudit._meta.auditedAt }, {
           ...(partial.settings || this.settings), chain: current.chain
         });
         if (classifyRecoverableDeepResult(completedDeep, completedAudit._meta).status === 'HARD_REJECT') {
@@ -378,7 +337,7 @@ export class RecoverableScanner {
     let tokenIndex = current.tokenIndex;
     let endpointIndex = 0;
 
-    if (current.deadlineAt !== null && now >= current.deadlineAt && ['DISCOVER', 'AUDIT', 'SECONDARY', 'OUTCOMES_SAMPLE'].includes(current.phase)) {
+    if (isAuditDeadlineBoundary(current, now)) {
       partial.deadlineExpiredAt = now;
       delete partial.outcomes;
       nextPhase = 'SUMMARIZE';
@@ -390,16 +349,35 @@ export class RecoverableScanner {
         if (held) return { row, screen: { ...screen, pass: false, reasons: [...screen.reasons, ...(held.reasons || [])] } };
         return { row, screen };
       });
+      partial.monitors = typeof this.store.readMonitorCandidates === 'function'
+        ? this.store.readMonitorCandidates(current.chain).map(monitorItem) : [];
+      const downgrades = typeof this.store.readCandidateReview === 'function'
+        ? partial.screened.flatMap(({ row, screen }) => !screen.pass && this.store.readCandidateReview(current.chain, row.address)?.status === 'X_REVIEW'
+          ? [{ address: row.address, reason: screen.reasons.join('；') }] : [])
+        : [];
       nextPhase = 'BUILD_QUEUE';
+      const next = { ...current, phase: nextPhase, tokenIndex, endpointIndex, partial, updatedAt: now };
+      if (typeof this.store.commitScreen === 'function') {
+        return this.store.commitScreen({
+          expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch },
+          downgrades,
+          next
+        });
+      }
+      return this.store.advance({ expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch }, next });
     } else if (current.phase === 'BUILD_QUEUE') {
       const prequalified = (partial.screened || []).filter(item => item.screen.pass).sort((left, right) =>
         Number(right.screen.priorityBand) - Number(left.screen.priorityBand) || right.screen.score - left.screen.score
       );
+      const monitors = (partial.monitors || []).filter(item => !prequalified.some(candidate =>
+        addressKey(candidate.row.address) === addressKey(item.row.address)
+      ));
+      const auditable = [...prequalified, ...monitors];
       const priorQueue = this.store.readAuditQueue(current.chain);
-      const queue = buildQueue(priorQueue, prequalified, now, settings);
-      const availableAddresses = new Set(prequalified.map(item => addressKey(item.row.address)));
-      const selectedQueue = selectRecoverableAuditQueue(queue, availableAddresses, now, num(partial.scanCount) + 1, settings.maxDeepAuditsPerCycle);
-      const byAddress = new Map(prequalified.map(item => [addressKey(item.row.address), item]));
+      const queue = buildQueue(priorQueue, auditable, now, settings);
+      const availableAddresses = new Set(auditable.map(item => addressKey(item.row.address)));
+      const selectedQueue = selectAuditQueue(queue, availableAddresses, now, num(partial.scanCount) + 1, settings.maxDeepAuditsPerCycle);
+      const byAddress = new Map(auditable.map(item => [addressKey(item.row.address), item]));
       partial.queue = {
         rows: queue,
         selected: selectedQueue.map(item => ({ ...item, row: clone(byAddress.get(addressKey(item.address))?.row), screen: clone(byAddress.get(addressKey(item.address))?.screen) })),
@@ -408,8 +386,18 @@ export class RecoverableScanner {
       partial.prequalifiedCount = prequalified.length;
       tokenIndex = 0;
       nextPhase = partial.queue.selected.length ? 'AUDIT' : 'OUTCOMES_SAMPLE';
+      const next = { ...current, phase: nextPhase, tokenIndex, endpointIndex, partial, updatedAt: now };
+      if (typeof this.store.commitQueue === 'function') {
+        return this.store.commitQueue({
+          expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch },
+          auditQueue: queue,
+          next
+        });
+      }
+      return this.store.advance({ expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch }, next });
     } else if (current.phase === 'OUTCOMES_SAMPLE') {
-      const jobs = dueOutcomeJobs(typeof this.store.readOutcomes === 'function' ? this.store.readOutcomes(current.chain) : [], now);
+      const jobs = num(partial.outcomeReads) < outcomeReadLimit(settings)
+        ? dueOutcomeJobs(typeof this.store.readOutcomes === 'function' ? this.store.readOutcomes(current.chain) : [], now) : [];
       const job = jobs[0];
       if (job) {
         partial.outcomes = { job: { address: job.row.address, key: job.key, targetAt: job.targetAt } };
@@ -420,7 +408,20 @@ export class RecoverableScanner {
         nextPhase = 'SUMMARIZE';
       }
     } else if (current.phase === 'SUMMARIZE') {
-      partial.summary = { ...(partial.summary || {}), completedAt: now, finalized: true };
+      const scanCount = num(partial.scanCount) + 1;
+      const rootCycleId = partial.rootCycleId || current.cycleId;
+      const cycleSuffix = `:cycle:${scanCount + 1}`;
+      const nextCycleAt = Math.max(now, num(partial.startedAt, current.updatedAt) + settings.scanIntervalMs);
+      partial.scanCount = scanCount;
+      partial.summary = {
+        ...(partial.summary || {}),
+        completedAt: now,
+        finalized: true,
+        scanCount,
+        nextCycleId: `${String(rootCycleId).slice(0, 127 - cycleSuffix.length)}${cycleSuffix}`,
+        nextCycleAt,
+        nextDeadlineAt: nextCycleAt + settings.auditCycleBudgetMs
+      };
       nextPhase = 'SUMMARIZE';
     } else {
       throw phaseError('current checkpoint phase does not have a local transition');
@@ -437,25 +438,43 @@ export class RecoverableScanner {
     if (!item?.row || !item?.screen) throw phaseError('classification token cursor is exhausted');
     const now = this.now();
     const settings = current.partial.settings || this.settings;
-    const audit = auditFromPartial(current.partial, now);
-    const deep = deepScreen({ discovery: item.row, audit, nowMs: now }, { ...settings, chain: current.chain });
+    const audit = auditFromPartial(current.partial);
+    const deep = deepScreen({ discovery: item.row, audit, nowMs: audit._meta.auditedAt }, { ...settings, chain: current.chain });
     const baseClassification = classifyRecoverableDeepResult(deep, audit._meta);
-    const secondary = secondaryFromPartial(current.partial);
-    const classification = mergeRecoverableSecondaryClassification(baseClassification, secondary);
     const token = publicToken(item.row, item.screen, current.chain);
     const freshPrice = tokenInfoPrice(audit.info);
     if (freshPrice) token.price = freshPrice;
+    const primaryWebsite = String(first(audit.info?.link?.website, item.row.website, item.row.link?.website) || '');
+    const secondary = secondaryFromPartial(current.partial, {
+      chain: current.chain,
+      address: token.address,
+      primary: {
+        market: { priceUsd: token.price, marketCap: token.marketCap, liquidityUsd: token.liquidity, website: primaryWebsite },
+        security: {
+          isHoneypot: deep.security?.honeypot,
+          openSource: deep.security?.openSource,
+          mintable: typeof deep.security?.renouncedMint === 'boolean' ? !deep.security.renouncedMint : undefined
+        }
+      }
+    });
+    const classification = mergeRecoverableSecondaryClassification(baseClassification, secondary);
+    if (item.row._monitorOnly && classification.status === 'X_REVIEW') {
+      classification.status = 'WAIT_RECHECK';
+      classification.secondaryReason = '已离开发现范围，继续跟踪风险；不作为新的通过候选';
+    }
+    const evidenceAt = Math.max(audit._meta.auditedAt, secondary?.checkedAt || 0);
+    const secondaryWebsite = secondary?.market?.websites?.[0] || '';
     const candidate = {
       ...token,
       status: classification.status,
-      auditedAt: now,
-      staleAt: now + settings.staleCandidateMs,
+      auditedAt: evidenceAt,
+      staleAt: evidenceAt + settings.staleCandidateMs,
       deep,
       social: socialFrom(token),
       secondary,
       decisionReason: [...(deep.chartRisk?.reasons || []), classification.secondaryReason, ...(deep.marketBehavior?.downgradeReasons || [])].filter(Boolean).join('；'),
       auditHealth: audit._meta,
-      info: { twitter: token.twitter, website: String(first(audit.info?.link?.website, item.row.website, item.row.link?.website) || '') }
+      info: { twitter: token.twitter, website: String(first(primaryWebsite, secondaryWebsite) || '') }
     };
     candidate.reviewEvidence = await reviewEvidence(candidate);
     const previousCandidate = typeof this.store.readCandidateReview === 'function'
@@ -464,7 +483,7 @@ export class RecoverableScanner {
       ? previousCandidate.reviewRevision : `${candidate.reviewEvidence}-${now}`;
     const queue = {
       ...item,
-      lastAuditedAt: now,
+      lastAuditedAt: evidenceAt,
       nextAuditAt: now + nextAuditDelay(candidate.status, settings),
       attempts: num(item.attempts) + 1,
       status: candidate.status
@@ -473,21 +492,32 @@ export class RecoverableScanner {
       ? { address: candidate.address, version: CHART_RISK_VERSION, codes: deep.chartRisk.codes, reasons: deep.chartRisk.reasons, at: now,
         details: { from: deep.chartRisk.from, to: deep.chartRisk.to } }
       : null;
-    const outcomes = [];
-    let outcome = candidate.status === 'X_REVIEW' && candidate.price > 0 ? {
-      address: candidate.address, initialDecision: 'X_REVIEW', latestDecision: candidate.status, baselineAt: now, baselinePrice: candidate.price,
-      lastAuditedAt: now, symbol: candidate.symbol, latestFailed: candidate.deep.failed, samples: {}
-    } : null;
-    if (candidate.status === 'HARD_REJECT' && candidate.price > 0 && typeof this.store.readOutcomes === 'function') {
-      outcomes.push(...this.store.readOutcomes(current.chain));
-      await sampleRejected(outcomes, candidate, now);
-      outcome = outcomes.find(row => addressKey(row.address) === addressKey(candidate.address)) || null;
-    }
+    const outcome = await outcomeForClassification(this.store, current.chain, candidate, now);
     const nextTokenIndex = current.tokenIndex + 1;
     const partial = clone(current.partial);
     partial.lastCommittedAt = now;
     partial.lastCandidateAddress = candidate.address;
     const nextPhase = nextTokenIndex < (partial.queue?.selected?.length || 0) ? 'AUDIT' : 'OUTCOMES_SAMPLE';
+    if (nextPhase === 'AUDIT') {
+      delete partial.audit;
+      delete partial.secondary;
+    }
+    const event = candidate.status === 'X_REVIEW' && previousCandidate?.status !== 'X_REVIEW'
+      ? {
+          effectType: 'CANDIDATE_NEW',
+          type: 'CANDIDATE_NEW',
+          message: `${candidate.symbol}：新增链上候选，需人工复核`,
+          data: { address: candidate.address, reviewRevision: candidate.reviewRevision },
+          outbox: { payload: { chain: current.chain, address: candidate.address }, desiredRevision: candidate.reviewRevision }
+        }
+      : previousCandidate?.status === 'X_REVIEW' && candidate.status !== 'X_REVIEW'
+        ? {
+            effectType: 'RISK_WORSENED',
+            type: 'RISK_WORSENED',
+            message: `${candidate.symbol}：风险或证据状态恶化，请重新复核`,
+            data: { address: candidate.address, reviewRevision: candidate.reviewRevision }
+          }
+        : null;
     return this.store.commitClassification({
       expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch },
       next: { ...current, phase: nextPhase, tokenIndex: nextTokenIndex, endpointIndex: 0, partial, updatedAt: now },
@@ -495,13 +525,7 @@ export class RecoverableScanner {
       auditQueue: queue,
       riskExclusion,
       outcome,
-      event: {
-        effectType: candidate.status,
-        type: candidate.status,
-        message: `${candidate.symbol}：${candidate.status}`,
-        data: { address: candidate.address, reviewRevision: candidate.reviewRevision },
-        outbox: candidate.status === 'X_REVIEW' ? { payload: { chain: current.chain, address: candidate.address }, desiredRevision: candidate.reviewRevision } : undefined
-      }
+      event
     });
   }
 
@@ -519,8 +543,10 @@ export class RecoverableScanner {
     if (!outcome) throw new RecoverableScannerError('OUTCOME_MISSING', 'outcome sample target no longer exists');
     const progressed = outcomeWithSample(outcome, job, sample, error, collectedAt);
     const nextOutcomes = outcomes.map(row => addressKey(row.address) === addressKey(job.address) ? progressed : row);
-    const nextJob = dueOutcomeJobs(nextOutcomes, collectedAt)[0];
     const partial = clone(current.partial);
+    partial.outcomeReads = num(partial.outcomeReads) + 1;
+    const nextJob = partial.outcomeReads < outcomeReadLimit(partial.settings || this.settings)
+      ? dueOutcomeJobs(nextOutcomes, collectedAt)[0] : null;
     if (nextJob) partial.outcomes = { job: { address: nextJob.row.address, key: nextJob.key, targetAt: nextJob.targetAt } };
     else delete partial.outcomes;
     return this.store.commitOutcomeProgress({
