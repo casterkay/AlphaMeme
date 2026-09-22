@@ -1,0 +1,21 @@
+README.md
+  s_af43b1390f962a::t_30683b396218de 127-136
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_af43b1390f962a::t_5768ea5ff10667 1-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "11a85dca7f3f4330d953b46f06fed95f7bc09d8e",
+  "prompts": {},
+  "sessions": {
+    "s_af43b1390f962a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c899-d3ac-7300-9317-ade2482306b8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
