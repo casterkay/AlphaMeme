@@ -1,4 +1,5 @@
 import { normalizeTenantId } from './gmgn-admission-state.mjs';
+import { assertCheckpointGeneration, SqliteControlStateStore } from './control-state.mjs';
 
 export const SCAN_PHASES = Object.freeze([
   'DISCOVER', 'SCREEN', 'BUILD_QUEUE', 'AUDIT', 'SECONDARY',
@@ -197,7 +198,7 @@ function pruneExpiredOutcomes(storage, tenantId, now, retentionMs) {
   );
 }
 
-function assertCurrent(current, expected) {
+function assertCurrent(storage, tenantId, current, expected) {
   if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
   if (expected.phase !== undefined && current.phase !== expected.phase) {
     throw new RecoverableScannerError('CYCLE_CHECKPOINT_PHASE_CONFLICT', 'cycle checkpoint phase changed while work was in flight');
@@ -207,6 +208,14 @@ function assertCurrent(current, expected) {
   }
   if (expected.controlEpoch !== undefined && current.controlEpoch !== expected.controlEpoch) {
     throw new RecoverableScannerError('CYCLE_CONTROL_EPOCH_STALE', 'cycle checkpoint control epoch changed while work was in flight');
+  }
+  try {
+    assertCheckpointGeneration(storage, tenantId, current);
+  } catch (error) {
+    if (error?.code === 'CYCLE_KEY_EPOCH_STALE' || error?.code === 'CYCLE_CONTROL_EPOCH_STALE') {
+      throw new RecoverableScannerError(error.code, error.message);
+    }
+    throw error;
   }
 }
 
@@ -329,12 +338,39 @@ export class SqliteRecoverableScannerStore {
     });
   }
 
+  resumeCheckpoint(value) {
+    const currentCycleId = cycleId(value?.cycleId);
+    const now = timestamp(value?.now, 'resume time');
+    return this.storage.transactionSync(() => {
+      const current = existingCheckpoint(this.storage, this.tenantId, currentCycleId);
+      if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
+      const control = new SqliteControlStateStore(this.storage, this.tenantId).snapshot();
+      if (control.paused || !control.configured) {
+        throw new RecoverableScannerError('CYCLE_RESUME_NOT_ELIGIBLE', 'cycle cannot resume while scanning is disabled');
+      }
+      if (current.keyEpoch !== control.keyEpoch) {
+        throw new RecoverableScannerError('CYCLE_KEY_EPOCH_STALE', 'cycle credential epoch cannot resume');
+      }
+      if (current.deadlineAt !== null && current.deadlineAt <= now) {
+        throw new RecoverableScannerError('CYCLE_DEADLINE_EXPIRED', 'cycle deadline elapsed while paused');
+      }
+      if (value?.evidenceFresh !== true) {
+        throw new RecoverableScannerError('CYCLE_EVIDENCE_STALE', 'cycle evidence must be revalidated before resuming');
+      }
+      this.storage.sql.exec(
+        'UPDATE cycle_checkpoint SET control_epoch = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
+        control.controlEpoch, now, this.tenantId, currentCycleId
+      );
+      return existingCheckpoint(this.storage, this.tenantId, currentCycleId);
+    });
+  }
+
   advance(value) {
     const next = checkpointInput(value.next);
     const expected = value.expected || {};
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
-      assertCurrent(current, expected);
+      assertCurrent(this.storage, this.tenantId, current, expected);
       if (!checkpointEqual(current, next)) {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
@@ -592,7 +628,7 @@ export class SqliteRecoverableScannerStore {
 
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
-      assertCurrent(current, { ...expected, phase: expected.phase ?? 'CLASSIFY_AND_COMMIT' });
+      assertCurrent(this.storage, this.tenantId, current, { ...expected, phase: expected.phase ?? 'CLASSIFY_AND_COMMIT' });
       if (!checkpointEqual(current, next)) {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
@@ -700,7 +736,7 @@ export class SqliteRecoverableScannerStore {
     if (!outcome) throw new RecoverableScannerError('OUTCOME_INVALID', 'outcome progress requires an outcome');
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
-      assertCurrent(current, { ...expected, phase: expected.phase ?? 'OUTCOMES_SAMPLE' });
+      assertCurrent(this.storage, this.tenantId, current, { ...expected, phase: expected.phase ?? 'OUTCOMES_SAMPLE' });
       if (!checkpointEqual(current, next)) {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }

@@ -12,6 +12,8 @@ import { RecoverableScanner } from './recoverable-scanner.mjs';
 import { executeRecoverableScanStep, recoverableRequestAdmission } from './recoverable-scan-executor.mjs';
 import { externalRequestHandler, localTransactionHandler, OneAlarmScheduler, SchedulerStepError } from './scheduler.mjs';
 import { readGmgnApiKey, saveGmgnApiKey } from './storage/gmgn-credential.mjs';
+import { SqliteControlStateStore, assertCheckpointGeneration } from './storage/control-state.mjs';
+import { prepareCredentialVerification, verifyAndActivatePendingCredential } from './auth/connection.mjs';
 import { SqliteRecoverableScannerStore } from './storage/recoverable-scanner.mjs';
 import {
   enableSchedulerEligibilityInTransaction,
@@ -36,20 +38,22 @@ export class RadarAgent extends DurableObject {
 
   async getStatus(value) {
     const tenantId = this.#boundTenantId(value);
+    const control = new SqliteControlStateStore(this.ctx.storage, tenantId).snapshot();
     return {
       tenantId,
       schemaVersion: this.schemaVersion,
       lifecycle: 'SKELETON',
-      gmgnAdmission: readGmgnAdmissionState(this.ctx.storage, tenantId)
+      gmgnAdmission: readGmgnAdmissionState(this.ctx.storage, tenantId),
+      control
     };
   }
 
   async getGmgnAdmissionState(value) {
-    return readGmgnAdmissionState(this.ctx.storage, this.#boundTenantId(value));
+    return readGmgnAdmissionState(this.ctx.storage, this.#boundTenantId(value?.tenantId ?? value));
   }
 
   async setGmgnAdmissionState(value, nextState) {
-    return writeGmgnAdmissionState(this.ctx.storage, this.#boundTenantId(value), nextState);
+    return writeGmgnAdmissionState(this.ctx.storage, this.#boundTenantId(value?.tenantId ?? value), nextState ?? value?.state);
   }
 
   async replaceSchedulerTasks(value) {
@@ -80,6 +84,50 @@ export class RadarAgent extends DurableObject {
         writeGmgnAdmissionStateInTransaction(this.ctx.storage, tenantId, { ...current, keyEpoch: current.keyEpoch + 1 });
       }
     });
+  }
+
+  async prepareGmgnCredentialVerification(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    const prepared = await prepareCredentialVerification({
+      storage: this.ctx.storage,
+      masterKey: this.env.MASTER_ENC_KEY,
+      tenantId,
+      apiKey: value?.apiKey
+    });
+    const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
+    return { ...prepared, dueAt };
+  }
+
+  async pause(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    const control = new SqliteControlStateStore(this.ctx.storage, tenantId).pause();
+    const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
+    return { ...control, dueAt };
+  }
+
+  async resume(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    const controlStore = new SqliteControlStateStore(this.ctx.storage, tenantId);
+    const control = controlStore.resume();
+    const checkpoint = value?.cycleId
+      ? this.#recoverableScannerForCycle({ tenantId, cycleId: value.cycleId }).resumeCheckpoint(value.cycleId)
+      : null;
+    const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
+    return { ...control, checkpoint, dueAt };
+  }
+
+  async switchChain(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    const control = new SqliteControlStateStore(this.ctx.storage, tenantId).switchChain(value?.chain);
+    const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
+    return { ...control, dueAt };
+  }
+
+  async disconnect(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    const control = new SqliteControlStateStore(this.ctx.storage, tenantId).disconnect();
+    const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
+    return { ...control, dueAt };
   }
 
   async beginRecoverableCycle(value) {
@@ -204,6 +252,7 @@ export class RadarAgent extends DurableObject {
       },
       handlers: {
         command: this.#receivedInboxHandler(store),
+        credential: this.#credentialVerificationHandler(store),
         scan: this.#recoverableScanHandler(store),
         ...this.#schedulerHandlers
       },
@@ -232,6 +281,8 @@ export class RadarAgent extends DurableObject {
       const cycleId = task.id.slice('scan:'.length);
       const scanner = this.#recoverableScannerForCycle({ tenantId: store.tenantId, cycleId });
       const apiKey = await readGmgnApiKey(this.ctx.storage, this.env.MASTER_ENC_KEY, store.tenantId);
+      const checkpoint = scanner.checkpoint(cycleId);
+      assertCheckpointGeneration(this.ctx.storage, store.tenantId, checkpoint);
       const gmgn = new GmgnClient({
         apiKeyProvider: () => apiKey,
         legacyKeyProvider: () => '',
@@ -280,6 +331,28 @@ export class RadarAgent extends DurableObject {
         gmgnWeight: admission.gmgnWeight
       }
     };
+  }
+
+  #credentialVerificationHandler(store) {
+    return externalRequestHandler(async ({ task, request, gmgnReservation }) => {
+      const match = /^credential:(\d+)$/.exec(task.id);
+      if (!match) throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', 'credential task identity is invalid');
+      const gmgn = new GmgnClient({
+        apiKeyProvider: () => '',
+        legacyKeyProvider: () => '',
+        admissionStateStore: new SqliteGmgnAdmissionStateStore(this.ctx.storage, store.tenantId),
+        admissionReservation: gmgnReservation
+      });
+      const result = await verifyAndActivatePendingCredential({
+        storage: this.ctx.storage,
+        masterKey: this.env.MASTER_ENC_KEY,
+        tenantId: store.tenantId,
+        connectionGeneration: Number(match[1]),
+        request,
+        verify: (apiKey, options) => gmgn.verifyApiKey(apiKey, options)
+      });
+      return { status: 'success', complete: true, checkpoint: `credential:${result.connectionGeneration}` };
+    });
   }
 
   #receivedInboxHandler(store) {

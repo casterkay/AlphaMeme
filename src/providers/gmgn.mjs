@@ -407,12 +407,13 @@ export class GmgnClient {
     return compactTrenches(data, chain, types, limit);
   }
 
-  async verifyApiKey(apiKey) {
+  async verifyApiKey(apiKey, { signal = null, timeoutMs = 45_000 } = {}) {
     const key = normalizeGmgnApiKey(apiKey);
     if (!key) throw translateGmgnError(errorWith('GMGN_AUTH_FAILED', 'invalid api key'));
-    const deadline = this.now() + 45_000;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw errorWith('GMGN_INVALID_REQUEST', 'Invalid verification timeout');
+    const deadline = this.now() + timeoutMs;
     await this.#read('marketRank', 'GET', '/v1/market/rank', { chain: 'sol', interval: '1m', limit: 1 }, null, {
-      apiKey: key, deadline, verification: true
+      apiKey: key, deadline, verification: true, signal
     });
     return { verified: true };
   }
