@@ -1,0 +1,21 @@
+src/bot/inbox.mjs
+  s_af43b1390f962a::t_027d53ad44fad8 1-103
+workers/inbox.runtime.mjs
+  s_af43b1390f962a::t_f8e3c6ff762e65 1-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "63e60bc36c63950a9e89706b8c7b59cc23571ece",
+  "prompts": {},
+  "sessions": {
+    "s_af43b1390f962a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c899-d3ac-7300-9317-ade2482306b8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
