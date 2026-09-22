@@ -121,13 +121,15 @@ export default {
         if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, { status: 405, headers: { allow: 'POST' } });
         if (!(await telegramWebhookAuthorized(request, env))) return json({ error: 'forbidden' }, { status: 403 });
         const update = await readBoundedJson(request);
-        const parsed = parseTelegramUpdate(update);
-        if (parsed.kind !== 'accepted') return json({ accepted: false });
+        const parsed = parseTelegramUpdate(update, { botUsername: env.TELEGRAM_BOT_USERNAME });
+        if (!['accepted', 'credential'].includes(parsed.kind)) return json({ accepted: false });
 
         const registry = env.TENANT_REGISTRY.getByName('tenant-registry');
         await callWorkerRpc(() => registry.registerTenant(parsed.receipt.tenantId));
         const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${parsed.receipt.tenantId}`));
-        const result = await callWorkerRpc(() => radar.receiveTelegramUpdate(parsed.receipt));
+        const result = await callWorkerRpc(() => parsed.kind === 'credential'
+          ? radar.receiveTelegramCredential(parsed.receipt, parsed.credentialText)
+          : radar.receiveTelegramUpdate(parsed.receipt));
         return json({ accepted: result.accepted === true });
       }
 
