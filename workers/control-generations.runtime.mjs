@@ -3,8 +3,9 @@ import { runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it, vi } from 'vitest';
 import { prepareCredentialVerification } from '../src/auth/connection.mjs';
 import { GmgnClient } from '../src/providers/gmgn.mjs';
+import { RecoverableScanner } from '../src/recoverable-scanner.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
-import { restartRecoverableScanInTransaction } from '../src/storage/recoverable-scanner.mjs';
+import { restartRecoverableScanInTransaction, SqliteRecoverableScannerStore } from '../src/storage/recoverable-scanner.mjs';
 import {
   SqliteGmgnAdmissionStateStore,
   writeGmgnAdmissionState
@@ -236,6 +237,41 @@ describe('Radar control generations', () => {
     ]);
     await radar.switchChain({ tenantId, chain: 'sol' });
     expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'sol-cycle' })).toMatchObject({ controlEpoch: 0 });
+  });
+
+  it('changes the scan set without accepting an earlier chain response', async () => {
+    const tenantId = '19115';
+    const radar = await configuredRadar(tenantId);
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'set-sol', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'set-base', chain: 'base', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'set-eth', chain: 'eth', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+
+    await runInDurableObject(radar, async (instance, state) => {
+      const scanner = new RecoverableScanner({
+        store: new SqliteRecoverableScannerStore(state.storage, tenantId),
+        settings
+      });
+      const request = scanner.nextRequest('set-sol');
+      const changed = await instance.setScanChains({ tenantId, chains: ['base', 'eth'] });
+      expect(changed.controlEpoch).toBe(1);
+      let failure = null;
+      try {
+        scanner.recordRequest('set-sol', {
+          value: { completed: [] }, collectedAt: Date.now(), expectedCheckpoint: request.checkpoint
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toMatchObject({ code: 'CYCLE_CONTROL_EPOCH_STALE' });
+    });
+    expect((await radar.getSchedulerSnapshot(tenantId)).tasks.filter(task => task.kind === 'scan')).toEqual([
+      { id: 'scan:set-sol', kind: 'scan', dueAt: expect.any(Number), enabled: false, needsGmgn: true, gmgnWeight: 3 },
+      { id: 'scan:set-base', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 },
+      { id: 'scan:set-eth', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 }
+    ]);
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'set-sol' })).toMatchObject({ controlEpoch: 0 });
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'set-base' })).toMatchObject({ controlEpoch: 1 });
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'set-eth' })).toMatchObject({ controlEpoch: 1 });
   });
 
   it('treats switching to the active chain as a no-op', async () => {

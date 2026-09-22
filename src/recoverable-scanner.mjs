@@ -303,7 +303,7 @@ export class RecoverableScanner {
     return null;
   }
 
-  recordRequest(cycleId, { value, error = null, collectedAt = this.now() }) {
+  recordRequest(cycleId, { value, error = null, collectedAt = this.now(), expectedCheckpoint = null }) {
     const current = this.checkpoint(cycleId);
     if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
     const partial = clone(current.partial);
@@ -366,7 +366,8 @@ export class RecoverableScanner {
       throw phaseError('current checkpoint phase does not accept a request response');
     }
 
-    return this.store.advance({ expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch },
+    const expected = expectedCheckpoint || current;
+    return this.store.advance({ expected: { phase: expected.phase, keyEpoch: expected.keyEpoch, controlEpoch: expected.controlEpoch },
       next: { ...current, phase: nextPhase, tokenIndex, endpointIndex, partial, updatedAt: collectedAt } });
   }
 
@@ -584,7 +585,7 @@ export class RecoverableScanner {
     });
   }
 
-  recordOutcomeSample(cycleId, { sample = null, error = null, collectedAt = this.now() }) {
+  recordOutcomeSample(cycleId, { sample = null, error = null, collectedAt = this.now(), expectedCheckpoint = null }) {
     const current = this.checkpoint(cycleId);
     if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
     if (current.phase !== 'OUTCOMES_SAMPLE') throw phaseError('outcome samples can only commit from OUTCOMES_SAMPLE');
@@ -605,8 +606,9 @@ export class RecoverableScanner {
       ? dueOutcomeJobs(nextOutcomes, collectedAt)[0] : null;
     if (nextJob) partial.outcomes = { job: { chain: nextJob.row.chain || current.chain, address: nextJob.row.address, key: nextJob.key, targetAt: nextJob.targetAt } };
     else delete partial.outcomes;
+    const expected = expectedCheckpoint || current;
     return this.store.commitOutcomeProgress({
-      expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch },
+      expected: { phase: expected.phase, keyEpoch: expected.keyEpoch, controlEpoch: expected.controlEpoch },
       outcome: progressed,
       next: {
         ...current,
