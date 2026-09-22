@@ -1,0 +1,19 @@
+src/auth/connection.mjs
+  s_92be46b83b7cae::t_f69b9dd3a95304 55-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a79f5e92e0205e4d80c2c954176639bc33e41d15",
+  "prompts": {},
+  "sessions": {
+    "s_92be46b83b7cae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7c0-87ec-7cd1-bdd9-078c0c1afbc8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
