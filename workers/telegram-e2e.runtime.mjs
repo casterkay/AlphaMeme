@@ -4,7 +4,7 @@ import { describe,it,expect } from 'vitest';
 import { TelegramRuntime } from '../src/bot/runtime.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { readGmgnApiKey } from '../src/storage/gmgn-credential.mjs';
-import { readActiveSigningKey } from '../src/auth/key-store.mjs';
+import { readActiveSigningKey, signingSetupSnapshot } from '../src/auth/key-store.mjs';
 
 const at=1_800_000_000_000;
 const masterKey={activeVersion:'1',keys:{'1':'e2e-only-master-key'}};
@@ -100,7 +100,7 @@ describe('Telegram complete command and delivery flows',()=>{
   });
 
   it('resolves an exact symbol before substring matches and shows candidates in an ambiguous note picker',async()=>{
-    await withRuntime('22906',async({runtime,command,sessions,seed})=>{
+    await withRuntime('22906',async({runtime,command,sessions,seed,link,click})=>{
       seed(12);await command('note','TOKEN1');
       const exact=sessions()[0];
       expect(exact.panel).toBe('detail');expect(exact.query.pendingInput.kind).toBe('note');
@@ -111,6 +111,10 @@ describe('Telegram complete command and delivery flows',()=>{
       const keyboard=runtime.outbox.payload(rows.at(-1)).params.reply_markup.inline_keyboard.flat();
       expect(keyboard.some(button=>button.text.includes('TOKEN0'))).toBe(true);
       expect(keyboard.some(button=>button.text.includes('TOKEN1'))).toBe(true);
+      await click(link(picker,'note.select',(_params,row)=>row.address===`0x${'0'.padStart(40,'a')}`));
+      const selected=runtime.commands.sessions.get(picker.id);
+      expect(selected.panel).toBe('detail');expect(selected.query.pendingInput.kind).toBe('note');expect(selected.query.pendingInput.promptMessageId).toBeTruthy();
+      expect(selected.query.pendingInput.target.address).toBe(`0x${'0'.padStart(40,'a')}`);
     });
   });
 
@@ -125,6 +129,52 @@ describe('Telegram complete command and delivery flows',()=>{
       const reply=receipt('reply',{source:'reply',text:'Second prompt survives',replyToMessageId:second.query.pendingInput.promptMessageId});
       runtime.receive(reply);await runtime.runCommand(reply.updateId);await drain();
       expect(storage.sql.exec('SELECT address,note FROM annotations WHERE tenant_id=?',tenantId).toArray()).toEqual([{address:second.query.selectedToken.address,note:'Second prompt survives'}]);
+    });
+  });
+
+  it('rejects obsolete notification and collection controls from independently current sessions',async()=>{
+    await withRuntime('22908',async({runtime,command,sessions,link,click})=>{
+      await command('settings');const oldSettings=sessions()[0],enable=link(oldSettings,'notifications.set',params=>params.value===true);
+      await command('unmute');await command('mute');
+      const obsoleteNotifications=await click(enable);
+      expect(runtime.inbox.get(obsoleteNotifications.updateId).status).toBe('FAILED');expect(runtime.commands.preference('notifications',false)).toBe(false);
+      expect(runtime.commands.sessions.get(oldSettings.id).version).toBe(oldSettings.version);
+      await command('feed','sol');const oldFeed=sessions().at(-1),stop=link(oldFeed,'live.set',params=>params.value===false);
+      await command('feed','base');
+      const obsoleteLive=await click(stop);
+      expect(runtime.inbox.get(obsoleteLive.updateId).status).toBe('FAILED');expect(runtime.control.snapshot().live.subscribed).toBe(true);expect(runtime.control.snapshot().live.focusChain).toBe('base');
+    });
+  });
+
+  it('regenerates only after the bound confirmation and returns the new public key without rejecting its own generation change',async()=>{
+    await withRuntime('22909',async({runtime,command,sessions,link,click,sent})=>{
+      await command('onboard');const guide=sessions()[0],original=await signingSetupSnapshot(runtime.keyOptions());
+      await click(link(guide,'panel.open',params=>params.panel==='regenerate'));
+      const confirmation=runtime.commands.sessions.get(guide.id);expect(confirmation.panel).toBe('regenerate');expect((await signingSetupSnapshot(runtime.keyOptions())).publicKey).toBe(original.publicKey);
+      const regenerate=link(confirmation,'onboard.regenerate');const completed=await click(regenerate);
+      expect(runtime.inbox.get(completed.updateId).status).toBe('DONE');expect(runtime.commands.sessions.get(guide.id).panel).toBe('onboard');
+      const replacement=await signingSetupSnapshot(runtime.keyOptions());expect(replacement.publicKey).not.toBe(original.publicKey);expect(replacement.generation).toBeGreaterThan(original.generation);
+      expect(sent.filter(row=>row.method==='editMessageText').at(-1).params.text).toContain(replacement.publicKey);
+      const replay=await click(regenerate);expect(runtime.inbox.get(replay.updateId).status).toBe('FAILED');expect((await signingSetupSnapshot(runtime.keyOptions())).publicKey).toBe(replacement.publicKey);
+    });
+  });
+
+  it('restores list filter, sort, page and chain after detail and evidence navigation',async()=>{
+    await withRuntime('22910',async({runtime,command,sessions,link,click,seed})=>{
+      seed(8);await command('audits');const root=sessions()[0];
+      await click(link(root,'panel.open',params=>params.panel==='filter'));
+      await click(link(runtime.commands.sessions.get(root.id),'filter.set',params=>params.value==='fresh'));
+      await click(link(runtime.commands.sessions.get(root.id),'panel.open',params=>params.panel==='sort'));
+      await click(link(runtime.commands.sessions.get(root.id),'sort.set',params=>params.value==='score_desc'));
+      await click(link(runtime.commands.sessions.get(root.id),'page.set',params=>params.page===1));
+      const origin=runtime.commands.sessions.get(root.id);expect(origin.query).toMatchObject({filter:'fresh',sort:'score_desc',page:1});
+      await click(link(origin,'panel.open',params=>params.panel==='detail'));
+      await click(link(runtime.commands.sessions.get(root.id),'panel.open',params=>params.panel==='evidence'));
+      await click(link(runtime.commands.sessions.get(root.id),'page.set',params=>params.page===1));
+      expect(runtime.commands.sessions.get(root.id).query.detailPage).toBe(1);
+      await click(link(runtime.commands.sessions.get(root.id),'panel.back'));expect(runtime.commands.sessions.get(root.id).panel).toBe('detail');
+      await click(link(runtime.commands.sessions.get(root.id),'panel.back'));
+      const restored=runtime.commands.sessions.get(root.id);expect(restored.panel).toBe('audits');expect(restored.viewChain).toBe(origin.viewChain);expect(restored.query).toMatchObject({filter:'fresh',sort:'score_desc',page:1});expect(restored.messageId).toBe(root.messageId);
     });
   });
 
