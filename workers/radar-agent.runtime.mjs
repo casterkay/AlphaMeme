@@ -382,4 +382,38 @@ describe('recoverable Radar scanner', () => {
       });
     });
   });
+
+  it('suppresses repeated cross-cycle notification effects during the legacy deduplication window', async () => {
+    const tenantId = '19008';
+    const address = candidateRow(Date.now()).address;
+    const now = Date.now();
+    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    await runInDurableObject(radar, async (_instance, state) => {
+      const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
+      for (const [index, cycleId] of ['cycle-event-first', 'cycle-event-repeat'].entries()) {
+        state.storage.sql.exec(
+          'INSERT INTO cycle_checkpoint (tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          tenantId, cycleId, 'sol', 0, 0, null, 'CLASSIFY_AND_COMMIT', 0, 0, JSON.stringify({}), now + index
+        );
+        const result = store.commitClassification({
+          expected: { phase: 'CLASSIFY_AND_COMMIT', keyEpoch: 0, controlEpoch: 0 },
+          next: {
+            cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: null,
+            phase: 'OUTCOMES_SAMPLE', tokenIndex: 1, endpointIndex: 0, partial: {}, updatedAt: now + index
+          },
+          candidate: { address, chain: 'sol', status: 'X_REVIEW', symbol: 'TEST' },
+          auditQueue: { address, status: 'X_REVIEW', attempts: 1 },
+          riskExclusion: null,
+          outcome: null,
+          event: {
+            effectType: 'CANDIDATE_NEW', type: 'CANDIDATE_NEW', message: 'new candidate', at: now + index,
+            data: { address }, outbox: { payload: { chain: 'sol', address }, desiredRevision: 'revision' }
+          }
+        });
+        expect(result.effectId).toBe(index === 0 ? stableEffectId(tenantId, cycleId, 'sol', address, 'CANDIDATE_NEW') : null);
+      }
+      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM events WHERE tenant_id = ?', tenantId).one().count).toBe(1);
+      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM outbox WHERE tenant_id = ?', tenantId).one().count).toBe(1);
+    });
+  });
 });
