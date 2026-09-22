@@ -1,0 +1,35 @@
+src/bot/panels.mjs
+  s_766449632fdcc7::t_99988c2e7e524c 1-309
+src/bot/snapshot.mjs
+  s_766449632fdcc7::t_ca25406faada62 1-172
+src/render/telegram.mjs
+  s_766449632fdcc7::t_fbcc2519c5bd58 1-78
+test/telegram-panels.test.mjs
+  s_5cda0c8df10d0c::t_4cb6853ccb0743 1-128
+workers/telegram-panels.runtime.mjs
+  s_5cda0c8df10d0c::t_cdd9a0be959ba5 1-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e85cb007cbbd912bd7babdbe5769829f70308bd7",
+  "prompts": {},
+  "sessions": {
+    "s_5cda0c8df10d0c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-5b42-7f12-8cab-3a3ea0ea6bd0",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_766449632fdcc7": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0c3a5-98bc-74b0-be40-fa0b037e932b",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
