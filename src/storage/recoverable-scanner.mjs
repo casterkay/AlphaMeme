@@ -218,10 +218,10 @@ export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch,
     tenantId
   ).toArray().map(checkpointFromRow);
   const scheduler = readSchedulerStateInTransaction(storage, tenantId);
-  const activeCycleIds = new Set(scheduler.tasks
+  const activeTasks = new Map(scheduler.tasks
     .filter(task => task.kind === 'scan' && task.id.startsWith('scan:'))
-    .map(task => task.id.slice('scan:'.length)));
-  const activeCheckpoints = checkpoints.filter(checkpoint => activeCycleIds.has(checkpoint.cycleId));
+    .map(task => [task.id.slice('scan:'.length), task]));
+  const activeCheckpoints = checkpoints.filter(checkpoint => activeTasks.has(checkpoint.cycleId));
   const tasks = scheduler.tasks.filter(task => task.kind !== 'scan');
   storage.sql.exec('DELETE FROM cycle_checkpoint WHERE tenant_id = ?', tenantId);
   if (!activeCheckpoints.length) {
@@ -252,7 +252,7 @@ export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch,
       tenantId, checkpoint.cycleId, checkpoint.chain, checkpoint.keyEpoch, checkpoint.controlEpoch, checkpoint.deadlineAt,
       checkpoint.phase, checkpoint.tokenIndex, checkpoint.endpointIndex, JSON.stringify(checkpoint.partial), checkpoint.updatedAt
     );
-    scheduleRecoverableScanTaskInTransaction(storage, tenantId, checkpoint.cycleId, now, 3);
+    scheduleRecoverableScanTaskInTransaction(storage, tenantId, checkpoint.cycleId, now, 3, activeTasks.get(selected.cycleId).enabled);
     return Object.freeze({ tenantId, ...checkpoint });
   });
 }
@@ -527,7 +527,7 @@ export class SqliteRecoverableScannerStore {
     const outcomeRetentionMs = positiveInteger(value.outcomeRetentionMs, 'outcome retention');
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
-      assertCurrent(current, expected);
+      assertCurrent(this.storage, this.tenantId, current, expected);
       if (!checkpointEqual(current, next)) {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
@@ -565,7 +565,7 @@ export class SqliteRecoverableScannerStore {
     const outcomeRetentionMs = positiveInteger(value.outcomeRetentionMs, 'outcome retention');
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
-      assertCurrent(current, { ...expected, phase: expected.phase ?? 'OUTCOMES_SAMPLE' });
+      assertCurrent(this.storage, this.tenantId, current, { ...expected, phase: expected.phase ?? 'OUTCOMES_SAMPLE' });
       if (!checkpointEqual(current, next)) {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }

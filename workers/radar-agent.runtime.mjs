@@ -429,6 +429,7 @@ describe('recoverable Radar scanner', () => {
     const now = Date.now();
     const baselineAt = now - 400_000;
     const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
     await runInDurableObject(radar, async (_instance, state) => {
       state.storage.sql.exec(
         'INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -462,6 +463,7 @@ describe('recoverable Radar scanner', () => {
     const cycleId = 'cycle-candidate-retention';
     const now = Date.now();
     const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
     await runInDurableObject(radar, async (_instance, state) => {
       state.storage.sql.exec(
         'INSERT INTO cycle_checkpoint (tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -506,6 +508,7 @@ describe('recoverable Radar scanner', () => {
     const tenantId = '19011';
     const rootCycleId = 'cycle-root';
     const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
     await runInDurableObject(radar, async (_instance, state) => {
       const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
       const checkpoint = (cycleId, phase, partial, updatedAt) => ({
