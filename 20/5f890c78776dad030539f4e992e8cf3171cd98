@@ -1,0 +1,30 @@
+src/recoverable-scan-executor.mjs
+  s_867bee9262c8c5::t_0de364b14b2cf7 8,23-29,155,174
+src/recoverable-scanner.mjs
+  s_867bee9262c8c5::t_44104c0b571434 24,70-76,188-208,329-330,340,402,419-420,446-448,455-457,471,482-483,600,631,646-647,653
+src/storage/recoverable-scanner.mjs
+  s_867bee9262c8c5::t_3e52d2d899d5bb 311-315
+test/radar-agent.test.mjs
+  s_867bee9262c8c5::t_0d6150f7bc436d 52-53,79,90-93,240-278,369-405,629-678
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "205f890c78776dad030539f4e992e8cf3171cd98",
+  "prompts": {},
+  "humans": {
+    "h_0528fe13c98664": {
+      "author": "casterkay <poetrycoder>"
+    }
+  },
+  "sessions": {
+    "s_867bee9262c8c5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c88f-7330-79c0-8b4d-901ed65d9c26",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
