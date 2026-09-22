@@ -236,14 +236,15 @@ export class SqliteSchedulerStore {
   }
 }
 
-export function scheduleRecoverableScanTaskInTransaction(storage, tenant, cycleId, dueAt, gmgnWeight = 1) {
+export function scheduleRecoverableScanTaskInTransaction(storage, tenant, cycleId, dueAt, gmgnWeight = 1, enabled = true) {
   const tenantId = normalizeTenantId(tenant);
   if (typeof cycleId !== 'string' || !/^[a-z0-9][a-z0-9:_-]{0,127}$/i.test(cycleId)
-    || !Number.isSafeInteger(dueAt) || dueAt < 0 || !Number.isSafeInteger(gmgnWeight) || gmgnWeight <= 0) {
+    || !Number.isSafeInteger(dueAt) || dueAt < 0 || !Number.isSafeInteger(gmgnWeight) || gmgnWeight <= 0
+    || typeof enabled !== 'boolean') {
     throw new SchedulerStateError('SCHEDULER_RECOVERABLE_TASK_INVALID', 'recoverable scanner task is invalid');
   }
   const current = taskRecord(readRecord(storage, tenantId, TASKS_KEY, { version: 1, tasks: [] }));
-  const task = { id: `scan:${cycleId}`, kind: 'scan', dueAt, enabled: true, needsGmgn: true, gmgnWeight };
+  const task = { id: `scan:${cycleId}`, kind: 'scan', dueAt, enabled, needsGmgn: true, gmgnWeight };
   const tasks = current.tasks.some(item => item.id === task.id)
     ? current.tasks.map(item => item.id === task.id ? task : item)
     : [...current.tasks, task];

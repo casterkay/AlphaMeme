@@ -234,6 +234,7 @@ describe('Radar control generations', () => {
     await radar.beginRecoverableCycle({ tenantId, cycleId: 'sol-history', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings, partial: { rootCycleId: 'sol-rotation' } });
     await radar.beginRecoverableCycle({ tenantId, cycleId: 'sol-rotation', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings, partial: { rootCycleId: 'sol-rotation' } });
     await radar.beginRecoverableCycle({ tenantId, cycleId: 'base-rotation', chain: 'base', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.switchChain({ tenantId, chain: 'base' });
     const beforeRotation = await radar.getSchedulerSnapshot(tenantId);
     await radar.replaceSchedulerTasks({ tenantId, tasks: beforeRotation.tasks.filter(task =>
       task.id === 'scan:sol-rotation' || task.id === 'scan:base-rotation'
@@ -248,8 +249,8 @@ describe('Radar control generations', () => {
       expect(restarted).toHaveLength(2);
     });
     const snapshot = await radar.getSchedulerSnapshot(tenantId);
-    expect(snapshot.tasks.filter(task => task.kind === 'scan').map(task => task.id).sort()).toEqual([
-      'scan:base-rotation:rotation:1', 'scan:sol-rotation:rotation:1'
+    expect(snapshot.tasks.filter(task => task.kind === 'scan').map(task => ({ id: task.id, enabled: task.enabled })).sort((left, right) => left.id.localeCompare(right.id))).toEqual([
+      { id: 'scan:base-rotation:rotation:1', enabled: true }, { id: 'scan:sol-rotation:rotation:1', enabled: false }
     ]);
     expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'sol-rotation' })).toBeNull();
     expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'sol-history' })).toBeNull();
