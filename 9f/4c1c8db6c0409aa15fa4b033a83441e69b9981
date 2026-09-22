@@ -1,0 +1,19 @@
+workers/telegram-e2e.runtime.mjs
+  s_5cda0c8df10d0c::t_4df8a85ae677f4 7,103,114-117,135-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9f4c1c8db6c0409aa15fa4b033a83441e69b9981",
+  "prompts": {},
+  "sessions": {
+    "s_5cda0c8df10d0c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-5b42-7f12-8cab-3a3ea0ea6bd0",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
