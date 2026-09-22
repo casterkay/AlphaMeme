@@ -35,6 +35,10 @@ export function selectPanelRows(snapshot, session) {
     return rows.sort((a,b) => (sort === 'priority' ? Number(b.priorityBand) - Number(a.priorityBand) : sort === 'new' ? b.newAt - a.newAt : 0) || number(b.volume1m) - number(a.volume1m)).slice(0,15);
   }
   if (session.panel === 'saved') {
+    if (query.noteTargetMatches) {
+      const candidates = [...snapshot.candidates, ...Object.values(snapshot.liveByChain || {}).flatMap(feed => feed.rows), ...snapshot.annotations];
+      return query.noteTargetMatches.map(token => ({ ...candidates.find(row => id(row) === id(token)), ...token }));
+    }
     return snapshot.annotations.filter(row => (!chain || chain === 'all' || row.chain === chain) && (query.filter !== 'favorite' || row.favorite) && (query.filter !== 'notes' || row.note?.trim()))
       .map(row => ({ ...snapshot.candidates.find(candidate => id(candidate) === id(row)), ...row }))
       .filter(row => searchMatches(row, query.search)).sort((a,b) => number(b.updatedAt) - number(a.updatedAt));
@@ -87,7 +91,7 @@ function listPanel(snapshot,session,locale) {
   if (!shown.length) blocks.push(L('没有符合条件的记录','No matching records'));
   blocks.push(`${rows.length ? paging.start+1 : 0}–${Math.min(paging.start+5,rows.length)} / ${rows.length}`);
   if (isLive) blocks.push(`${L('规范化总数','Normalized total')}: ${numberText(live?.rows?.length,locale)}`, L('采集目标20秒；本消息仅在操作时刷新。','Collection target 20s; this message refreshes on interaction.'));
-  const keyboard = pairs(shown.map((row,index) => detailButton(row,paging.start+index,locale)));
+  const keyboard = pairs(shown.map((row,index) => session.query?.noteTargetMatches ? button(`${paging.start + index + 1} ${safeTelegramText(row.symbol || row.address.slice(-8),30)}`, 'note.select', {}, token(row)) : detailButton(row,paging.start+index,locale)));
   keyboard.push([open('view_chain',locale),open(isLive ? 'sort' : 'filter',locale)]);
   if (!isLive && !saved) keyboard.push([open('sort',locale)]);
   keyboard.push([button(L('搜索','Search'),'input.begin',{kind:'search'}),query.search ? button(L('清空搜索','Clear search'),'search.clear') : null],paging.keyboard,[refresh(locale),home(locale)]);

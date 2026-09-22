@@ -1,4 +1,4 @@
-const METHODS = new Set(['sendMessage', 'editMessageText', 'editMessageReplyMarkup', 'deleteMessage', 'answerCallbackQuery', 'sendDocument']);
+const METHODS = new Set(['sendMessage', 'editMessageText', 'editMessageReplyMarkup', 'deleteMessage', 'answerCallbackQuery', 'sendDocument', 'setMyCommands']);
 
 /** A redacted result: Telegram descriptions and request URLs never escape this boundary. */
 export function createTelegramTransport({ botToken, fetchImpl = fetch, timeoutMs = 10_000 }) {

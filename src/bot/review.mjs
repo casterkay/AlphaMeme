@@ -67,7 +67,7 @@ export function annotateInTransaction(storage, tenantId, { token, field, value, 
 /** Projection revision includes time-derived approval validity, even without a new audit. */
 export function reviewProjectionRevision(storage, tenantId, token, now) {
   const { candidate, mark } = readReview(storage, tenantId, token);
-  return JSON.stringify([candidate?.reviewRevision ?? null, mark.version, candidate ? effectiveStatus(candidate, mark, now) : mark.decision === 'ignored' ? 'ignored' : 'historical']);
+  return JSON.stringify([candidate?.reviewRevision ?? null, mark.version, candidate ? effectiveStatus(candidate, mark, now) : mark.decision === 'ignored' ? 'ignored' : 'historical', annotationVersion(storage, tenantId, token, 'favorite').version, annotationVersion(storage, tenantId, token, 'note').version]);
 }
 
 export function nextReviewExpiry(storage, tenantId, token, now) {

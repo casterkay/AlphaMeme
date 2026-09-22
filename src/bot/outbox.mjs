@@ -19,10 +19,10 @@ export class TelegramOutbox {
   rows() { return this.storage.sql.exec('SELECT rowid AS sequence, * FROM outbox WHERE tenant_id = ? ORDER BY rowid', this.tenantId).toArray(); }
 
   enqueueInTransaction(value) {
-    const { id, eventId = null, chatId, method, params, expiresAt, deliveryClass = 'USER_RESPONSE', actionReason = null, sessionId = null, sessionVersion = null, desiredRevision = null, token = null, purpose = 'panel', nextAt = this.now() } = value;
+    const { id, eventId = null, chatId, method, params, expiresAt, deliveryClass = 'USER_RESPONSE', actionReason = null, sessionId = null, sessionVersion = null, desiredRevision = null, token = null, purpose = 'panel', notification = null, projectionRevision = null, nextAt = this.now() } = value;
     if (!id || !chatId || !METHODS.has(method) || !params || !Number.isSafeInteger(expiresAt) || !['USER_RESPONSE', 'ACTION_REQUIRED', 'PANEL_UPDATE'].includes(deliveryClass)) throw new TypeError('Invalid outbox intent');
     if (sessionVersion !== null && (!Number.isSafeInteger(sessionVersion) || sessionVersion < 0)) throw new TypeError('Invalid session version');
-    const payload = JSON.stringify({ method, params: { ...params, ...(method === 'answerCallbackQuery' ? {} : { chat_id: String(chatId) }) }, expiresAt, sessionVersion, token, purpose });
+    const payload = JSON.stringify({ method, params: { ...params, ...(method === 'answerCallbackQuery' ? {} : { chat_id: String(chatId) }) }, expiresAt, sessionVersion, token, purpose, notification, projectionRevision });
     this.storage.sql.exec('INSERT INTO outbox (tenant_id,id,event_id,chat_id,payload_json,desired_revision,delivery_class,action_reason,ui_session_id,status,attempts,next_at,ambiguous_retries) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING', this.tenantId, id, eventId, String(chatId), payload, desiredRevision, deliveryClass, actionReason, sessionId, 'PENDING', 0, nextAt, 0);
     return this.rows().find(row => row.id === id || (eventId !== null && row.event_id === eventId));
   }

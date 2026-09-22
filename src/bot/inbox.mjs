@@ -43,7 +43,7 @@ export class TelegramInbox {
     this.storage.sql.exec(
       'INSERT INTO inbox (tenant_id, update_id, actor_user_id, command_type, payload_json, payload_enc, status, generation, received_at, attempts, next_at, expires_at, message_date, source_message_id, result_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       this.tenantId, receipt.updateId, receipt.actorUserId, receipt.commandType, JSON.stringify(receipt.payload), status === 'CANCELLED' ? null : payloadEnc,
-      status, 1, now, 0, now, now + INPUT_TTL, receipt.messageDate, receipt.sourceMessageId,
+      status, 1, now, 0, receipt.dueAt ?? now, now + INPUT_TTL, receipt.messageDate, receipt.sourceMessageId,
       status === 'CANCELLED' ? JSON.stringify({ reason: tooOld ? 'input_expired' : 'command_superseded' }) : null
     );
     if (status !== 'CANCELLED') {
@@ -78,7 +78,7 @@ export class TelegramInbox {
     const now = this.now();
     this.storage.sql.exec("UPDATE inbox SET status = 'CANCELLED', payload_enc = NULL, next_at = NULL, result_json = ? WHERE tenant_id = ? AND status IN ('RECEIVED', 'RUNNING') AND expires_at <= ?", JSON.stringify({ reason: 'input_expired' }), this.tenantId, now);
     this.storage.sql.exec("DELETE FROM inbox WHERE tenant_id = ? AND status IN ('DONE', 'FAILED', 'CANCELLED') AND received_at < ?", this.tenantId, now - TOMBSTONE_TTL);
-    const rows = this.storage.sql.exec("SELECT update_id, next_at, received_at FROM inbox WHERE tenant_id = ? AND status IN ('RECEIVED', 'RUNNING') ORDER BY received_at, rowid", this.tenantId).toArray();
+    const rows = this.storage.sql.exec("SELECT update_id, next_at, received_at FROM inbox WHERE tenant_id = ? AND status IN ('RECEIVED', 'RUNNING') AND NOT (command_type = 'credential' AND next_at >= expires_at) ORDER BY received_at, rowid", this.tenantId).toArray();
     const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
     // Only the oldest runnable command is exposed. Safety controls execute during intake.
     const runnable = rows[0];

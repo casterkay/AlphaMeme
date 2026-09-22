@@ -141,7 +141,7 @@ export const CREDENTIAL_CANDIDATE_TTL_MS = 15 * 60_000;
 function liveCredentialCommand(storage, tenantId, updateId, timestamp) {
   const row = storage.sql.exec('SELECT status, command_type, received_at, expires_at, payload_enc, generation FROM inbox WHERE tenant_id = ? AND update_id = ?', tenantId, updateId).toArray()[0];
   if (!row || !['RECEIVED', 'RUNNING'].includes(row.status)
-    || !['setkey', 'command:setkey', 'credential_verify'].includes(row.command_type)) {
+    || !['setkey', 'command:setkey', 'credential_verify', 'credential'].includes(row.command_type)) {
     throw new ConnectionError('CONNECTION_COMMAND_TERMINAL', 'credential command is no longer active');
   }
   if (!Number.isSafeInteger(row.expires_at) || row.expires_at <= timestamp
@@ -184,7 +184,7 @@ export async function prepareOnboardingVerification({ storage, masterKey, tenant
     if (signingRow(storage, tenantId, signingField)?.value_enc !== signing.value_enc) throw new ConnectionError('SIGNING_GENERATION_STALE', 'signing setup changed');
     const state = beginCredentialVerificationInTransaction(storage, tenantId, connectionGeneration);
     const previous = pendingRow(storage, tenantId);
-    if (previous) storage.sql.exec("UPDATE inbox SET status = 'CANCELLED', payload_enc = NULL, next_at = NULL WHERE tenant_id = ? AND generation = ? AND update_id != ? AND status IN ('RECEIVED', 'RUNNING') AND command_type IN ('setkey', 'command:setkey', 'credential_verify')", tenantId, previous.generation, updateId);
+    if (previous) storage.sql.exec("UPDATE inbox SET status = 'CANCELLED', payload_enc = NULL, next_at = NULL WHERE tenant_id = ? AND generation = ? AND update_id != ? AND status IN ('RECEIVED', 'RUNNING') AND command_type IN ('setkey', 'command:setkey', 'credential_verify', 'credential')", tenantId, previous.generation, updateId);
     saveKey(storage, tenantId, PENDING_KEY_NAME, envelope, state.connectionGeneration, timestamp);
     storage.sql.exec('UPDATE inbox SET generation = ? WHERE tenant_id = ? AND update_id = ?', state.connectionGeneration, tenantId, updateId);
     scheduleCredentialVerificationTaskInTransaction(storage, tenantId, state.connectionGeneration, timestamp);
