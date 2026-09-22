@@ -60,3 +60,39 @@ export function outcomeCoverage(outcomes, now = Date.now()) {
   };
   return { passed: cohort('X_REVIEW'), rejected: cohort('HARD_REJECT') };
 }
+
+export const REQUIRED_CALIBRATION_WINDOWS = Object.freeze(['m30', 'h2', 'h24']);
+
+export function summarizeOutcomes(outcomes, now = Date.now()) {
+  const numberOrNull = value => {
+    if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const rows = (Array.isArray(outcomes) ? outcomes : []).filter(item => item?.initialDecision === 'X_REVIEW');
+  const average = key => {
+    const values = rows.map(item => numberOrNull(item.samples?.[key]?.return)).filter(value => value !== null);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  };
+  const completed = Object.fromEntries(Object.keys(horizons).map(key => [key, rows.filter(item => item.samples?.[key]).length]));
+  return {
+    tracked: rows.length,
+    minimumSample: 50,
+    calibrationReady: REQUIRED_CALIBRATION_WINDOWS.every(key => completed[key] >= 50),
+    completed5m: completed.m5,
+    completed15m: completed.m15,
+    completed30m: completed.m30,
+    completed1h: completed.h1,
+    completed2h: completed.h2,
+    completed6h: completed.h6,
+    completed24h: completed.h24,
+    averageReturn5m: average('m5'),
+    averageReturn15m: average('m15'),
+    averageReturn30m: average('m30'),
+    averageReturn1h: average('h1'),
+    averageReturn2h: average('h2'),
+    averageReturn24h: average('h24'),
+    note: '影子验证，仅衡量筛选结果，不代表可成交收益'
+    ,coverage: outcomeCoverage(outcomes || [], now)
+  };
+}
