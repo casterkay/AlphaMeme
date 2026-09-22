@@ -618,8 +618,7 @@ export class RecoverableScanner {
           effectType: 'CANDIDATE_NEW',
           type: 'CANDIDATE_NEW',
           message: `${candidate.symbol}：新增链上候选，需人工复核`,
-          data: { address: candidate.address, reviewRevision: candidate.reviewRevision },
-          outbox: { payload: { chain: current.chain, address: candidate.address }, desiredRevision: candidate.reviewRevision }
+          data: { address: candidate.address, reviewRevision: candidate.reviewRevision }
         }
       : previousCandidate?.status === 'X_REVIEW' && candidate.status !== 'X_REVIEW'
         ? {

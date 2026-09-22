@@ -157,7 +157,7 @@ export class RadarAgent extends DurableObject {
 
   async getRecoverableCycle(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
-    return new SqliteRecoverableScannerStore(this.ctx.storage, tenantId).read(value?.cycleId);
+    return this.#scannerStore(tenantId).read(value?.cycleId);
   }
 
   async nextRecoverableScanRequest(value) {
@@ -249,16 +249,25 @@ export class RadarAgent extends DurableObject {
     return tenantId ? this.#scheduler(new SqliteSchedulerStore(this.ctx.storage, tenantId)) : null;
   }
 
+  #scannerStore(tenantId) {
+    return new SqliteRecoverableScannerStore(this.ctx.storage, tenantId, { afterClassification: () => {
+      if (!this.ctx.storage.sql.exec('SELECT tenant_id FROM tenants WHERE tenant_id=?', tenantId).toArray().length) return;
+      const telegram = this.#telegram(tenantId);
+      telegram.reconcileCardsInTransaction();
+      telegram.reconcileNotificationsInTransaction();
+    } });
+  }
+
   #recoverableScanner(tenantId, settings) {
     return new RecoverableScanner({
-      store: new SqliteRecoverableScannerStore(this.ctx.storage, tenantId),
+      store: this.#scannerStore(tenantId),
       settings
     });
   }
 
   #recoverableScannerForCycle(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
-    const store = new SqliteRecoverableScannerStore(this.ctx.storage, tenantId);
+    const store = this.#scannerStore(tenantId);
     const checkpoint = store.read(value?.cycleId);
     if (!checkpoint) {
       const error = new Error('cycle checkpoint does not exist');
