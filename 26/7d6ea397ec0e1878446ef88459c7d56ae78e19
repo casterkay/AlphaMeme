@@ -1,0 +1,19 @@
+src/recoverable-scan-executor.mjs
+  s_45fcd583430ba6::t_fabacd895a1346 146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "267d6ea397ec0e1878446ef88459c7d56ae78e19",
+  "prompts": {},
+  "sessions": {
+    "s_45fcd583430ba6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c414-22c8-7920-a06c-c32159e77b6e",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
