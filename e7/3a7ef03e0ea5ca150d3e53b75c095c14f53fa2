@@ -1,0 +1,39 @@
+src/radar-agent.mjs
+  s_3c5d02262287a1::t_7a20fcd10fa1d3 6,13,101-104,106-108,123-126
+src/storage/control-state.mjs
+  s_3c5d02262287a1::t_576bc1c9d2ce5e 183,185-218,244
+src/storage/recoverable-scanner.mjs
+  s_92be46b83b7cae::t_159c3506df0209 267,273
+test/gmgn-credential.test.mjs
+  s_3c5d02262287a1::t_981792d7d4b460 7,51,56
+workers/control-generations.runtime.mjs
+  s_3c5d02262287a1::t_3447f265a190d4 7,50,106,109-110,116,122-124,147,152-154,280-346
+workers/fixtures/gmgn-credential.mjs
+  s_3c5d02262287a1::t_ca9572c30f04dd 1-16
+workers/radar-agent.runtime.mjs
+  s_3c5d02262287a1::t_320c53bdcf1dc6 7,112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e73a7ef03e0ea5ca150d3e53b75c095c14f53fa2",
+  "prompts": {},
+  "sessions": {
+    "s_3c5d02262287a1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7bf-f2d4-7080-b163-7393f091617b",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_92be46b83b7cae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7c0-87ec-7cd1-bdd9-078c0c1afbc8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
