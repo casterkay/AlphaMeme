@@ -137,6 +137,13 @@ export class RadarAgent extends DurableObject {
     return { ...control, dueAt };
   }
 
+  async setScanChains(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    const control = new SqliteControlStateStore(this.ctx.storage, tenantId).setScanChains(value?.chains);
+    const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
+    return { ...control, dueAt };
+  }
+
   async disconnect(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
     const control = new SqliteControlStateStore(this.ctx.storage, tenantId).disconnect();

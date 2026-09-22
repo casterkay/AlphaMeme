@@ -21,6 +21,17 @@ function chain(value) {
   return value;
 }
 
+function scanChains(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3) {
+    throw new ControlStateError('CONTROL_SCAN_CHAINS_INVALID', 'scan chains must contain between one and three chains');
+  }
+  const normalized = value.map(chain);
+  if (new Set(normalized).size !== normalized.length) {
+    throw new ControlStateError('CONTROL_SCAN_CHAINS_INVALID', 'scan chains must not contain duplicates');
+  }
+  return normalized;
+}
+
 function increment(value, name) {
   if (!Number.isSafeInteger(value) || value < 0 || value === Number.MAX_SAFE_INTEGER) {
     throw new ControlStateError('CONTROL_EPOCH_INVALID', `${name} cannot advance`);
@@ -169,6 +180,17 @@ export class SqliteControlStateStore {
     }));
   }
 
+  setScanChains(value) {
+    const enabledChains = new Set(scanChains(value));
+    return this.#update(state => nextControl(state, {
+      eligibility: {},
+      control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
+      gmgn: {},
+      live: {},
+      tasks: state.tasks
+    }), { enabledScanChains: enabledChains });
+  }
+
   ensureActiveChain(value) {
     const activeChain = chain(value);
     return this.#update(state => state.runtime.control.activeChain === null
@@ -192,7 +214,7 @@ export class SqliteControlStateStore {
   #update(mutator, effects = {}) {
     return this.storage.transactionSync(() => {
       const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
-      const next = mutator(state);
+      let next = mutator(state);
       if (effects.deleteKeys) {
         this.storage.sql.exec('DELETE FROM keys WHERE tenant_id = ?', this.tenantId);
       }
@@ -204,6 +226,26 @@ export class SqliteControlStateStore {
           "UPDATE inbox SET status = 'CANCELLED', payload_enc = NULL, payload_json = NULL, next_at = NULL WHERE tenant_id = ? AND status IN ('RECEIVED', 'RUNNING') AND LOWER(command_type) IN ('setkey', 'credential_verify')",
           this.tenantId
         );
+      }
+      if (effects.enabledScanChains) {
+        const checkpointChains = new Map(this.storage.sql.exec(
+          'SELECT cycle_id, chain FROM cycle_checkpoint WHERE tenant_id = ?', this.tenantId
+        ).toArray().map(row => [row.cycle_id, row.chain]));
+        const enabledCycleIds = [...checkpointChains]
+          .filter(([, chainName]) => effects.enabledScanChains.has(chainName))
+          .map(([cycleId]) => cycleId);
+        if (enabledCycleIds.length) {
+          this.storage.sql.exec(
+            `UPDATE cycle_checkpoint SET control_epoch = ? WHERE tenant_id = ? AND cycle_id IN (${enabledCycleIds.map(() => '?').join(', ')})`,
+            next.runtime.control.controlEpoch, this.tenantId, ...enabledCycleIds
+          );
+        }
+        next = {
+          ...next,
+          tasks: next.tasks.map(task => task.kind === 'scan'
+            ? { ...task, enabled: effects.enabledScanChains.has(checkpointChains.get(task.id.slice('scan:'.length))) }
+            : task)
+        };
       }
       write(this.storage, this.tenantId, next);
       return snapshot(next);

@@ -76,34 +76,34 @@ export function recoverableRequestAdmission(next) {
     : { needsGmgn: false, gmgnWeight: 1 });
 }
 
-async function recordGmgnRequest(scanner, cycleId, request, operation, now) {
+async function recordGmgnRequest(scanner, cycleId, expectedCheckpoint, request, operation, now) {
   let value;
   try {
     value = await request(operation);
   } catch (error) {
-    return scanner.recordRequest(cycleId, { error, collectedAt: now() });
+    return scanner.recordRequest(cycleId, { error, collectedAt: now(), expectedCheckpoint });
   }
-  return scanner.recordRequest(cycleId, { value, collectedAt: now() });
+  return scanner.recordRequest(cycleId, { value, collectedAt: now(), expectedCheckpoint });
 }
 
-async function recordOutcomeRequest(scanner, cycleId, request, operation, now) {
+async function recordOutcomeRequest(scanner, cycleId, expectedCheckpoint, request, operation, now) {
   let sample;
   try {
     sample = await request(operation);
   } catch (error) {
-    return scanner.recordOutcomeSample(cycleId, { error, collectedAt: now() });
+    return scanner.recordOutcomeSample(cycleId, { error, collectedAt: now(), expectedCheckpoint });
   }
-  return scanner.recordOutcomeSample(cycleId, { sample, collectedAt: now() });
+  return scanner.recordOutcomeSample(cycleId, { sample, collectedAt: now(), expectedCheckpoint });
 }
 
-async function recordSecondaryRequest(scanner, cycleId, request, operation, now) {
+async function recordSecondaryRequest(scanner, cycleId, expectedCheckpoint, request, operation, now) {
   let value;
   try {
     value = await request(operation);
   } catch (error) {
-    return scanner.recordRequest(cycleId, { error, collectedAt: now() });
+    return scanner.recordRequest(cycleId, { error, collectedAt: now(), expectedCheckpoint });
   }
-  return scanner.recordRequest(cycleId, { value, collectedAt: now() });
+  return scanner.recordRequest(cycleId, { value, collectedAt: now(), expectedCheckpoint });
 }
 
 export async function executeRecoverableScanStep({ scanner, cycleId, gmgn, secondary = new SecondaryValidator(), request, onFinalized = null, now = Date.now }) {
@@ -128,13 +128,13 @@ export async function executeRecoverableScanStep({ scanner, cycleId, gmgn, secon
   } else if (next.kind === 'DEADLINE_EXPIRED') {
     result = scanner.advanceLocal(cycleId);
   } else if (next.kind === 'DISCOVER') {
-    result = await recordGmgnRequest(scanner, cycleId, request,
+    result = await recordGmgnRequest(scanner, cycleId, next.checkpoint, request,
       ({ signal, timeoutMs }) => discoveryRequest(gmgn, next, signal, timeoutMs), now);
   } else if (next.kind === 'AUDIT') {
-    result = await recordGmgnRequest(scanner, cycleId, request,
+    result = await recordGmgnRequest(scanner, cycleId, next.checkpoint, request,
       ({ signal, timeoutMs }) => auditRequest(gmgn, next, signal, timeoutMs), now);
   } else if (next.kind === 'SECONDARY') {
-    result = await recordSecondaryRequest(scanner, cycleId, request,
+    result = await recordSecondaryRequest(scanner, cycleId, next.checkpoint, request,
       ({ signal }) => secondary.fetchSource({
         source: next.source,
         chain: next.chain,
@@ -142,7 +142,7 @@ export async function executeRecoverableScanStep({ scanner, cycleId, gmgn, secon
         signal
       }), now);
   } else if (next.kind === 'OUTCOMES_SAMPLE') {
-    result = await recordOutcomeRequest(scanner, cycleId, request,
+    result = await recordOutcomeRequest(scanner, cycleId, next.checkpoint, request,
       ({ signal, timeoutMs }) => gmgn.priceAt(next.address, next.targetAt, next.chain || next.checkpoint.chain, {
         deadline: requestDeadline(next.checkpoint, timeoutMs), signal
       }), now);
