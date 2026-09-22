@@ -1,0 +1,106 @@
+src/gmgn-api-key.mjs
+  s_45fcd583430ba6::t_af439e46106c97 1-8
+src/gmgn-key-store.mjs
+  s_45fcd583430ba6::t_0d11ed2c68fe8b 5,7
+src/providers/gmgn-normalize.mjs
+  s_45fcd583430ba6::t_fcfde2fbfedbac 1-23
+src/recoverable-scan-executor.mjs
+  s_45fcd583430ba6::t_13b5df4f7ab452 4-60,110-111,114-117,120-121,128-130,133,136,144,149-152,160,168-169
+  s_3c5d02262287a1::t_adf0f53254859f 1-3,61-109,112-113,118-119,122-127,131-132,134-135,137-143,145,147-148,153-159,161-167
+src/storage/gmgn-credential.mjs
+  s_45fcd583430ba6::t_6e11a8072d5181 1-142
+src/storage/recoverable-scanner.mjs
+  s_45fcd583430ba6::t_eced6b7468f6af 1,3-8,13-178,202-211,220-266,268-274,288-334,336-340,368-370,392-397,507-549,551-552,554-558,564,579,604-626,628-630,632-699,708-734,736-738,740-746,748-759
+  s_0c50bee27bae8a::t_e26cc3c3ef3c24 282-289,385-416,475-514,550,553,560,564-568,571-577,579-590
+  s_45fcd583430ba6::t_b866ecdec24388 9-10,12,627,700-707
+  s_92be46b83b7cae::t_e1e7330c617ddb 2,201,212-219,341-367,373,631,739
+src/storage/scheduler-state.mjs
+  s_45fcd583430ba6::t_23ed45e34cd426 240-241,243-245,247-253
+  s_45fcd583430ba6::t_88aa723557d1c5 126-134,239,242,246
+  s_92be46b83b7cae::t_74dc973eb7f433 70-94,142,153,254-272
+src/providers/gmgn.mjs
+  s_45fcd583430ba6::t_7e2a4c3b919b74 101,298,309,541-543,550-557,653-673
+  s_92be46b83b7cae::t_00eab447bbde95 410,413-414,416
+src/providers/secondary.mjs
+  s_3c5d02262287a1::t_db45a948233b16 131,133-137,185,389-455,480-481,483-493,495-500,502-505,507-510,513,515,523,525,531
+src/radar-agent.mjs
+  s_45fcd583430ba6::t_e3a680829cd9c0 12,19,82,137-143,258-272,277,289-297,302-335
+  s_92be46b83b7cae::t_53145f89ef60aa 15-16,41,46-47,52,56,89-132,255,277,284-285,289-290,336-357
+src/recoverable-scanner.mjs
+  s_45fcd583430ba6::t_67b20146af7783 5-18,54-58,73-99,138,151-158,162,164-165,167-168,170,173-174,206-236,243-244,255,282,337-338,383,395,397-400,402-410,415-418,420-423,432-440,442,454-467,496-497,502-521,525-526,532,541,550,556-575,583,603-605
+  s_92be46b83b7cae::t_79ce497409baa2 111-118,262-278
+src/scanner-parity.mjs
+  s_4e030b43f2260b::t_031a371b33dd65 1-157
+src/scanner.mjs
+  s_4e030b43f2260b::t_685c876fc90828 4,8-16,42-43
+src/scheduler.mjs
+  s_45fcd583430ba6::t_3e3d17c3b12f4d 319-347,379,381,390-391,397,436-440,493-494,517-525,529-530,566-574,584,589,612-625,629-635,680-688,691-693,696-700,706-709,711
+  s_92be46b83b7cae::t_d97ae265bf14f1 1,6,94-101,117-127,130-133,136-137,144,153
+src/scoring/classification.mjs
+  s_45fcd583430ba6::t_fe876b8fa3fbe2 1-49
+src/social.mjs
+  s_4e030b43f2260b::t_1d598bff9d546a 3,7-8
+test/radar-agent.test.mjs
+  s_45fcd583430ba6::t_f764a2ccc37fa5 11,16,24,50-51,85-116,120-212,248-358,528-608
+test/scanner-parity.test.mjs
+  s_4e030b43f2260b::t_79e89ee1d263c8 1-88
+test/scheduler.test.mjs
+  s_45fcd583430ba6::t_1a570513d44087 16-18,102-136,218-437
+workers/radar-agent.runtime.mjs
+  s_45fcd583430ba6::t_ceef41643f10e0 5,9,17,88,127-129,132,184-185,194,197-198,206,230,240-387
+  s_45fcd583430ba6::t_44cf421b9c5e31 388-421
+src/auth/connection.mjs
+  s_92be46b83b7cae::t_65ddf831c508ec 1-120
+src/storage/control-state.mjs
+  s_92be46b83b7cae::t_09ad411deb74b9 1-186
+workers/control-generations.runtime.mjs
+  s_92be46b83b7cae::t_92e5d776a0888f 1-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a16da5b7adf0a922c81134e024c78c1c84831b7a",
+  "prompts": {},
+  "sessions": {
+    "s_0c50bee27bae8a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7dc-c2e8-7950-86fd-6c74b8b4d7ca",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_3c5d02262287a1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7bf-f2d4-7080-b163-7393f091617b",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_45fcd583430ba6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c414-22c8-7920-a06c-c32159e77b6e",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_4e030b43f2260b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7ad-05bf-7093-8d9e-37546eee06f4",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_92be46b83b7cae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7c0-87ec-7cd1-bdd9-078c0c1afbc8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
