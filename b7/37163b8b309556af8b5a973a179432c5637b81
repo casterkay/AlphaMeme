@@ -1,0 +1,35 @@
+src/auth/connection.mjs
+  s_92be46b83b7cae::t_65ddf831c508ec 1-120
+src/providers/gmgn.mjs
+  s_92be46b83b7cae::t_00eab447bbde95 410,413-414,416
+src/radar-agent.mjs
+  s_92be46b83b7cae::t_53145f89ef60aa 15-16,41,46-47,52,56,89-132,255,277,284-285,289-290,336-357
+src/recoverable-scanner.mjs
+  s_92be46b83b7cae::t_79ce497409baa2 97-104,244-260
+src/scheduler.mjs
+  s_92be46b83b7cae::t_d97ae265bf14f1 1,6,94-101,117-127,130-133,136-137,144,153
+src/storage/control-state.mjs
+  s_92be46b83b7cae::t_09ad411deb74b9 1-186
+src/storage/recoverable-scanner.mjs
+  s_92be46b83b7cae::t_e1e7330c617ddb 2,175,186-193,310-336,342,530,630
+src/storage/scheduler-state.mjs
+  s_92be46b83b7cae::t_74dc973eb7f433 70-94,142,153,254-272
+workers/control-generations.runtime.mjs
+  s_92be46b83b7cae::t_92e5d776a0888f 1-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b737163b8b309556af8b5a973a179432c5637b81",
+  "prompts": {},
+  "sessions": {
+    "s_92be46b83b7cae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7c0-87ec-7cd1-bdd9-078c0c1afbc8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}

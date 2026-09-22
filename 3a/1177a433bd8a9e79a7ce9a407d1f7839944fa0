@@ -1,0 +1,33 @@
+workers/control-generations.runtime.mjs
+  s_92be46b83b7cae::t_2724e0c1ffc82b 5,7-10,173-214
+src/storage/gmgn-admission-state.mjs
+  s_0c50bee27bae8a::t_620028298d140c 71,73,75-96,101,122
+src/providers/gmgn.mjs
+  s_92be46b83b7cae::t_7c92766c0c517f 164,646-647,652
+test/schema.test.mjs
+  s_92be46b83b7cae::t_ae29b5fca192aa 19,283-307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3a1177a433bd8a9e79a7ce9a407d1f7839944fa0",
+  "prompts": {},
+  "sessions": {
+    "s_0c50bee27bae8a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7dc-c2e8-7950-86fd-6c74b8b4d7ca",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_92be46b83b7cae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c7c0-87ec-7cd1-bdd9-078c0c1afbc8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
