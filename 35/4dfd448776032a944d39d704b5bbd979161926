@@ -1,0 +1,21 @@
+src/storage/recoverable-scanner.mjs
+  s_45fcd583430ba6::t_b866ecdec24388 8-10,493,566-573
+workers/radar-agent.runtime.mjs
+  s_45fcd583430ba6::t_44cf421b9c5e31 385-418
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "354dfd448776032a944d39d704b5bbd979161926",
+  "prompts": {},
+  "sessions": {
+    "s_45fcd583430ba6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c414-22c8-7920-a06c-c32159e77b6e",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
