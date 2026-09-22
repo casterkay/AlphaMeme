@@ -1,0 +1,27 @@
+src/bot/statistics.mjs
+  s_428ea927e420c8::t_5b1f8dc100337f 1-54
+src/scanner.mjs
+  s_428ea927e420c8::t_e9bc63a85445d6 6,127
+src/scoring/outcomes.mjs
+  s_428ea927e420c8::t_bad4c220c8ecea 63-98
+test/telegram-statistics.test.mjs
+  s_428ea927e420c8::t_4e547b50d0ecc3 1-80
+workers/statistics.runtime.mjs
+  s_428ea927e420c8::t_a77d5dd256b9e4 1-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8b410f219a29fce3db5943222412970fb22a757c",
+  "prompts": {},
+  "sessions": {
+    "s_428ea927e420c8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-32c0-7c12-a10f-c5b52f0221e4",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
