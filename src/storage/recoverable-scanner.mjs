@@ -5,6 +5,9 @@ export const SCAN_PHASES = Object.freeze([
   'CLASSIFY_AND_COMMIT', 'OUTCOMES_SAMPLE', 'SUMMARIZE'
 ]);
 
+const NOTIFICATION_EFFECT_TYPES = new Set(['CANDIDATE_NEW', 'RISK_WORSENED']);
+const NOTIFICATION_DEDUP_WINDOW_MS = 30 * 60_000;
+
 export class RecoverableScannerError extends Error {
   constructor(code, message) {
     super(message);
@@ -487,7 +490,7 @@ export class SqliteRecoverableScannerStore {
     const auditQueue = queueInput(value.auditQueue, this.tenantId, next.chain);
     const exclusion = exclusionInput(value.riskExclusion, this.tenantId, next.chain);
     const outcome = outcomeInput(value.outcome, this.tenantId, next.chain);
-    const event = eventInput(value.event, this.tenantId, next.cycleId, next.chain, candidate.address, next.updatedAt);
+    let event = eventInput(value.event, this.tenantId, next.cycleId, next.chain, candidate.address, next.updatedAt);
 
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
@@ -558,6 +561,14 @@ export class SqliteRecoverableScannerStore {
           stringOrNull(outcome.strategyVersion), JSON.stringify(outcome.samples || {}), JSON.stringify(outcome.sampleRetries || {}),
           JSON.stringify(outcome.cohortMetadata || {})
         );
+      }
+
+      if (event && NOTIFICATION_EFFECT_TYPES.has(event.type)) {
+        const recent = this.storage.sql.exec(
+          'SELECT 1 FROM events WHERE tenant_id = ? AND type = ? AND chain = ? AND address = ? AND at > ? LIMIT 1',
+          this.tenantId, event.type, next.chain, candidate.address, event.at - NOTIFICATION_DEDUP_WINDOW_MS
+        ).toArray()[0];
+        if (recent) event = null;
       }
 
       if (event) {
