@@ -384,6 +384,48 @@ describe('Radar control generations', () => {
     expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'base-rotation' })).toBeNull();
   });
 
+  it('a late successful credential verification cannot reconnect after disconnect', async () => {
+    const tenantId = '19122';
+    const radar = await configuredRadar(tenantId);
+    let fetchStarted;
+    let releaseFetch;
+    const started = new Promise(resolve => { fetchStarted = resolve; });
+    const released = new Promise(resolve => { releaseFetch = resolve; });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      fetchStarted();
+      await released;
+      return new Response(JSON.stringify({ code: 0, data: { rank: [] } }), { status: 200 });
+    });
+
+    try {
+      await runInDurableObject(radar, async (instance, state) => {
+        await prepareCredentialVerification({
+          storage: state.storage, masterKey: env.MASTER_ENC_KEY, tenantId, apiKey: `gmgn_${'a'.repeat(32)}`
+        });
+        const alarm = instance.alarm();
+        await started;
+        expect(state.storage.sql.exec('SELECT name FROM keys WHERE tenant_id = ?', tenantId).toArray())
+          .toEqual([{ name: 'gmgn-pending-api-key' }]);
+        const disconnected = await instance.disconnect({ tenantId });
+        releaseFetch();
+        await alarm;
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect((await instance.getStatus(tenantId)).control).toMatchObject({
+          configured: false, paused: true,
+          keyEpoch: disconnected.keyEpoch,
+          controlEpoch: disconnected.controlEpoch,
+          connectionGeneration: disconnected.connectionGeneration
+        });
+        expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM keys WHERE tenant_id = ?', tenantId).one().count).toBe(0);
+        expect((await instance.getSchedulerSnapshot(tenantId)).tasks.filter(task => task.kind === 'credential')).toEqual([]);
+      });
+    } finally {
+      releaseFetch();
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('disconnect prevents an encrypted candidate from being persisted after its crypto await', async () => {
     const tenantId = '19104';
     const radar = await configuredRadar(tenantId);
