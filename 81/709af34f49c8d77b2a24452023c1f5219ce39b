@@ -1,0 +1,21 @@
+src/bot/review.mjs
+  s_af43b1390f962a::t_9d958be8363274 1-77
+workers/review.runtime.mjs
+  s_af43b1390f962a::t_9bf03e6b7231dc 1-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "81709af34f49c8d77b2a24452023c1f5219ce39b",
+  "prompts": {},
+  "sessions": {
+    "s_af43b1390f962a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c899-d3ac-7300-9317-ade2482306b8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
