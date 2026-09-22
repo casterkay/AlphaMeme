@@ -121,8 +121,8 @@ export class PersistentLive {
     if (pending.some(item => item.chain === chain && item.address === id)) return { accepted: true, queued: true };
     if (pending.length >= 12) return { accepted: false, reason: 'queue_full' };
     const screen = discoveryScreen(row, { ...this.settings, chain }, this.now() / 1000);
-    this.storage.sql.exec('INSERT INTO audit_queue (tenant_id,chain,address,first_seen_at,last_seen_at,next_audit_at,attempts,status,priority_band,score,watched,details_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,chain,address) DO UPDATE SET last_seen_at=excluded.last_seen_at,next_audit_at=excluded.next_audit_at', this.tenantId, chain, id, this.now(), this.now(), this.now(), 0, 'QUEUED', screen.priorityBand ? 1 : 0, screen.score, 0, JSON.stringify({ row }));
-    this.write('live.requestedReviews', [...pending, { chain, address: id, at: this.now(), keyEpoch: state.gmgn.keyEpoch }]);
+    this.storage.sql.exec('INSERT INTO audit_queue (tenant_id,chain,address,first_seen_at,last_seen_at,next_audit_at,attempts,status,priority_band,score,watched,details_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,chain,address) DO UPDATE SET last_seen_at=excluded.last_seen_at,next_audit_at=excluded.next_audit_at', this.tenantId, chain, id, this.now(), this.now(), this.now(), 0, 'QUEUED', screen.priorityBand ? 1 : 0, screen.score, 0, JSON.stringify({}));
+    this.write('live.requestedReviews', [...pending, { chain, address: id, row: structuredClone(row), at: this.now(), keyEpoch: state.gmgn.keyEpoch }]);
     return { accepted: true, queued: true };
   }
 }

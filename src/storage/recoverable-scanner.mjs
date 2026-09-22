@@ -638,6 +638,14 @@ export class SqliteRecoverableScannerStore {
     }));
   }
 
+  readRequestedReviews(chainName, keyEpoch, now) {
+    const record = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, 'live.requestedReviews').toArray()[0];
+    const requests = record ? parseJson(record.value_json, 'live review requests') : [];
+    if (!Array.isArray(requests)) throw new RecoverableScannerError('LIVE_REVIEW_REQUESTS_INVALID', 'live review requests must be an array');
+    return requests.filter(item => item.chain === chainName && item.keyEpoch === keyEpoch && item.row?.address
+      && item.at <= now && now - item.at <= 600_000);
+  }
+
   readAuditQueue(chainName) {
     return this.storage.sql.exec(
       'SELECT address, first_seen_at, last_seen_at, last_audited_at, next_audit_at, attempts, status, priority_band, score, watched, details_json FROM audit_queue WHERE tenant_id = ? AND chain = ?',
@@ -836,6 +844,15 @@ export class SqliteRecoverableScannerStore {
         'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
         next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
       );
+      const consumed = (current.partial.liveReviewRequests || []).find(item => item.chain === next.chain && item.address === candidate.address);
+      if (consumed) {
+        const record = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, 'live.requestedReviews').toArray()[0];
+        if (record) {
+          const pending = parseJson(record.value_json, 'live review requests');
+          const remaining = pending.filter(item => !(item.chain === consumed.chain && item.address === consumed.address && item.at === consumed.at && item.keyEpoch === consumed.keyEpoch));
+          this.storage.sql.exec('UPDATE scheduler_state SET value_json = ? WHERE tenant_id = ? AND key = ?', JSON.stringify(remaining), this.tenantId, 'live.requestedReviews');
+        }
+      }
       return Object.freeze({ checkpoint: { tenantId: this.tenantId, ...next }, effectId: event?.id || null });
     });
   }

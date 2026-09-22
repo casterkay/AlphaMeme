@@ -4,6 +4,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
 import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 import { PersistentLive } from '../src/bot/live.mjs';
+import { RecoverableScanner } from '../src/recoverable-scanner.mjs';
+import { SqliteRecoverableScannerStore } from '../src/storage/recoverable-scanner.mjs';
 import { config } from '../src/config.mjs';
 const START = 1800000000000;
 const token = overrides => ({ address: `0x${'1'.repeat(40)}`, symbol: 'T', market_cap: 50000, liquidity: 15000, creation_timestamp: START / 1000 - 1000, price: 1, volume: 1000, buys: 10, sells: 5, holder_count: 100, smart_degen_count: 3, rug_ratio: .1, bundler_rate: .1, rat_trader_amount_rate: .1, is_wash_trading: false, is_honeypot: 0, ...overrides });
@@ -93,7 +95,7 @@ test('audit enqueue retains chain, snapshot, exclusion and quota gates and strip
   assert.equal(f.live.enqueueReviewInTransaction('bsc', address, { snapshotAt: START, enabledChains: ['bsc'] }).accepted, true);
   const queue = f.storage.sql.exec('SELECT * FROM audit_queue').toArray();
   assert.equal(queue.length, 1);
-  assert.equal(JSON.parse(queue[0].details_json).row.buys, undefined);
+  assert.equal(f.live.read('live.requestedReviews')[0].row.buys, undefined);
   assert.equal(f.live.read('live.requestedReviews').length, 1);
   f.storage.sql.exec('INSERT INTO risk_exclusions (tenant_id,chain,address) VALUES (?,?,?)', '123','bsc',address);
   assert.equal(f.live.enqueueReviewInTransaction('bsc', address, { snapshotAt: START, enabledChains: ['bsc'] }).reason, 'risk_excluded');
@@ -106,4 +108,46 @@ test('timeout exposes stale state without leaking errors or stranding the runnin
   assert.equal(f.live.snapshot('bsc').stale, true);
   assert.equal(f.live.state().runtime.live.running, null);
   assert.equal(f.live.snapshot('bsc').requestMs, 25000);
+});
+
+test('live-only requested token receives one priority slot within scanner budget and persists until classification', async () => {
+  const f = fixture(); f.live.subscribeInTransaction('bsc');
+  const liveOnly = token({ address: `0x${'4'.repeat(40)}` });
+  const waiting = token({ address: `0x${'5'.repeat(40)}` });
+  await f.live.pollOne({ request: f.request, gmgn: { marketRank: async () => ({ rank: [liveOnly, waiting] }) } });
+  for (const row of [liveOnly, waiting]) assert.equal(f.live.enqueueReviewInTransaction('bsc', row.address, { snapshotAt: START, enabledChains: ['bsc'] }).accepted, true);
+  const store = new SqliteRecoverableScannerStore(f.storage, '123');
+  const scanner = new RecoverableScanner({ store, settings: { ...config, maxDeepAuditsPerCycle: 2 }, now: () => START });
+  scanner.begin({ cycleId: 'live-scan', chain: 'bsc', keyEpoch: 0, controlEpoch: 0, deadlineAt: START + 80000 });
+  scanner.recordRequest('live-scan', { value: { completed: [token(), token({ address: `0x${'2'.repeat(40)}` })] }, collectedAt: START });
+  scanner.recordRequest('live-scan', { value: { rank: [] }, collectedAt: START });
+  scanner.advanceLocal('live-scan');
+  const selected = scanner.advanceLocal('live-scan').partial.queue.selected;
+  assert.equal(selected.length, 2);
+  assert.equal(selected[0].address, liveOnly.address);
+  assert.equal(f.live.read('live.requestedReviews').length, 2);
+  assert.equal(store.readRequestedReviews('bsc', 0, START).length, 2, 'queue rebuild must not lose request payloads');
+  while (scanner.checkpoint('live-scan').phase !== 'CLASSIFY_AND_COMMIT') {
+    scanner.recordRequest('live-scan', { error: Object.assign(new Error('unavailable'), { code: 'REQUEST_FAILED' }), collectedAt: START });
+  }
+  await scanner.commitClassification('live-scan');
+  assert.equal(f.live.read('live.requestedReviews').length, 1);
+  assert.equal(f.live.read('live.requestedReviews')[0].address, waiting.address);
+});
+
+test('fresh discovery overrides requested preview and expired requests cannot enter screening', () => {
+  const f = fixture();
+  f.live.write('live.requestedReviews', [
+    { chain: 'bsc', address: token().address, row: token(), at: START, keyEpoch: 0 },
+    { chain: 'bsc', address: `0x${'2'.repeat(40)}`, row: token({ address: `0x${'2'.repeat(40)}` }), at: START - 600001, keyEpoch: 0 }
+  ]);
+  const store = new SqliteRecoverableScannerStore(f.storage, '123');
+  const scanner = new RecoverableScanner({ store, settings: config, now: () => START });
+  scanner.begin({ cycleId: 'fresh-wins', chain: 'bsc', keyEpoch: 0, controlEpoch: 0, deadlineAt: START + 80000 });
+  scanner.recordRequest('fresh-wins', { value: { completed: [token({ is_honeypot: true })] }, collectedAt: START });
+  scanner.recordRequest('fresh-wins', { value: { rank: [] }, collectedAt: START });
+  const screened = scanner.advanceLocal('fresh-wins').partial.screened;
+  assert.equal(screened.length, 1);
+  assert.equal(screened[0].screen.pass, false);
+  assert.equal(scanner.advanceLocal('fresh-wins').partial.queue.selected.length, 0);
 });

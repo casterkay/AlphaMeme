@@ -420,7 +420,13 @@ export class RecoverableScanner {
       nextPhase = 'OUTCOMES_SAMPLE';
     } else if (current.phase === 'SCREEN') {
       const exclusions = new Map(this.store.readRiskExclusions(current.chain).map(item => [tokenKey(current.chain, item.address), item]));
-      partial.screened = discoveryRows(partial.discovery).map(row => {
+      partial.liveReviewRequests = typeof this.store.readRequestedReviews === 'function'
+        ? this.store.readRequestedReviews(current.chain, current.keyEpoch, now) : [];
+
+      // Fresh discovery wins over a user's earlier preview; both use the same screening gates.
+      const discovered = [...new Map([...partial.liveReviewRequests.map(item => item.row), ...discoveryRows(partial.discovery)]
+        .map(row => [addressKey(row.address), row])).values()];
+      partial.screened = discovered.map(row => {
         const screen = discoveryScreen(row, { ...settings, chain: current.chain }, now / 1000);
         const held = exclusions.get(tokenKey(current.chain, row.address));
         if (held) return { row, screen: { ...screen, pass: false, reasons: [...screen.reasons, ...(held.reasons || [])] } };
@@ -459,6 +465,15 @@ export class RecoverableScanner {
       const queue = buildQueue(priorQueue, auditable, now, settings);
       const availableAddresses = new Set(auditable.map(item => addressKey(item.row.address)));
       const selectedQueue = selectAuditQueue(queue, availableAddresses, now, num(partial.scanCount) + 1, settings.maxDeepAuditsPerCycle);
+      const queueByAddress = new Map(queue.map(item => [addressKey(item.address), item]));
+      const requested = (partial.liveReviewRequests || []).map(item => queueByAddress.get(addressKey(item.address))).find(item => item
+        && availableAddresses.has(addressKey(item.address)) && !(item.status === 'HARD_REJECT' && item.nextAuditAt > now));
+      if (requested) {
+        const index = selectedQueue.findIndex(item => addressKey(item.address) === addressKey(requested.address));
+        if (index >= 0) selectedQueue.splice(index, 1);
+        selectedQueue.unshift(requested);
+        selectedQueue.splice(settings.maxDeepAuditsPerCycle);
+      }
       const byAddress = new Map(auditable.map(item => [addressKey(item.row.address), item]));
       partial.queue = {
         rows: queue,
