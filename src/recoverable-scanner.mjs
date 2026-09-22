@@ -21,6 +21,7 @@ import { RecoverableScannerError, SCAN_PHASES } from './storage/recoverable-scan
 const AUDIT_ENDPOINTS = Object.freeze(['info', 'security', 'pool', 'holders', 'traders', 'candles']);
 const DISCOVERY_ENDPOINTS = Object.freeze(['trenches', 'trending']);
 const SECONDARY_SOURCES = Object.freeze(['dexScreener', 'goPlus']);
+const OUTCOME_SAMPLE_GRACE_MS = 25_000;
 
 function clone(value) {
   return structuredClone(value);
@@ -64,6 +65,13 @@ function candidateRetentionLimit(settings) {
 function outcomeRetentionLimit(settings) {
   return Number.isSafeInteger(settings.outcomeRetentionMs) && settings.outcomeRetentionMs > 0
     ? settings.outcomeRetentionMs : 7 * 24 * 60 * 60_000;
+}
+
+function outcomeSampleDeadline(checkpoint, now) {
+  if (Number.isSafeInteger(checkpoint.partial.outcomeDeadlineAt) && checkpoint.partial.outcomeDeadlineAt >= 0) {
+    return checkpoint.partial.outcomeDeadlineAt;
+  }
+  return (checkpoint.deadlineAt ?? now) + OUTCOME_SAMPLE_GRACE_MS;
 }
 
 function retainedOutcomes(outcomes, now, retentionMs) {
@@ -175,6 +183,27 @@ export { selectAuditQueue as selectRecoverableAuditQueue };
 
 function phaseError(message) {
   return new RecoverableScannerError('CYCLE_CHECKPOINT_PHASE_CONFLICT', message);
+}
+
+function checkpointCursor(checkpoint) {
+  return {
+    phase: checkpoint.phase,
+    tokenIndex: checkpoint.tokenIndex,
+    endpointIndex: checkpoint.endpointIndex,
+    updatedAt: checkpoint.updatedAt,
+    keyEpoch: checkpoint.keyEpoch,
+    controlEpoch: checkpoint.controlEpoch
+  };
+}
+
+function assertExpectedCursor(current, expected) {
+  if (!expected) return;
+  if (current.cycleId !== expected.cycleId || current.phase !== expected.phase
+    || current.tokenIndex !== expected.tokenIndex || current.endpointIndex !== expected.endpointIndex
+    || current.updatedAt !== expected.updatedAt || current.keyEpoch !== expected.keyEpoch
+    || current.controlEpoch !== expected.controlEpoch) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_CURSOR_CONFLICT', 'cycle request cursor changed while work was in flight');
+  }
 }
 
 function outcomeWithSample(outcome, job, sample, error, now) {
@@ -297,6 +326,8 @@ export class RecoverableScanner {
       return item && source ? Object.freeze({ kind: 'SECONDARY', source, address: item.row.address, chain: checkpoint.chain, checkpoint }) : null;
     }
     if (checkpoint.phase === 'OUTCOMES_SAMPLE') {
+      const now = this.now();
+      if (now >= outcomeSampleDeadline(checkpoint, now)) return null;
       const outcome = checkpoint.partial.outcomes?.job;
       return outcome ? Object.freeze({ kind: 'OUTCOMES_SAMPLE', ...clone(outcome), checkpoint }) : null;
     }
@@ -306,6 +337,7 @@ export class RecoverableScanner {
   recordRequest(cycleId, { value, error = null, collectedAt = this.now(), expectedCheckpoint = null }) {
     const current = this.checkpoint(cycleId);
     if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
+    assertExpectedCursor(current, expectedCheckpoint);
     const partial = clone(current.partial);
     const record = responseRecord(value, error, collectedAt);
     let nextPhase = current.phase;
@@ -367,7 +399,7 @@ export class RecoverableScanner {
     }
 
     const expected = expectedCheckpoint || current;
-    return this.store.advance({ expected: { phase: expected.phase, keyEpoch: expected.keyEpoch, controlEpoch: expected.controlEpoch },
+    return this.store.advance({ expected: checkpointCursor(expected),
       next: { ...current, phase: nextPhase, tokenIndex, endpointIndex, partial, updatedAt: collectedAt } });
   }
 
@@ -384,7 +416,8 @@ export class RecoverableScanner {
     if (isAuditDeadlineBoundary(current, now)) {
       partial.deadlineExpiredAt = now;
       delete partial.outcomes;
-      nextPhase = 'SUMMARIZE';
+      partial.outcomeDeadlineAt = outcomeSampleDeadline(current, now);
+      nextPhase = 'OUTCOMES_SAMPLE';
     } else if (current.phase === 'SCREEN') {
       const exclusions = new Map(this.store.readRiskExclusions(current.chain).map(item => [tokenKey(current.chain, item.address), item]));
       partial.screened = discoveryRows(partial.discovery).map(row => {
@@ -410,13 +443,18 @@ export class RecoverableScanner {
       }
       return this.store.advance({ expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch }, next });
     } else if (current.phase === 'BUILD_QUEUE') {
+      const excludedAddresses = new Set(this.store.readRiskExclusions(current.chain).map(item =>
+        tokenKey(current.chain, item.address)
+      ));
       const prequalified = (partial.screened || []).filter(item => item.screen.pass).sort((left, right) =>
         Number(right.screen.priorityBand) - Number(left.screen.priorityBand) || right.screen.score - left.screen.score
       );
       const monitors = (partial.monitors || []).filter(item => !prequalified.some(candidate =>
         addressKey(candidate.row.address) === addressKey(item.row.address)
       ));
-      const auditable = [...prequalified, ...monitors];
+      const auditable = [...prequalified, ...monitors].filter(item =>
+        !excludedAddresses.has(tokenKey(current.chain, item.row.address))
+      );
       const priorQueue = this.store.readAuditQueue(current.chain);
       const queue = buildQueue(priorQueue, auditable, now, settings);
       const availableAddresses = new Set(auditable.map(item => addressKey(item.row.address)));
@@ -430,6 +468,7 @@ export class RecoverableScanner {
       partial.prequalifiedCount = prequalified.length;
       tokenIndex = 0;
       nextPhase = partial.queue.selected.length ? 'AUDIT' : 'OUTCOMES_SAMPLE';
+      if (nextPhase === 'OUTCOMES_SAMPLE') partial.outcomeDeadlineAt = outcomeSampleDeadline(current, now);
       const next = { ...current, phase: nextPhase, tokenIndex, endpointIndex, partial, updatedAt: now };
       if (typeof this.store.commitQueue === 'function') {
         return this.store.commitQueue({
@@ -440,7 +479,8 @@ export class RecoverableScanner {
       }
       return this.store.advance({ expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch }, next });
     } else if (current.phase === 'OUTCOMES_SAMPLE') {
-      const jobs = num(partial.outcomeReads) < outcomeReadLimit(settings)
+      partial.outcomeDeadlineAt = outcomeSampleDeadline(current, now);
+      const jobs = now < partial.outcomeDeadlineAt && num(partial.outcomeReads) < outcomeReadLimit(settings)
         ? dueOutcomeJobs(retainedOutcomes(typeof this.store.readOutcomes === 'function' ? this.store.readOutcomes() : [], now, outcomeRetentionLimit(settings)), now) : [];
       const job = jobs[0];
       if (job) {
@@ -557,7 +597,7 @@ export class RecoverableScanner {
     if (nextPhase === 'AUDIT') {
       delete partial.audit;
       delete partial.secondary;
-    }
+    } else partial.outcomeDeadlineAt = outcomeSampleDeadline(current, now);
     const event = candidate.status === 'X_REVIEW' && previousCandidate?.status !== 'X_REVIEW'
       ? {
           effectType: 'CANDIDATE_NEW',
@@ -588,6 +628,7 @@ export class RecoverableScanner {
   recordOutcomeSample(cycleId, { sample = null, error = null, collectedAt = this.now(), expectedCheckpoint = null }) {
     const current = this.checkpoint(cycleId);
     if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
+    assertExpectedCursor(current, expectedCheckpoint);
     if (current.phase !== 'OUTCOMES_SAMPLE') throw phaseError('outcome samples can only commit from OUTCOMES_SAMPLE');
     const job = current.partial.outcomes?.job;
     if (!job) throw phaseError('outcome sample checkpoint has no job');
@@ -602,13 +643,14 @@ export class RecoverableScanner {
     const nextOutcomes = outcomes.map(row => outcomeKey(row, current.chain) === tokenKey(jobChain, job.address) ? progressed : row);
     const partial = clone(current.partial);
     partial.outcomeReads = num(partial.outcomeReads) + 1;
-    const nextJob = partial.outcomeReads < outcomeReadLimit(partial.settings || this.settings)
+    const nextJob = collectedAt < outcomeSampleDeadline(current, collectedAt)
+      && partial.outcomeReads < outcomeReadLimit(partial.settings || this.settings)
       ? dueOutcomeJobs(nextOutcomes, collectedAt)[0] : null;
     if (nextJob) partial.outcomes = { job: { chain: nextJob.row.chain || current.chain, address: nextJob.row.address, key: nextJob.key, targetAt: nextJob.targetAt } };
     else delete partial.outcomes;
     const expected = expectedCheckpoint || current;
     return this.store.commitOutcomeProgress({
-      expected: { phase: expected.phase, keyEpoch: expected.keyEpoch, controlEpoch: expected.controlEpoch },
+      expected: checkpointCursor(expected),
       outcome: progressed,
       next: {
         ...current,

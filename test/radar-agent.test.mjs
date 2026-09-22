@@ -49,6 +49,8 @@ class MemoryScannerStore {
     this.checkpoints = new Map();
     this.outcomes = [];
     this.candidate = null;
+    this.riskExclusions = [];
+    this.monitorCandidates = [];
   }
 
   begin(value) {
@@ -74,7 +76,7 @@ class MemoryScannerStore {
   }
 
   readRiskExclusions() {
-    return [];
+    return structuredClone(this.riskExclusions);
   }
 
   readAuditQueue() {
@@ -83,6 +85,10 @@ class MemoryScannerStore {
 
   readOutcomes() {
     return structuredClone(this.outcomes);
+  }
+
+  readMonitorCandidates() {
+    return structuredClone(this.monitorCandidates);
   }
 
   readCandidateReview() {
@@ -231,6 +237,45 @@ test('recoverable scanner persists one response cursor at a time and retains the
   assert.equal(store.read('cycle-1').phase, 'OUTCOMES_SAMPLE');
 });
 
+test('recoverable scanner rejects a response from an already-advanced request cursor', () => {
+  const store = new MemoryScannerStore();
+  const scanner = new RecoverableScanner({ store, settings, now: () => NOW });
+  scanner.begin({ cycleId: 'cycle-stale-response', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: NOW + 20_000 });
+  const originalRequest = scanner.nextRequest('cycle-stale-response');
+
+  scanner.recordRequest('cycle-stale-response', {
+    value: { completed: [] },
+    collectedAt: NOW + 1,
+    expectedCheckpoint: originalRequest.checkpoint
+  });
+
+  assert.throws(() => scanner.recordRequest('cycle-stale-response', {
+    value: { completed: [{ address: 'late-response' }] },
+    collectedAt: NOW + 2,
+    expectedCheckpoint: originalRequest.checkpoint
+  }), error => error?.code === 'CYCLE_CHECKPOINT_CURSOR_CONFLICT');
+  assert.equal(store.read('cycle-stale-response').endpointIndex, 1);
+  assert.equal(store.read('cycle-stale-response').partial.discovery.responses.trending, undefined);
+});
+
+test('recoverable scanner does not audit monitored tokens with durable risk exclusions', () => {
+  const address = `0x${'1'.repeat(40)}`;
+  const store = new MemoryScannerStore();
+  store.riskExclusions = [{ address, reasons: ['permanent exclusion'] }];
+  store.monitorCandidates = [{ address, symbol: 'EXCLUDED' }];
+  const scanner = new RecoverableScanner({ store, settings, now: () => NOW });
+  scanner.begin({ cycleId: 'cycle-excluded-monitor', chain: 'bsc', keyEpoch: 0, controlEpoch: 0, deadlineAt: NOW + 20_000 });
+  scanner.recordRequest('cycle-excluded-monitor', { value: { completed: [] }, collectedAt: NOW + 1 });
+  scanner.recordRequest('cycle-excluded-monitor', { value: { rank: [] }, collectedAt: NOW + 2 });
+
+  scanner.advanceLocal('cycle-excluded-monitor');
+  const queued = scanner.advanceLocal('cycle-excluded-monitor');
+
+  assert.equal(queued.phase, 'OUTCOMES_SAMPLE');
+  assert.deepEqual(queued.partial.queue.selected, []);
+  assert.deepEqual(queued.partial.queue.rows, []);
+});
+
 test('recoverable scanner preserves the legacy transient classification and fairness rules', () => {
   assert.equal(classifyRecoverableDeepResult({ failed: ['observation'], blockingUnknownFields: [], honeypotEvidence: '未验证' }, { complete: true }).status, 'WAIT_RECHECK');
   assert.equal(classifyRecoverableDeepResult({ failed: ['ownerRenounced'], blockingUnknownFields: [], honeypotEvidence: '未验证' }, { complete: true }).status, 'HARD_REJECT');
@@ -321,6 +366,43 @@ test('an expired audit budget completes evidence for its current token before st
   checkpoint.endpointIndex = 0;
   store.checkpoints.set(checkpoint.cycleId, checkpoint);
   assert.equal(scanner.nextRequest(checkpoint.cycleId).kind, 'DEADLINE_EXPIRED');
+  assert.equal(scanner.advanceLocal(checkpoint.cycleId).phase, 'OUTCOMES_SAMPLE');
+});
+
+test('outcome sampling gets a separate bounded deadline after the audit budget expires', async () => {
+  const address = `0x${'3'.repeat(40)}`;
+  const store = new MemoryScannerStore();
+  store.outcomes = [{
+    chain: 'bsc', address, initialDecision: 'X_REVIEW', latestDecision: 'X_REVIEW',
+    baselineAt: NOW - 400_000, baselinePrice: 1, lastAuditedAt: NOW - 400_000,
+    symbol: 'SAMPLE', latestFailed: [], samples: {}, sampleRetries: {}
+  }];
+  store.checkpoints.set('cycle-expired-sampling', {
+    tenantId: '1000', cycleId: 'cycle-expired-sampling', chain: 'bsc', keyEpoch: 0, controlEpoch: 0,
+    deadlineAt: NOW - 1, phase: 'AUDIT', tokenIndex: 1, endpointIndex: 0, updatedAt: NOW,
+    partial: { settings, queue: { selected: [{ row: { address } }] } }
+  });
+  const scanner = new RecoverableScanner({ store, settings, now: () => NOW });
+  scanner.advanceLocal('cycle-expired-sampling');
+  scanner.advanceLocal('cycle-expired-sampling');
+  let requestDeadline;
+
+  await executeRecoverableScanStep({
+    scanner,
+    cycleId: 'cycle-expired-sampling',
+    gmgn: {
+      async priceAt(_address, targetAt, _chain, options) {
+        requestDeadline = options.deadline;
+        return { price: 2, at: targetAt };
+      }
+    },
+    now: () => NOW,
+    request: operation => operation({ signal: new AbortController().signal, timeoutMs: 30_000 })
+  });
+
+  assert.equal(requestDeadline, NOW - 1 + 25_000);
+  assert.equal(store.read('cycle-expired-sampling').partial.outcomeDeadlineAt, requestDeadline);
+  assert.equal(store.outcomes[0].samples.m5.price, 2);
 });
 
 test('recoverable scanner caps outcome reads for a cycle', () => {
@@ -542,6 +624,56 @@ test('recoverable scan executor records a caught GMGN endpoint error and schedul
   assert.equal(result.nextNeedsGmgn, true);
   assert.equal(store.read('cycle-executor-error').endpointIndex, 1);
   assert.equal(store.read('cycle-executor-error').partial.discovery.responses.trenches.error.code, 'GMGN_NETWORK_ERROR');
+});
+
+test('recoverable scan executor replaces overdue finalized work without an invalid reschedule time', async () => {
+  let clock = NOW;
+  const store = new MemoryScannerStore();
+  const scanner = new RecoverableScanner({ store, settings, now: () => clock });
+  scanner.begin({ cycleId: 'cycle-overdue-successor', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: NOW + 20_000 });
+  const request = operation => operation({ signal: new AbortController().signal, timeoutMs: 5_000 });
+  const gmgn = {
+    trenches: async () => ({ completed: [] }),
+    marketRank: async () => ({ rank: [] })
+  };
+
+  for (let step = 0; step < 5; step += 1) {
+    await executeRecoverableScanStep({ scanner, cycleId: 'cycle-overdue-successor', gmgn, request, now: () => clock });
+    clock += 1;
+  }
+  clock = NOW + settings.scanIntervalMs + 1_000;
+  const result = await executeRecoverableScanStep({
+    scanner,
+    cycleId: 'cycle-overdue-successor',
+    gmgn,
+    request,
+    now: () => clock,
+    onFinalized(checkpoint) {
+      const summary = checkpoint.partial.summary;
+      const successor = scanner.begin({
+        cycleId: summary.nextCycleId,
+        chain: checkpoint.chain,
+        keyEpoch: checkpoint.keyEpoch,
+        controlEpoch: checkpoint.controlEpoch,
+        deadlineAt: summary.nextDeadlineAt,
+        partial: { rootCycleId: checkpoint.partial.rootCycleId, scanCount: summary.scanCount }
+      });
+      return {
+        checkpoint: successor,
+        task: {
+          id: `scan:${summary.nextCycleId}`,
+          kind: 'scan',
+          dueAt: summary.nextCycleAt,
+          enabled: true,
+          needsGmgn: true,
+          gmgnWeight: 3
+        }
+      };
+    }
+  });
+
+  assert.equal(result.nextTask.dueAt, clock);
+  assert.equal(Object.hasOwn(result, 'nextDueAt'), false);
 });
 
 test('secondary source stages execute serially and preserve a fatal final aggregation', async () => {

@@ -308,6 +308,11 @@ function assertCurrent(storage, tenantId, current, expected) {
   if (expected.controlEpoch !== undefined && current.controlEpoch !== expected.controlEpoch) {
     throw new RecoverableScannerError('CYCLE_CONTROL_EPOCH_STALE', 'cycle checkpoint control epoch changed while work was in flight');
   }
+  if ((expected.tokenIndex !== undefined && current.tokenIndex !== expected.tokenIndex)
+    || (expected.endpointIndex !== undefined && current.endpointIndex !== expected.endpointIndex)
+    || (expected.updatedAt !== undefined && current.updatedAt !== expected.updatedAt)) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_CURSOR_CONFLICT', 'cycle request cursor changed while work was in flight');
+  }
   try {
     assertCheckpointGeneration(storage, tenantId, current);
   } catch (error) {

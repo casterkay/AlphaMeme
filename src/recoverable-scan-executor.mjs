@@ -5,6 +5,7 @@ const DISCOVERY_FILTERS = Object.freeze({
   min_created: '5m', max_created: '10080m', min_marketcap: 10_000,
   max_marketcap: 150_000, min_liquidity: 3_000
 });
+const OUTCOME_SAMPLE_TIMEOUT_MS = 25_000;
 
 function safeError(code) {
   return Object.assign(new Error(code), { code });
@@ -17,6 +18,13 @@ function cycleProgress(checkpoint) {
 function requestDeadline(checkpoint, timeoutMs) {
   const deadline = checkpoint.deadlineAt === null ? Infinity : checkpoint.deadlineAt;
   return Math.min(deadline, Date.now() + timeoutMs);
+}
+
+function outcomeRequestDeadline(checkpoint, timeoutMs, requestStartedAt) {
+  const cycleDeadline = Number.isSafeInteger(checkpoint.partial.outcomeDeadlineAt)
+    ? checkpoint.partial.outcomeDeadlineAt
+    : (checkpoint.deadlineAt ?? requestStartedAt) + OUTCOME_SAMPLE_TIMEOUT_MS;
+  return Math.min(cycleDeadline, requestStartedAt + timeoutMs);
 }
 
 async function discoveryRequest(gmgn, next, signal, timeoutMs) {
@@ -144,7 +152,7 @@ export async function executeRecoverableScanStep({ scanner, cycleId, gmgn, secon
   } else if (next.kind === 'OUTCOMES_SAMPLE') {
     result = await recordOutcomeRequest(scanner, cycleId, next.checkpoint, request,
       ({ signal, timeoutMs }) => gmgn.priceAt(next.address, next.targetAt, next.chain || next.checkpoint.chain, {
-        deadline: requestDeadline(next.checkpoint, timeoutMs), signal
+        deadline: outcomeRequestDeadline(next.checkpoint, timeoutMs, now()), signal
       }), now);
   } else {
     throw safeError('RECOVERABLE_SCAN_PHASE_UNSUPPORTED');
@@ -161,9 +169,9 @@ export async function executeRecoverableScanStep({ scanner, cycleId, gmgn, secon
     status: 'success',
     complete,
     checkpoint: cycleProgress(successorCheckpoint),
-    nextDueAt: complete ? undefined : successor?.task?.dueAt ?? Math.max(now() + 1, checkpoint.updatedAt + 1),
     nextNeedsGmgn: admission.needsGmgn,
     nextGmgnWeight: admission.gmgnWeight,
+    ...(!complete && !successor ? { nextDueAt: Math.max(now() + 1, checkpoint.updatedAt + 1) } : {}),
     ...(successor ? { nextTask: successor.task } : {})
   });
 }
