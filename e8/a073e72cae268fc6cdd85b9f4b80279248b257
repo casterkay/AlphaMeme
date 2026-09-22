@@ -1,0 +1,21 @@
+scripts/spikes/live-timing.mjs
+  s_428ea927e420c8::t_97533255e1a7f6 1-48
+workers/fixtures/live-timing-spike.mjs
+  s_428ea927e420c8::t_9229bb3b50c15e 1-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e8a073e72cae268fc6cdd85b9f4b80279248b257",
+  "prompts": {},
+  "sessions": {
+    "s_428ea927e420c8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-32c0-7c12-a10f-c5b52f0221e4",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
