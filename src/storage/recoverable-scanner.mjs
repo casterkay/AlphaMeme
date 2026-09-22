@@ -312,6 +312,13 @@ export class SqliteRecoverableScannerStore {
     return existingCheckpoint(this.storage, this.tenantId, cycleId(currentCycleId));
   }
 
+  list() {
+    return this.storage.sql.exec(
+      'SELECT tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at FROM cycle_checkpoint WHERE tenant_id = ? ORDER BY cycle_id',
+      this.tenantId
+    ).toArray().map(checkpointFromRow);
+  }
+
   begin(value) {
     const afterBegin = value?.afterBegin;
     if (afterBegin !== undefined && typeof afterBegin !== 'function') {

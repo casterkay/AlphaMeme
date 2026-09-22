@@ -49,6 +49,19 @@ describe('Radar control generations', () => {
     expect((await radar.getRecoverableCycle({ tenantId, cycleId })).endpointIndex).toBe(1);
   });
 
+  it('revalidates every persisted checkpoint for a generic resume', async () => {
+    const tenantId = '19106';
+    const radar = await configuredRadar(tenantId);
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'resume-all-one', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'resume-all-two', chain: 'base', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.pause({ tenantId });
+
+    const resumed = await radar.resume({ tenantId });
+    expect(resumed.checkpoint).toBeNull();
+    expect(resumed.checkpoints).toHaveLength(2);
+    expect(resumed.checkpoints.map(checkpoint => checkpoint.controlEpoch)).toEqual([2, 2]);
+  });
+
   it('disconnect invalidates every generation while retaining the durable provider cooldown', async () => {
     const tenantId = '19102';
     const cycleId = 'disconnect-generation';
