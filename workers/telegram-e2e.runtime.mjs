@@ -238,4 +238,51 @@ describe('Telegram complete command and delivery flows',()=>{
       else {expect(runtime.control.snapshot().configured).toBe(false);expect(runtime.inbox.get(input.updateId).status).toBe('CANCELLED');expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);}
     });
   });
+  it('rebuilds a requested detail from current evidence when an audit changes before its first edit is sent',async()=>{
+    await withRuntime('22912',async({runtime,storage,tenantId,sent,command,sessions,link,seed,receipt,drain})=>{
+      seed();await command('audits');
+      const audits=sessions()[0],binding=link(audits,'panel.open',params=>params.panel==='detail');
+      const input=receipt('callback',{callbackId:binding.id,callbackQueryId:'detail-race'},{sourceMessageId:audits.messageId});
+      runtime.receive(input);await runtime.runCommand(input.updateId);
+      expect(storage.sql.exec('SELECT * FROM message_map WHERE tenant_id=?',tenantId).toArray()).toHaveLength(0);
+      storage.sql.exec('UPDATE candidates SET review_revision=? WHERE tenant_id=?','fresh-evidence',tenantId);
+      await drain();
+      expect(runtime.outbox.rows().some(row=>row.status==='CANCELLED')).toBe(true);
+      storage.transactionSync(()=>runtime.reconcileInTransaction());await drain();
+      const mapping=storage.sql.exec('SELECT rendered_revision,message_id FROM message_map WHERE tenant_id=?',tenantId).one();
+      expect(mapping).toEqual({rendered_revision:'fresh-evidence',message_id:audits.messageId});
+      expect(sent.at(-1).method).toBe('editMessageText');
+    });
+  });
+
+  it('corrects all mapped cards while muted and never resets a permanently failed correction retry budget',async()=>{
+    await withRuntime('22913',async({runtime,storage,tenantId,command,sessions,link,click,seed,drain})=>{
+      seed();await command('audits');await click(link(sessions()[0],'panel.open',params=>params.panel==='detail'));
+      await command('audits');await click(link(sessions()[1],'panel.open',params=>params.panel==='detail'));
+      expect(runtime.commands.preference('notifications',false)).toBe(false);
+      storage.sql.exec('UPDATE candidates SET review_revision=? WHERE tenant_id=?','risk-revision',tenantId);
+      storage.transactionSync(()=>runtime.reconcileCardsInTransaction());
+      const corrections=()=>runtime.outbox.rows().filter(row=>row.delivery_class==='PANEL_UPDATE');
+      expect(corrections()).toHaveLength(2);
+      runtime.outbox.transport=async()=>({ok:false,kind:'permanent',code:'TELEGRAM_REJECTED'});
+      await drain();expect(corrections().every(row=>row.status==='FAILED')).toBe(true);
+      for(let iteration=0;iteration<3;iteration++) storage.transactionSync(()=>runtime.reconcileCardsInTransaction());
+      expect(corrections()).toHaveLength(2);
+      storage.sql.exec('UPDATE candidates SET review_revision=? WHERE tenant_id=?','different-risk-revision',tenantId);
+      storage.transactionSync(()=>runtime.reconcileCardsInTransaction());
+      expect(corrections()).toHaveLength(4);
+    });
+  });
+
+  it('commits a valid pause callback during intake without waiting for an external scheduler step',async()=>{
+    await withRuntime('22914',async({runtime,command,sessions,link,receipt})=>{
+      await command('settings');
+      const session=sessions()[0],binding=link(session,'scan.pause');
+      const input=receipt('callback',{callbackId:binding.id,callbackQueryId:'pause-now'},{sourceMessageId:session.messageId});
+      runtime.receive(input);
+      expect(runtime.control.snapshot().paused).toBe(true);
+      expect(runtime.inbox.get(input.updateId).status).toBe('DONE');
+    });
+  });
+
 });

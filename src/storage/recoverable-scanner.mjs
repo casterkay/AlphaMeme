@@ -335,8 +335,7 @@ function eventInput(value, tenantId, currentCycleId, chainName, address, now) {
     at: timestamp(value.at ?? now, 'event at'),
     type: value.type,
     message: typeof value.message === 'string' ? value.message : '',
-    data: json(value.data, 'event data'),
-    outbox: value.outbox === undefined ? null : json(value.outbox, 'outbox intent')
+    data: json(value.data, 'event data')
   };
 }
 
@@ -404,10 +403,12 @@ function integerOrNull(value) {
 }
 
 export class SqliteRecoverableScannerStore {
-  constructor(storage, tenantId) {
+  constructor(storage, tenantId, { afterClassification = null } = {}) {
     if (!storage?.sql || typeof storage.transactionSync !== 'function') {
       throw new RecoverableScannerError('RECOVERABLE_SCANNER_STORAGE_INVALID', 'recoverable scanner requires Durable Object SQLite storage');
     }
+    if (afterClassification !== null && typeof afterClassification !== 'function') throw new TypeError('Classification hook must be synchronous');
+    this.afterClassification = afterClassification;
     this.storage = storage;
     this.tenantId = normalizeTenantId(tenantId);
   }
@@ -829,15 +830,7 @@ export class SqliteRecoverableScannerStore {
           'INSERT INTO events (tenant_id, id, at, type, chain, address, message, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, id) DO NOTHING',
           this.tenantId, event.id, event.at, event.type, next.chain, candidate.address, event.message, JSON.stringify(event.data)
         );
-        if (event.outbox) {
-          this.storage.sql.exec(
-            'INSERT INTO outbox (tenant_id, id, event_id, chat_id, payload_json, desired_revision, delivery_class, action_reason, ui_session_id, status, attempts, next_at, ambiguous_retries) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, id) DO NOTHING',
-            this.tenantId, `outbox:${event.id}`, event.id, String(event.outbox.chatId || this.tenantId), JSON.stringify(event.outbox.payload || {}),
-            stringOrNull(event.outbox.desiredRevision), stringOrNull(event.outbox.deliveryClass) || 'NOTIFICATION',
-            stringOrNull(event.outbox.actionReason), stringOrNull(event.outbox.uiSessionId), 'PENDING', 0,
-            integerOrNull(event.outbox.nextAt) ?? next.updatedAt, 0
-          );
-        }
+
       }
 
       this.storage.sql.exec(
@@ -853,6 +846,8 @@ export class SqliteRecoverableScannerStore {
           this.storage.sql.exec('UPDATE scheduler_state SET value_json = ? WHERE tenant_id = ? AND key = ?', JSON.stringify(remaining), this.tenantId, 'live.requestedReviews');
         }
       }
+      const completion = this.afterClassification?.();
+      if (completion && typeof completion.then === 'function') throw new TypeError('Classification hook must be synchronous');
       return Object.freeze({ checkpoint: { tenantId: this.tenantId, ...next }, effectId: event?.id || null });
     });
   }

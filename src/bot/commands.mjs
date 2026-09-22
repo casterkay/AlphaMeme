@@ -44,6 +44,13 @@ export class TelegramCommands {
   }
 
   immediateInTransaction(row) {
+    if (row.command_type === 'callback') {
+      const payload = JSON.parse(row.payload_json);
+      const link = this.storage.sql.exec('SELECT action FROM shortlinks WHERE tenant_id=? AND id=?', this.tenantId, payload.callbackId).toArray()[0];
+      if (!['scan.pause','scan.resume','connection.disconnect','notifications.set','live.set'].includes(link?.action)) return false;
+      this.processInTransaction(row);
+      return true;
+    }
     const command = row.command_type.replace(/^command:/, '');
     if (!CONTROL.has(command)) return false;
     const args = JSON.parse(row.payload_json).arguments ?? '';

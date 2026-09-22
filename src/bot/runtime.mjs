@@ -92,6 +92,7 @@ export class TelegramRuntime {
         const link = this.commands.sessions.resolveInTransaction({ tenantId: this.tenantId, actorUserId: row.actor_user_id, sourceMessageId: row.source_message_id, payload });
         if (link.action === 'onboard.regenerate') onboarding = await regeneratePendingSigningKey({ ...this.keyOptions(), expectedGeneration: link.params.generation, expectedConnectionGeneration: link.expectedConnectionGeneration });
         else if (link.action === 'panel.open' && link.params.panel === 'onboard') onboarding = await ensurePendingSigningKey(this.keyOptions());
+        else if (['onboard','regenerate'].includes(link.session.panel) || ['onboard','regenerate'].includes(link.session.query.returnTo?.panel)) onboarding = await signingSetupSnapshot(this.keyOptions());
       }
       this.storage.transactionSync(() => {
         const current = this.inbox.get(updateId);
@@ -202,6 +203,7 @@ export class TelegramRuntime {
   }
 
   deliveryEligible(row, payload) {
+    if (payload.token && payload.projectionRevision !== reviewProjectionRevision(this.storage, this.tenantId, payload.token, this.now())) return false;
     return this.notifications.eligible(row, payload, { issues: this.actionableIssues() });
   }
 
@@ -236,6 +238,18 @@ export class TelegramRuntime {
     this.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json', this.tenantId, `telegram.rendered:${messageId}`, JSON.stringify(value));
   }
 
+  reconcileRequestedPanelsInTransaction() {
+    for (const row of this.outbox.rows()) {
+      if (row.delivery_class !== 'USER_RESPONSE' || !['PENDING','CANCELLED'].includes(row.status)) continue;
+      const payload = this.outbox.payload(row);
+      if (!payload?.token || !row.ui_session_id) continue;
+      const session = this.commands.sessions.get(row.ui_session_id);
+      if (!session || session.version !== payload.sessionVersion || session.expiresAt <= this.now()) continue;
+      if (payload.projectionRevision === reviewProjectionRevision(this.storage, this.tenantId, payload.token, this.now())) continue;
+      this.commands.renderInTransaction(this.commands.sessions.advanceInTransaction(session));
+    }
+  }
+
   reconcileCardsInTransaction() {
     const maps = this.storage.sql.exec('SELECT * FROM message_map WHERE tenant_id=?', this.tenantId).toArray();
     let nextAt = null;
@@ -246,7 +260,7 @@ export class TelegramRuntime {
       const session = map.ui_session_id ? this.commands.sessions.get(map.ui_session_id) : null;
       if (!session || !['detail','evidence'].includes(session.panel) || session.query.selectedToken?.address !== map.address || session.query.selectedToken?.chain !== map.chain) continue;
       if (!rendered || JSON.parse(rendered.value_json) !== fingerprint) {
-        const pending = this.outbox.rows().some(row => row.ui_session_id === session.id && ['PENDING','SENDING','UNKNOWN'].includes(row.status) && this.outbox.payload(row)?.projectionRevision === fingerprint);
+        const pending = this.outbox.rows().some(row => row.ui_session_id === session.id && ['PENDING','SENDING','UNKNOWN','FAILED'].includes(row.status) && this.outbox.payload(row)?.projectionRevision === fingerprint);
         if (!pending) {
           const next = { ...session, version: session.version + 1, snapshotAt: this.now() };
           this.commands.sessions.saveInTransaction(next);
@@ -264,12 +278,15 @@ export class TelegramRuntime {
     this.inbox.reconcileInTransaction();
     const pending = this.storage.sql.exec("SELECT value_enc,generation FROM keys WHERE tenant_id=? AND name='gmgn-pending-api-key'", this.tenantId).toArray()[0];
     if (pending && JSON.parse(pending.value_enc).v === 2 && !this.storage.sql.exec("SELECT update_id FROM inbox WHERE tenant_id=? AND command_type='credential' AND generation=? AND status IN ('RECEIVED','RUNNING')", this.tenantId, pending.generation).toArray().length) this.storage.sql.exec("DELETE FROM keys WHERE tenant_id=? AND name='gmgn-pending-api-key' AND generation=?", this.tenantId, pending.generation);
+    this.reconcileRequestedPanelsInTransaction();
     const correctionsAt = this.reconcileCardsInTransaction();
     this.reconcileNotificationsInTransaction();
     const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
     const ownedOutbox = new Set(this.outbox.rows().map(row => `outbox:${row.id}`));
-    const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'live:subscription' && task.id !== 'telegram:corrections' && !task.id.startsWith('inbox:'));
+    const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'live:subscription' && task.id !== 'telegram:corrections' && task.id !== 'telegram:expiry' && !task.id.startsWith('inbox:'));
     tasks.push(...state.tasks.filter(task => task.id.startsWith('inbox:')));
+    const expiry = this.storage.sql.exec("SELECT MIN(expires_at) AS at FROM inbox WHERE tenant_id=? AND status IN ('RECEIVED','RUNNING')", this.tenantId).toArray()[0]?.at;
+    if (Number.isSafeInteger(expiry)) tasks.push({ id: 'telegram:expiry', kind: 'local-control', dueAt: expiry, enabled: true, needsGmgn: false, gmgnWeight: 1 });
     if (correctionsAt !== null) tasks.push({ id: 'telegram:corrections', kind: 'local-control', dueAt: correctionsAt, enabled: true, needsGmgn: false, gmgnWeight: 1 });
     tasks.push(...this.live.reconcileInTransaction({ recoverRunning: recover }), ...this.outbox.reconcileInTransaction({ recoverSending: recover }));
     const current = readSchedulerStateInTransaction(this.storage, this.tenantId);

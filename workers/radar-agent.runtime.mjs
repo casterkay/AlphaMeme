@@ -214,12 +214,13 @@ describe('recoverable Radar scanner', () => {
       const candidate = state.storage.sql.exec('SELECT status FROM candidates WHERE tenant_id = ?', tenantId).one();
       const outcome = state.storage.sql.exec('SELECT baseline_at, baseline_price FROM outcomes WHERE tenant_id = ?', tenantId).one();
       const event = state.storage.sql.exec('SELECT id FROM events WHERE tenant_id = ?', tenantId).one();
-      const outbox = state.storage.sql.exec('SELECT event_id FROM outbox WHERE tenant_id = ?', tenantId).one();
+      const outbox = state.storage.sql.exec('SELECT event_id FROM outbox WHERE tenant_id = ?', tenantId).toArray();
       expect(candidate.status).toBe('X_REVIEW');
       expect(outcome.baseline_at).toBeGreaterThan(0);
       expect(outcome.baseline_price).toBe(1);
       expect(event.id).toBe(expectedEffectId);
-      expect(outbox.event_id).toBe(expectedEffectId);
+      // Domain events no longer bypass the Telegram notification allowlist.
+      expect(outbox).toEqual([]);
     });
   });
 
@@ -387,6 +388,20 @@ describe('recoverable Radar scanner', () => {
     });
   });
 
+  it('rolls back domain facts and checkpoint when transactional notification projection fails', async () => {
+    const tenantId='19025',cycleId='projection-rollback';
+    const radar=env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    await reachClassification(radar,tenantId,cycleId);
+    await runInDurableObject(radar,async(_instance,{storage})=>{
+      const store=new SqliteRecoverableScannerStore(storage,tenantId,{afterClassification:()=>{throw new Error('projection failure');}});
+      const scanner=new RecoverableScanner({store,settings});
+      await expect(scanner.commitClassification(cycleId)).rejects.toThrow('projection failure');
+      expect(storage.sql.exec('SELECT * FROM candidates WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
+      expect(storage.sql.exec('SELECT * FROM events WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
+      expect(store.read(cycleId).phase).toBe('CLASSIFY_AND_COMMIT');
+    });
+  });
+
   it('suppresses repeated cross-cycle notification effects during the legacy deduplication window', async () => {
     const tenantId = '19008';
     const address = candidateRow(Date.now()).address;
@@ -412,13 +427,13 @@ describe('recoverable Radar scanner', () => {
           outcome: null,
           event: {
             effectType: 'CANDIDATE_NEW', type: 'CANDIDATE_NEW', message: 'new candidate', at: now + index,
-            data: { address }, outbox: { payload: { chain: 'sol', address }, desiredRevision: 'revision' }
+            data: { address }
           }
         });
         expect(result.effectId).toBe(index === 0 ? stableEffectId(tenantId, cycleId, 'sol', address, 'CANDIDATE_NEW') : null);
       }
       expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM events WHERE tenant_id = ?', tenantId).one().count).toBe(1);
-      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM outbox WHERE tenant_id = ?', tenantId).one().count).toBe(1);
+      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM outbox WHERE tenant_id = ?', tenantId).one().count).toBe(0);
     });
   });
 
