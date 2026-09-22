@@ -1,5 +1,7 @@
-import { setTimeout as delay } from 'node:timers/promises';
-import { legacyGmgnApiKey, normalizeGmgnApiKey } from '../gmgn-key-store.mjs';
+import { normalizeGmgnApiKey } from '../gmgn-api-key.mjs';
+import { normalizeGmgnList, tokenInfoPrice, unwrapGmgn } from './gmgn-normalize.mjs';
+
+export { normalizeGmgnList as normalizeList, tokenInfoPrice } from './gmgn-normalize.mjs';
 
 const API_ORIGIN = 'https://openapi.gmgn.ai';
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -12,6 +14,10 @@ const TRENCHES_QUOTE_ADDRESS_TYPES = Object.freeze({
   eth: [20, 11, 8, 3, 12, 1, 0],
   robinhood: [11, 20, 24, 12, 0]
 });
+
+function delay(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
 
 function errorWith(code, message, properties = {}) {
   return Object.assign(new Error(message), { code, ...properties });
@@ -37,22 +43,6 @@ function mergeDefined(left = {}, right = {}) {
   return merged;
 }
 
-function unwrap(raw) {
-  let value = raw;
-  for (let index = 0; index < 3; index++) {
-    if (value && typeof value === 'object' && !Array.isArray(value) && value.data != null) value = value.data;
-    else break;
-  }
-  return value;
-}
-
-export function normalizeList(raw, keys = ['list', 'rank', 'completed', 'tokens']) {
-  const value = unwrap(raw);
-  if (Array.isArray(value)) return value;
-  if (!value || typeof value !== 'object') return [];
-  for (const key of keys) if (Array.isArray(value[key])) return value[key];
-  return [];
-}
 
 function retryAfterMs(message) {
   const match = String(message || '').match(/~?(\d+)s\s+remaining/i);
@@ -107,12 +97,6 @@ export function translateGmgnError(error) {
   return preserveErrorMetadata(Object.assign(new Error(message), { code, retryAfterMs: retryAfterMsValue }), error);
 }
 
-export function tokenInfoPrice(info) {
-  const value = info?.price?.price ?? info?.price ?? info?.price_usd;
-  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
-  const price = Number(value);
-  return Number.isFinite(price) && price > 0 ? price : null;
-}
 
 function requestWeight(operation) {
   return ({ tokenTopHolders: 5, tokenTopTraders: 5, trenches: 3, tokenKline: 2 })[operation] || 1;
@@ -310,7 +294,7 @@ function compactTrenches(value, chain, types, limit) {
 
 export class GmgnClient {
   constructor({ timeoutMs = 15_000, maxResponseBytes = MAX_RESPONSE_BYTES, minRequestGapMs = 1_100, apiKeyProvider = null,
-    legacyKeyProvider = legacyGmgnApiKey, fetch = globalThis.fetch, now = Date.now, randomUUID = () => globalThis.crypto.randomUUID(),
+    legacyKeyProvider = () => '', fetch = globalThis.fetch, now = Date.now, randomUUID = () => globalThis.crypto.randomUUID(),
     wait = delay, admissionStateStore = new MemoryGmgnAdmissionStateStore() } = {}) {
     this.timeoutMs = timeoutMs;
     this.maxResponseBytes = maxResponseBytes;
@@ -407,10 +391,10 @@ export class GmgnClient {
     return this.#read('tokenKline', 'GET', '/v1/market/token_kline', { chain, address, resolution, from, to }, null, options);
   }
 
-  async marketRank(chain, interval, { limit = 100, apiKey, deadline, verification, ...query } = {}) {
+  async marketRank(chain, interval, { limit = 100, apiKey, deadline, verification, signal, ...query } = {}) {
     validateChain(chain); validateLimit(limit, 100);
     if (!['1m', '5m'].includes(interval)) throw errorWith('GMGN_INVALID_REQUEST', 'Invalid discovery request');
-    return this.#read('marketRank', 'GET', '/v1/market/rank', { chain, interval, limit, ...query }, null, { apiKey, deadline, verification });
+    return this.#read('marketRank', 'GET', '/v1/market/rank', { chain, interval, limit, ...query }, null, { apiKey, deadline, verification, signal });
   }
 
   async trenches(chain, { types = ['new_creation', 'near_completion', 'completed'], limit = 80, filters = {}, ...options } = {}) {
@@ -444,8 +428,8 @@ export class GmgnClient {
       }),
       this.marketRank(chain, '5m', { limit: 100, order_by: 'volume', direction: 'desc', ...filters })
     ]);
-    const trenchRows = trenches.status === 'fulfilled' ? normalizeList(trenches.value, ['completed']) : [];
-    const trendingRows = trending.status === 'fulfilled' ? normalizeList(trending.value, ['rank']) : [];
+    const trenchRows = trenches.status === 'fulfilled' ? normalizeGmgnList(trenches.value, ['completed']) : [];
+    const trendingRows = trending.status === 'fulfilled' ? normalizeGmgnList(trending.value, ['rank']) : [];
     this.lastDiscoveryHealth = {
       complete: trenches.status === 'fulfilled' && trending.status === 'fulfilled',
       trenches: trenches.status === 'fulfilled'
@@ -476,9 +460,9 @@ export class GmgnClient {
       this.#cachedRead(`tokenPoolInfo:${chain}:${address}`, () => this.tokenPoolInfo(chain, address), 15_000)
     ]);
     const partial = {
-      info: staticCalls[0].status === 'fulfilled' ? unwrap(staticCalls[0].value) : {},
-      security: staticCalls[1].status === 'fulfilled' ? unwrap(staticCalls[1].value) : {},
-      pool: staticCalls[2].status === 'fulfilled' ? unwrap(staticCalls[2].value) : {},
+      info: staticCalls[0].status === 'fulfilled' ? unwrapGmgn(staticCalls[0].value) : {},
+      security: staticCalls[1].status === 'fulfilled' ? unwrapGmgn(staticCalls[1].value) : {},
+      pool: staticCalls[2].status === 'fulfilled' ? unwrapGmgn(staticCalls[2].value) : {},
       holders: [], traders: [], candles: [], _meta: { complete: false, earlyExit: true }
     };
     if (staticCalls.every(result => result.status === 'fulfilled') && shouldStopEarly?.(partial)) return partial;
@@ -498,17 +482,17 @@ export class GmgnClient {
     }
     const value = index => calls[index].status === 'fulfilled' ? calls[index].value : null;
     return {
-      info: unwrap(value(0)) || {}, security: unwrap(value(1)) || {}, pool: unwrap(value(2)) || {},
-      holders: normalizeList(value(3)), traders: normalizeList(value(4)), candles: normalizeList(value(5)),
+      info: unwrapGmgn(value(0)) || {}, security: unwrapGmgn(value(1)) || {}, pool: unwrapGmgn(value(2)) || {},
+      holders: normalizeGmgnList(value(3)), traders: normalizeGmgnList(value(4)), candles: normalizeGmgnList(value(5)),
       _meta: { complete: calls.every(call => call.status === 'fulfilled'), endpoints, auditedAt: this.now() }
     };
   }
 
-  async priceAt(address, targetAt, chain, { deadline = Infinity } = {}) {
+  async priceAt(address, targetAt, chain, { deadline = Infinity, signal } = {}) {
     const from = targetAt - 120_000;
     const to = targetAt + 60_000;
-    const raw = await this.tokenKline(chain, address, '1m', from, to, { deadline });
-    const rows = normalizeList(raw).map(row => ({ at: Number(row.time) + 60_000, price: Number(row.close) }))
+    const raw = await this.tokenKline(chain, address, '1m', from, to, { deadline, signal });
+    const rows = normalizeGmgnList(raw).map(row => ({ at: Number(row.time) + 60_000, price: Number(row.close) }))
       .filter(row => Number.isFinite(row.at) && row.at <= this.now() && Math.abs(row.at - targetAt) <= 60_000 && row.price > 0 && Number.isFinite(row.price))
       .sort((left, right) => Math.abs(left.at - targetAt) - Math.abs(right.at - targetAt));
     return rows[0] ? { ...rows[0], source: 'GMGN_1M_CLOSE' } : null;
@@ -541,7 +525,7 @@ export class GmgnClient {
     return task;
   }
 
-  async #readNow(operation, method, path, query, body, { apiKey = this.apiKey(), deadline = Infinity, verification = false } = {}) {
+  async #readNow(operation, method, path, query, body, { apiKey = this.apiKey(), deadline = Infinity, verification = false, signal = null } = {}) {
     await this.#ensureAdmissionState();
     if (this.disabled && !verification) throw translateGmgnError(errorWith('GMGN_AUTH_FAILED', 'invalid api key'));
     if (!apiKey) throw translateGmgnError(errorWith('GMGN_AUTH_FAILED', 'invalid api key'));
@@ -568,6 +552,9 @@ export class GmgnClient {
     });
     this.metrics.requests++;
     const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener?.('abort', abort, { once: true });
     let timedOut = false;
     const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, remainingMs);
     timeout.unref?.();
@@ -608,6 +595,7 @@ export class GmgnClient {
       throw translated;
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener?.('abort', abort);
     }
   }
 

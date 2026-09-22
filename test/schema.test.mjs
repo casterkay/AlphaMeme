@@ -77,7 +77,9 @@ class FakeSqlStorage {
     }
 
     if (statement.startsWith("SELECT name FROM sqlite_master")) {
-      const names = [...this.tables.keys()].filter(name => !statement.includes('name NOT IN') || !['_cf_KV', '__cf_kv', '__miniflare_do_name'].includes(name));
+      const excludedTableNames = [...(statement.match(/name NOT IN \(([^)]*)\)/)?.[1].matchAll(/'([^']+)'/g) || [])]
+        .map(match => match[1]);
+      const names = [...this.tables.keys()].filter(name => !statement.includes('name NOT IN') || !excludedTableNames.includes(name));
       return cursor(names.sort().map(name => ({ name })));
     }
 
@@ -187,11 +189,13 @@ test('schema initialization refuses a non-empty, versionless database instead of
 test('schema initialization ignores only documented Worker and local SQLite metadata', () => {
   const storage = new FakeStorage();
   storage.sql.tables.set('_cf_KV', { name: '_cf_KV', columns: [], primaryKey: [] });
+  storage.sql.tables.set('_cf_METADATA', { name: '_cf_METADATA', columns: [], primaryKey: [] });
   storage.sql.tables.set('__cf_kv', { name: '__cf_kv', columns: [], primaryKey: [] });
   storage.sql.tables.set('__miniflare_do_name', { name: '__miniflare_do_name', columns: [], primaryKey: [] });
 
   assert.equal(initializeRadarSchema(storage), RADAR_SCHEMA_VERSION);
   assert.ok(storage.sql.tables.has('_cf_KV'));
+  assert.ok(storage.sql.tables.has('_cf_METADATA'));
   assert.ok(storage.sql.tables.has('__cf_kv'));
   assert.ok(storage.sql.tables.has('__miniflare_do_name'));
 });

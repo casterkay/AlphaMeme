@@ -2,15 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { normalizeGmgnApiKey } from './gmgn-api-key.mjs';
 
-const KEY_SUFFIX_PATTERN = /^[A-Za-z0-9_-]{24,128}$/;
-
-export function normalizeGmgnApiKey(value) {
-  if (typeof value !== 'string') return '';
-  const key = value.trim();
-  if (!key.startsWith('gmgn_')) return '';
-  return KEY_SUFFIX_PATTERN.test(key.slice(5)) ? key : '';
-}
+export { normalizeGmgnApiKey } from './gmgn-api-key.mjs';
 
 // Legacy configuration is a fallback only. Never load dotenv into process.env
 // or import the CLI entry point: either would let an old key override the UI.
