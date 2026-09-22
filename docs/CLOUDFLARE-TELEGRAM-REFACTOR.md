@@ -6,7 +6,8 @@
 >
 > Telegram 详细交互设计见 [TELEGRAM-M3-INTERFACE-DESIGN.md](TELEGRAM-M3-INTERFACE-DESIGN.md)：
 > 包含面板、双语文案、回调/状态契约与验收矩阵，并提议将 GitHub #26–29 从 M4 移入 M3。
-> 该里程碑调整仍是提案；下文阶段划分与 GitHub 尚未因此变更。
+> 实施阶段将原M4依赖（#26–29）纳入M3；完整实测验收仍不可省略。
+> 当前实现与未完成的平台验收见 [TELEGRAM-M3-OPERATIONS.md](TELEGRAM-M3-OPERATIONS.md)。
 
 ## 0. 已确认的决策
 
@@ -655,8 +656,8 @@ CA: <code>…</code>
 | **M0 抽取** | scoring/chart-risk 纯逻辑、带 I/O 的 outcomes/secondary provider 接口、manual-review 与白名单抽取；SHA256 字节/hex 兼容 | 先记录现有 16 个测试文件的基线；原测试在删除本地运行时前通过；首字节抽样/reviewEvidence 固定向量一致，async 调用方全部 await |
 | **M1 provider** | fetch 读端点、显式串行队列、持久准入间隔、冷却、缓存、错误翻译 | 原 gmgn/risk-filters 测试适配通过；验证 Key 与审计并发提交仍单飞；429 与加权间隔跨重建不绕过 |
 | **M2 DO 扫描器** | 请求级状态机、版本化 SQLite、原子 effect/checkpoint、TenantRegistry/wake；operator `/health` `/status` | 冷却/暂停无空转；故障注入验证事务前后恢复无缺失/重复 effect；临时凭据仅用隔离测试夹具，不增加生产注入接口 |
-| **M3 Telegram 控制面** | 私聊授权、持久 inbox/outbox、onboard 原子激活、§5.0全套面板/inline keyboard/人工复核、导出与加密 | 重复/乱序 update、重复 callback、断开与验证竞争、群组拒绝、跨租户短 ID、到期人工标记均覆盖；任何重试不回显 Key；主要web界面均能由command打开并通过键盘完成操作 |
-| **M4 live + 通知** | 持久订阅续租、20s 目标调度、live 快照恢复、通知allowlist/基线、revision 编辑与 `/stats` | 无用户交互仍持续轮询；冷却/慢读有可解释延迟且不补跑；mute/pause/feed off 语义分离；风险更正不被新候选 gate 抑制；后台常规变化零主动消息 |
+| **M3 Telegram 控制面** | 私聊授权、持久 inbox/outbox、onboard 原子激活、§5.0全套面板/inline keyboard/人工复核、导出与加密；原M4的持久live订阅、通知策略与七窗口统计 | 重复/乱序 update、重复 callback、断开与验证竞争、群组拒绝、跨租户短 ID、到期人工标记均覆盖；任何重试不回显 Key；主要web界面均能由command打开并通过键盘完成操作 |
+| **原M4 → M3** | #26–29并入M3：持久订阅续租、20s目标调度、live快照恢复、通知allowlist/基线、revision编辑与 `/stats` | 无用户交互仍持续轮询；冷却/慢读有可解释延迟且不补跑；mute/pause/feed off 语义分离；风险更正不被新候选 gate 抑制；后台常规变化零主动消息 |
 | **M5 发布准备** | 离线迁移、完整故障矩阵、requestMetrics、Worker 发布审计、密钥轮换与部署文档；删除旧运行资产 | 迁移逐字段核对；UNKNOWN 投递受持久上限约束；最终 Workers 测试与构建通过；旧 UI/平台测试由对应新行为测试替代并说明，不静默删测 |
 
 ### 8.1 必须落实的验收场景

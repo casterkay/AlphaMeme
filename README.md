@@ -124,3 +124,13 @@ GMGN 只读客户端在运行时使用原生 `fetch` 直连 OpenAPI，不依赖 
 ## 许可
 
 源代码采用 [GNU Affero General Public License v3.0](LICENSE)（`AGPL-3.0-only`）。可以使用、研究、修改和再发布；若修改后通过网络向他人提供服务，须按许可证向这些用户提供对应源代码。`private: true` 仅用于防止误发 npm。第三方数据接口仍受各自服务条款约束。开源版与专业版边界见 `docs/EDITION-BOUNDARY.md`。
+
+### Telegram on Cloudflare (M3)
+
+The native Telegram interface, encrypted tenant onboarding, persistent live
+collection and statistics are described in
+[Telegram M3 operations](docs/TELEGRAM-M3-OPERATIONS.md). `/onboard` and `/help`
+explain that a submitted GMGN key passes through Telegram and may remain in chat
+history: automatic deletion is best-effort, so check and delete the original
+message yourself. Stored keys are encrypted and replies display only
+`gmgn_****`. Read-only research; no trades or investment advice.
