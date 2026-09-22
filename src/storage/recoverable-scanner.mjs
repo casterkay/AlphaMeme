@@ -240,6 +240,14 @@ function outcomeInput(value, tenantId, chainName) {
   return { ...json(value, 'outcome'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
 }
 
+function screenDowngradeInput(value, chainName) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.address !== 'string' || !value.address.trim()
+    || typeof value.reason !== 'string' || !value.reason.trim()) {
+    throw new RecoverableScannerError('SCREEN_DOWNGRADE_INVALID', 'screen downgrade requires an address and reason');
+  }
+  return { address: canonicalAddress(chainName, value.address), reason: value.reason.trim() };
+}
+
 function stringOrNull(value) {
   return typeof value === 'string' ? value : null;
 }
@@ -307,6 +315,78 @@ export class SqliteRecoverableScannerStore {
     });
   }
 
+  commitQueue(value) {
+    const next = checkpointInput(value.next);
+    const expected = value.expected || {};
+    if (!Array.isArray(value.auditQueue)) {
+      throw new RecoverableScannerError('AUDIT_QUEUE_INVALID', 'audit queue must be an array');
+    }
+    const auditQueue = value.auditQueue.map(item => queueInput(item, this.tenantId, next.chain));
+    return this.storage.transactionSync(() => {
+      const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
+      assertCurrent(current, expected);
+      if (!checkpointEqual(current, next)) {
+        throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
+      }
+      this.storage.sql.exec('DELETE FROM audit_queue WHERE tenant_id = ? AND chain = ?', this.tenantId, next.chain);
+      for (const row of auditQueue) {
+        this.storage.sql.exec(
+          `INSERT INTO audit_queue (tenant_id, chain, address, first_seen_at, last_seen_at, last_audited_at, next_audit_at, attempts, status, priority_band, score, watched, details_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          row.tenantId, row.chain, row.address, integerOrNull(row.firstSeenAt), integerOrNull(row.lastSeenAt),
+          integerOrNull(row.lastAuditedAt), integerOrNull(row.nextAuditAt), integerOrNull(row.attempts),
+          stringOrNull(row.status), row.priorityBand ? 1 : 0, numberOrNull(row.score), row.watched ? 1 : 0,
+          JSON.stringify(row.details || {})
+        );
+      }
+      this.storage.sql.exec(
+        'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
+        next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
+      );
+      return Object.freeze({ tenantId: this.tenantId, ...next });
+    });
+  }
+
+  commitScreen(value) {
+    const next = checkpointInput(value.next);
+    const expected = value.expected || {};
+    if (!Array.isArray(value.downgrades)) {
+      throw new RecoverableScannerError('SCREEN_DOWNGRADE_INVALID', 'screen downgrades must be an array');
+    }
+    const downgrades = [...new Map(value.downgrades
+      .map(item => screenDowngradeInput(item, next.chain))
+      .map(item => [item.address, item])).values()];
+    return this.storage.transactionSync(() => {
+      const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
+      assertCurrent(current, expected);
+      if (!checkpointEqual(current, next)) {
+        throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
+      }
+      for (const downgrade of downgrades) {
+        const row = atMostOne(this.storage.sql.exec(
+          'SELECT deep_json FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ? AND status = ?',
+          this.tenantId, next.chain, downgrade.address, 'X_REVIEW'
+        ).toArray(), 'screen downgrade candidate');
+        if (!row) continue;
+        const deep = parseJson(row.deep_json, 'candidate deep state');
+        this.storage.sql.exec(
+          'UPDATE candidates SET status = ?, deep_json = ?, decision_reason = ? WHERE tenant_id = ? AND chain = ? AND address = ? AND status = ?',
+          'WAIT_RECHECK', JSON.stringify({ ...deep, chainPass: false }), downgrade.reason,
+          this.tenantId, next.chain, downgrade.address, 'X_REVIEW'
+        );
+        this.storage.sql.exec(
+          'UPDATE audit_queue SET status = ? WHERE tenant_id = ? AND chain = ? AND address = ?',
+          'WAIT_RECHECK', this.tenantId, next.chain, downgrade.address
+        );
+      }
+      this.storage.sql.exec(
+        'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
+        next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
+      );
+      return Object.freeze({ tenantId: this.tenantId, ...next });
+    });
+  }
+
   readRiskExclusions(chainName) {
     return this.storage.sql.exec(
       'SELECT address, version, codes_json, reasons_json, at, details_json FROM risk_exclusions WHERE tenant_id = ? AND chain = ?',
@@ -342,12 +422,41 @@ export class SqliteRecoverableScannerStore {
   }
 
   readCandidateReview(chainName, address) {
+    const normalizedChain = chain(chainName);
     const rows = this.storage.sql.exec(
       'SELECT review_evidence, review_revision, status FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ?',
-      this.tenantId, chain(chainName), String(address)
+      this.tenantId, normalizedChain, canonicalAddress(normalizedChain, address)
     ).toArray();
     const row = atMostOne(rows, 'candidate review');
     return row ? { reviewEvidence: row.review_evidence, reviewRevision: row.review_revision, status: row.status } : null;
+  }
+
+  readMonitorCandidates(chainName) {
+    const normalizedChain = chain(chainName);
+    return this.storage.sql.exec(
+      `SELECT c.address, c.symbol, c.name, c.price, c.market_cap, c.liquidity, c.created_at, c.age_sec
+       FROM candidates c
+       LEFT JOIN annotations a
+         ON a.tenant_id = c.tenant_id AND a.chain = c.chain AND a.address = c.address
+       WHERE c.tenant_id = ? AND c.chain = ? AND (c.status = 'X_REVIEW' OR a.favorite = 1)
+       UNION ALL
+       SELECT a.address, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+       FROM annotations a
+       LEFT JOIN candidates c
+         ON c.tenant_id = a.tenant_id AND c.chain = a.chain AND c.address = a.address
+       WHERE a.tenant_id = ? AND a.chain = ? AND a.favorite = 1 AND c.address IS NULL
+       ORDER BY 1`,
+      this.tenantId, normalizedChain, this.tenantId, normalizedChain
+    ).toArray().map(row => ({
+      address: row.address,
+      symbol: row.symbol,
+      name: row.name,
+      price: row.price,
+      marketCap: row.market_cap,
+      liquidity: row.liquidity,
+      createdAt: row.created_at,
+      ageSec: row.age_sec
+    }));
   }
 
   readOutcomes(chainName) {

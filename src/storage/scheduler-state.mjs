@@ -98,6 +98,15 @@ export function readSchedulerTenant(storage) {
   return normalizeTenantId(rows[0].tenant_id);
 }
 
+export function enableSchedulerEligibilityInTransaction(storage, tenant) {
+  const tenantId = normalizeTenantId(tenant);
+  const runtime = runtimeRecord(readRecord(storage, tenantId, RUNTIME_KEY, defaultSchedulerRuntime()));
+  if (runtime.eligibility.configured) return runtime.eligibility;
+  const eligibility = { ...runtime.eligibility, configured: true };
+  writeRecord(storage, tenantId, RUNTIME_KEY, { ...runtime, eligibility });
+  return eligibility;
+}
+
 export class SqliteSchedulerStore {
   constructor(storage, value) {
     this.storage = storage;
@@ -211,14 +220,14 @@ export class SqliteSchedulerStore {
   }
 }
 
-export function scheduleRecoverableScanTaskInTransaction(storage, tenant, cycleId, dueAt) {
+export function scheduleRecoverableScanTaskInTransaction(storage, tenant, cycleId, dueAt, gmgnWeight = 1) {
   const tenantId = normalizeTenantId(tenant);
   if (typeof cycleId !== 'string' || !/^[a-z0-9][a-z0-9:_-]{0,127}$/i.test(cycleId)
-    || !Number.isSafeInteger(dueAt) || dueAt < 0) {
+    || !Number.isSafeInteger(dueAt) || dueAt < 0 || !Number.isSafeInteger(gmgnWeight) || gmgnWeight <= 0) {
     throw new SchedulerStateError('SCHEDULER_RECOVERABLE_TASK_INVALID', 'recoverable scanner task is invalid');
   }
   const current = taskRecord(readRecord(storage, tenantId, TASKS_KEY, { version: 1, tasks: [] }));
-  const task = { id: `scan:${cycleId}`, kind: 'scan', dueAt, enabled: true, needsGmgn: true, gmgnWeight: 1 };
+  const task = { id: `scan:${cycleId}`, kind: 'scan', dueAt, enabled: true, needsGmgn: true, gmgnWeight };
   const tasks = current.tasks.some(item => item.id === task.id)
     ? current.tasks.map(item => item.id === task.id ? task : item)
     : [...current.tasks, task];

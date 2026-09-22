@@ -128,8 +128,13 @@ async function readLimitedText(response, maxBytes) {
   return text;
 }
 
-async function requestJson(fetchImpl, url, { timeoutMs, maxResponseBytes }) {
+async function requestJson(fetchImpl, url, { timeoutMs, maxResponseBytes, signal }) {
   const controller = new AbortController();
+  const abortFromParent = () => controller.abort(signal.reason);
+  if (signal) {
+    if (signal.aborted) abortFromParent();
+    else signal.addEventListener('abort', abortFromParent, { once: true });
+  }
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetchImpl(url, {
@@ -177,6 +182,7 @@ async function requestJson(fetchImpl, url, { timeoutMs, maxResponseBytes }) {
     throw error;
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abortFromParent);
   }
 }
 
@@ -380,6 +386,73 @@ function sourceState(status, extra = {}) {
   return { status, ...extra };
 }
 
+function unknownSecurity(verdict = 'UNKNOWN') {
+  return { complete: false, verdict, fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null };
+}
+
+function sourceConfiguration(source, chain, tokenAddress) {
+  const normalizedChain = cleanString(chain, 24).toLowerCase();
+  const address = cleanString(tokenAddress, 128);
+  const dexChainId = DEX_CHAIN_IDS[normalizedChain];
+  const goPlusChainId = GOPLUS_EVM_CHAIN_IDS[normalizedChain];
+  const supported = source === 'dexScreener' ? Boolean(dexChainId)
+    : source === 'goPlus' ? normalizedChain === 'sol' || Boolean(goPlusChainId)
+      : null;
+  if (supported === null) throw new TypeError('secondary source is not supported');
+  const valid = validAddress(address, normalizedChain);
+  const url = source === 'dexScreener'
+    ? dexChainId ? `https://api.dexscreener.com/token-pairs/v1/${dexChainId}/${encodeURIComponent(address)}` : ''
+    : normalizedChain === 'sol'
+      ? `https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${encodeURIComponent(address)}`
+      : goPlusChainId
+        ? `https://api.gopluslabs.io/api/v1/token_security/${goPlusChainId}?contract_addresses=${encodeURIComponent(address)}`
+        : '';
+  return { normalizedChain, address, supported, valid, url, dexChainId };
+}
+
+function sourceResult(source, response) {
+  if (response?.error) {
+    return source === 'dexScreener'
+      ? { source: sourceState('ERROR', { errorCode: errorCode(response.error) }), market: emptyMarket() }
+      : { source: sourceState('ERROR', { errorCode: errorCode(response.error) }), security: unknownSecurity() };
+  }
+  const value = response?.value;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !value.source || typeof value.source.status !== 'string') {
+    return source === 'dexScreener'
+      ? { source: sourceState('ERROR', { errorCode: 'NORMALIZATION_MISSING' }), market: emptyMarket() }
+      : { source: sourceState('ERROR', { errorCode: 'NORMALIZATION_MISSING' }), security: unknownSecurity() };
+  }
+  if (source === 'dexScreener') {
+    return { source: value.source, market: value.market && typeof value.market === 'object' ? value.market : emptyMarket() };
+  }
+  return { source: value.source, security: value.security && typeof value.security === 'object' ? value.security : unknownSecurity() };
+}
+
+function sourceCollectedAt(sources) {
+  return Math.max(0, ...Object.values(sources || {}).map(response =>
+    Number.isSafeInteger(response?.collectedAt) && response.collectedAt >= 0 ? response.collectedAt : 0
+  ));
+}
+
+export function aggregateSecondarySources({ chain, tokenAddress, primary = {}, sources = {} }) {
+  const dex = sourceResult('dexScreener', sources.dexScreener);
+  const goPlus = sourceResult('goPlus', sources.goPlus);
+  const market = { ...emptyMarket(), ...dex.market };
+  const security = goPlus.security || unknownSecurity('UNSUPPORTED');
+  const complete = dex.source.status === 'OK' && goPlus.source.status === 'OK' && market.complete && security.complete;
+  return {
+    status: complete ? 'COMPLETE' : 'DEGRADED',
+    complete,
+    checkedAt: sourceCollectedAt(sources),
+    chain: cleanString(chain, 24).toLowerCase(),
+    tokenAddress: cleanString(tokenAddress, 128),
+    sources: { dexScreener: dex.source, goPlus: goPlus.source },
+    market,
+    security,
+    conflicts: buildConflicts(primary, market, security, { price: 0.10, marketCap: 0.20, liquidity: 0.25 })
+  };
+}
+
 export class SecondaryValidator {
   constructor({
     fetchImpl = globalThis.fetch,
@@ -403,53 +476,43 @@ export class SecondaryValidator {
   async validate({ chain, tokenAddress, primary = {} }) {
     const normalizedChain = cleanString(chain, 24).toLowerCase();
     const address = cleanString(tokenAddress, 128);
-    const dexChainId = DEX_CHAIN_IDS[normalizedChain];
-    const goPlusChainId = GOPLUS_EVM_CHAIN_IDS[normalizedChain];
-    const goPlusSupported = normalizedChain === 'sol' || Boolean(goPlusChainId);
-    const dexSupported = Boolean(dexChainId);
-    const market = emptyMarket();
-    let security = { complete: false, verdict: 'UNSUPPORTED', fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null };
-    const sources = {
-      dexScreener: sourceState(dexSupported ? 'PENDING' : 'UNSUPPORTED'),
-      goPlus: sourceState(goPlusSupported ? 'PENDING' : 'UNSUPPORTED')
-    };
-
-    if ((dexSupported || goPlusSupported) && !validAddress(address, normalizedChain)) {
-      if (dexSupported) sources.dexScreener = sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' });
-      if (goPlusSupported) sources.goPlus = sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' });
-      return { status: 'DEGRADED', complete: false, checkedAt: this.now(), chain: normalizedChain, tokenAddress: address, sources, market, security, conflicts: [] };
-    }
-
-    const dexUrl = dexSupported ? `https://api.dexscreener.com/token-pairs/v1/${dexChainId}/${encodeURIComponent(address)}` : '';
-    const goPlusUrl = !goPlusSupported ? '' : normalizedChain === 'sol'
-      ? `https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${encodeURIComponent(address)}`
-      : `https://api.gopluslabs.io/api/v1/token_security/${goPlusChainId}?contract_addresses=${encodeURIComponent(address)}`;
-
     const [dexResult, goPlusResult] = await Promise.all([
-      dexSupported ? this.fetchDex(dexUrl, { chain: normalizedChain, dexChainId, tokenAddress: address }) : null,
-      goPlusSupported ? this.fetchGoPlus(goPlusUrl, { chain: normalizedChain, tokenAddress: address }) : null
+      this.fetchSource({ source: 'dexScreener', chain: normalizedChain, tokenAddress: address }),
+      this.fetchSource({ source: 'goPlus', chain: normalizedChain, tokenAddress: address })
     ]);
-
-    if (dexResult) {
-      sources.dexScreener = dexResult.source;
-      Object.assign(market, dexResult.market);
-    }
-    if (goPlusResult) {
-      sources.goPlus = goPlusResult.source;
-      security = goPlusResult.security;
-    }
-    const conflicts = buildConflicts(primary, market, security, this.conflictThresholds);
-    const complete = sources.dexScreener.status === 'OK' && sources.goPlus.status === 'OK'
-      && market.complete && security.complete;
-    return {
-      status: complete ? 'COMPLETE' : 'DEGRADED', complete, checkedAt: this.now(),
-      chain: normalizedChain, tokenAddress: address, sources, market, security, conflicts
-    };
+    const result = aggregateSecondarySources({
+      chain: normalizedChain,
+      tokenAddress: address,
+      primary,
+      sources: {
+        dexScreener: { value: dexResult, collectedAt: this.now() },
+        goPlus: { value: goPlusResult, collectedAt: this.now() }
+      }
+    });
+    return { ...result, conflicts: buildConflicts(primary, result.market, result.security, this.conflictThresholds) };
   }
 
-  async fetchDex(url, context) {
+  async fetchSource({ source, chain, tokenAddress, signal } = {}) {
+    const configuration = sourceConfiguration(source, chain, tokenAddress);
+    if (!configuration.supported) {
+      return source === 'dexScreener'
+        ? { source: sourceState('UNSUPPORTED'), market: emptyMarket() }
+        : { source: sourceState('UNSUPPORTED'), security: unknownSecurity('UNSUPPORTED') };
+    }
+    if (!configuration.valid) {
+      return source === 'dexScreener'
+        ? { source: sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' }), market: emptyMarket() }
+        : { source: sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' }), security: unknownSecurity() };
+    }
+    const context = { chain: configuration.normalizedChain, tokenAddress: configuration.address, dexChainId: configuration.dexChainId };
+    return source === 'dexScreener'
+      ? this.fetchDex(configuration.url, context, { signal })
+      : this.fetchGoPlus(configuration.url, context, { signal });
+  }
+
+  async fetchDex(url, context, { signal } = {}) {
     try {
-      const payload = await requestJson(this.fetchImpl, url, this);
+      const payload = await requestJson(this.fetchImpl, url, { ...this, signal });
       const parsed = parseDexScreener(payload, context);
       return { source: sourceState(parsed.found ? 'OK' : 'NO_DATA'), market: parsed.market };
     } catch (error) {
@@ -457,15 +520,15 @@ export class SecondaryValidator {
     }
   }
 
-  async fetchGoPlus(url, context) {
+  async fetchGoPlus(url, context, { signal } = {}) {
     try {
-      const payload = await requestJson(this.fetchImpl, url, this);
+      const payload = await requestJson(this.fetchImpl, url, { ...this, signal });
       const parsed = parseGoPlus(payload, context);
       return { source: sourceState(parsed.found ? 'OK' : 'NO_DATA'), security: parsed.security };
     } catch (error) {
       return {
         source: sourceState('ERROR', { errorCode: errorCode(error) }),
-        security: { complete: false, verdict: 'UNKNOWN', fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null }
+        security: unknownSecurity()
       };
     }
   }

@@ -98,7 +98,7 @@ export function translateGmgnError(error) {
 }
 
 
-function requestWeight(operation) {
+export function gmgnRequestWeight(operation) {
   return ({ tokenTopHolders: 5, tokenTopTraders: 5, trenches: 3, tokenKline: 2 })[operation] || 1;
 }
 
@@ -295,7 +295,7 @@ function compactTrenches(value, chain, types, limit) {
 export class GmgnClient {
   constructor({ timeoutMs = 15_000, maxResponseBytes = MAX_RESPONSE_BYTES, minRequestGapMs = 1_100, apiKeyProvider = null,
     legacyKeyProvider = () => '', fetch = globalThis.fetch, now = Date.now, randomUUID = () => globalThis.crypto.randomUUID(),
-    wait = delay, admissionStateStore = new MemoryGmgnAdmissionStateStore() } = {}) {
+    wait = delay, admissionStateStore = new MemoryGmgnAdmissionStateStore(), admissionReservation = null } = {}) {
     this.timeoutMs = timeoutMs;
     this.maxResponseBytes = maxResponseBytes;
     this.minRequestGapMs = minRequestGapMs;
@@ -306,6 +306,7 @@ export class GmgnClient {
     this.randomUUID = randomUUID;
     this.wait = wait;
     this.admissionStateStore = admissionStateStore;
+    this.admissionReservation = admissionReservation === null ? null : this.#reservation(admissionReservation);
     this.admission = admissionState();
     this.admissionOverrides = new Map();
     this.admissionInitialization = null;
@@ -536,20 +537,23 @@ export class GmgnClient {
         code: 'GMGN_RATE_LIMITED', retryAfterMs: this.nextAllowedAt - startedAt
       });
     }
-    const waitMs = Math.max(0, this.spacingReadyAt - startedAt);
+    const weight = gmgnRequestWeight(operation);
+    const reserved = this.#consumeAdmissionReservation(weight);
+    const waitMs = reserved ? 0 : Math.max(0, this.spacingReadyAt - startedAt);
     if (waitMs) await this.wait(waitMs);
     if ((this.disabled && !verification) || epoch !== this.keyEpoch) throw translateGmgnError(errorWith('GMGN_AUTH_FAILED', 'invalid api key'));
     const remainingMs = Math.min(this.timeoutMs, deadline - this.now());
     if (!(remainingMs > 0)) throw translateGmgnError(errorWith('GMGN_TIMEOUT', 'request deadline expired'));
 
     const requestAt = this.now();
-    const weight = requestWeight(operation);
-    await this.#persistAdmission({
-      ...this.admission,
-      lastRequestAt: requestAt,
-      lastWeight: weight,
-      spacingReadyAt: requestAt + this.minRequestGapMs * weight * this.backoffFactor
-    });
+    if (!reserved) {
+      await this.#persistAdmission({
+        ...this.admission,
+        lastRequestAt: requestAt,
+        lastWeight: weight,
+        spacingReadyAt: requestAt + this.minRequestGapMs * weight * this.backoffFactor
+      });
+    }
     this.metrics.requests++;
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
@@ -643,6 +647,27 @@ export class GmgnClient {
       throw this.admissionFailure;
     }
     this.admission = value;
+  }
+
+  #reservation(value) {
+    if (!value || typeof value !== 'object' || !Number.isSafeInteger(value.requestAt) || value.requestAt < 0
+      || !positiveInteger(value.weight, 0) || !Number.isSafeInteger(value.spacingReadyAt) || value.spacingReadyAt < value.requestAt
+      || !Number.isSafeInteger(value.keyEpoch) || value.keyEpoch < 0) {
+      throw errorWith('GMGN_ADMISSION_RESERVATION_INVALID', 'GMGN request reservation is invalid');
+    }
+    return { requestAt: value.requestAt, weight: value.weight, spacingReadyAt: value.spacingReadyAt, keyEpoch: value.keyEpoch, consumed: false };
+  }
+
+  #consumeAdmissionReservation(weight) {
+    const reservation = this.admissionReservation;
+    if (!reservation) return false;
+    if (reservation.consumed || reservation.weight !== weight || this.now() < reservation.requestAt
+      || reservation.keyEpoch !== this.admission.keyEpoch || reservation.spacingReadyAt !== this.admission.spacingReadyAt
+      || this.admission.lastRequestAt !== reservation.requestAt || this.admission.lastWeight !== reservation.weight) {
+      throw errorWith('GMGN_ADMISSION_RESERVATION_INVALID', 'GMGN request reservation no longer matches durable admission state');
+    }
+    reservation.consumed = true;
+    return true;
   }
 
   #admissionFailure(_error) {

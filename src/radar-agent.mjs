@@ -9,11 +9,12 @@ import {
 import { initializeRadarSchema } from './storage/schema.mjs';
 import { GmgnClient } from './providers/gmgn.mjs';
 import { RecoverableScanner } from './recoverable-scanner.mjs';
-import { executeRecoverableScanStep } from './recoverable-scan-executor.mjs';
+import { executeRecoverableScanStep, recoverableRequestAdmission } from './recoverable-scan-executor.mjs';
 import { externalRequestHandler, localTransactionHandler, OneAlarmScheduler, SchedulerStepError } from './scheduler.mjs';
 import { readGmgnApiKey, saveGmgnApiKey } from './storage/gmgn-credential.mjs';
 import { SqliteRecoverableScannerStore } from './storage/recoverable-scanner.mjs';
 import {
+  enableSchedulerEligibilityInTransaction,
   ensureSchedulerTenant,
   readSchedulerTenant,
   scheduleRecoverableScanTaskInTransaction,
@@ -74,6 +75,7 @@ export class RadarAgent extends DurableObject {
     const tenantId = this.#boundTenantId(value?.tenantId);
     return saveGmgnApiKey(this.ctx.storage, this.env.MASTER_ENC_KEY, tenantId, value?.apiKey, {
       afterWrite: () => {
+        enableSchedulerEligibilityInTransaction(this.ctx.storage, tenantId);
         const current = readGmgnAdmissionState(this.ctx.storage, tenantId);
         writeGmgnAdmissionStateInTransaction(this.ctx.storage, tenantId, { ...current, keyEpoch: current.keyEpoch + 1 });
       }
@@ -84,7 +86,13 @@ export class RadarAgent extends DurableObject {
     const tenantId = this.#boundTenantId(value?.tenantId);
     const checkpoint = this.#recoverableScanner(tenantId, value?.settings).begin({
       ...value,
-      afterBegin: current => scheduleRecoverableScanTaskInTransaction(this.ctx.storage, tenantId, current.cycleId, current.updatedAt + 1_000)
+      afterBegin: current => scheduleRecoverableScanTaskInTransaction(
+        this.ctx.storage,
+        tenantId,
+        current.cycleId,
+        current.updatedAt + 1_000,
+        recoverableRequestAdmission({ kind: 'DISCOVER', endpoint: 'trenches' }).gmgnWeight
+      )
     });
     await this.#schedulerForTenant(tenantId).recomputeAlarm();
     return checkpoint;
@@ -198,12 +206,26 @@ export class RadarAgent extends DurableObject {
         command: this.#receivedInboxHandler(store),
         scan: this.#recoverableScanHandler(store),
         ...this.#schedulerHandlers
-      }
+      },
+      taskReconciler: tasks => this.#reconcileRecoverableScanTasks(store, tasks)
+    });
+  }
+
+  #reconcileRecoverableScanTasks(store, tasks) {
+    const scannerStore = new SqliteRecoverableScannerStore(this.ctx.storage, store.tenantId);
+    return tasks.map(task => {
+      if (task.kind !== 'scan' || !task.id.startsWith('scan:')) return task;
+      const cycleId = task.id.slice('scan:'.length);
+      const checkpoint = scannerStore.read(cycleId);
+      if (!checkpoint) return task;
+      const scanner = new RecoverableScanner({ store: scannerStore, settings: checkpoint.partial.settings });
+      const admission = recoverableRequestAdmission(scanner.nextRequest(cycleId));
+      return { ...task, needsGmgn: admission.needsGmgn, gmgnWeight: admission.gmgnWeight };
     });
   }
 
   #recoverableScanHandler(store) {
-    return externalRequestHandler(async ({ task, request }) => {
+    return externalRequestHandler(async ({ task, request, gmgnReservation }) => {
       if (!task.id.startsWith('scan:')) {
         throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', 'recoverable scan task identity is invalid');
       }
@@ -213,10 +235,51 @@ export class RadarAgent extends DurableObject {
       const gmgn = new GmgnClient({
         apiKeyProvider: () => apiKey,
         legacyKeyProvider: () => '',
-        admissionStateStore: new SqliteGmgnAdmissionStateStore(this.ctx.storage, store.tenantId)
+        admissionStateStore: new SqliteGmgnAdmissionStateStore(this.ctx.storage, store.tenantId),
+        admissionReservation: gmgnReservation
       });
-      return executeRecoverableScanStep({ scanner, cycleId, gmgn, request });
+      return executeRecoverableScanStep({
+        scanner,
+        cycleId,
+        gmgn,
+        request,
+        onFinalized: checkpoint => this.#startNextRecoverableCycle(store, scanner, checkpoint)
+      });
     });
+  }
+
+  #startNextRecoverableCycle(store, scanner, checkpoint) {
+    const summary = checkpoint.partial.summary;
+    if (!summary || typeof summary.nextCycleId !== 'string' || !Number.isSafeInteger(summary.nextCycleAt)
+      || !Number.isSafeInteger(summary.nextDeadlineAt) || !Number.isSafeInteger(summary.scanCount)) {
+      throw new SchedulerStepError('RECOVERABLE_SCAN_SUMMARY_INVALID', 'recoverable scan summary cannot schedule its successor');
+    }
+    const schedulerState = store.read();
+    if (schedulerState.runtime.eligibility.paused || !schedulerState.runtime.eligibility.configured) return null;
+    const existing = scanner.checkpoint(summary.nextCycleId);
+    const controlEpoch = Number.isSafeInteger(schedulerState.runtime.control?.controlEpoch)
+      ? schedulerState.runtime.control.controlEpoch
+      : checkpoint.controlEpoch;
+    const successor = existing || scanner.begin({
+      cycleId: summary.nextCycleId,
+      chain: checkpoint.chain,
+      keyEpoch: schedulerState.gmgn.keyEpoch,
+      controlEpoch,
+      deadlineAt: summary.nextDeadlineAt,
+      partial: { rootCycleId: checkpoint.partial.rootCycleId, scanCount: summary.scanCount }
+    });
+    const admission = recoverableRequestAdmission({ kind: 'DISCOVER', endpoint: 'trenches' });
+    return {
+      checkpoint: successor,
+      task: {
+        id: `scan:${summary.nextCycleId}`,
+        kind: 'scan',
+        dueAt: summary.nextCycleAt,
+        enabled: true,
+        needsGmgn: admission.needsGmgn,
+        gmgnWeight: admission.gmgnWeight
+      }
+    };
   }
 
   #receivedInboxHandler(store) {

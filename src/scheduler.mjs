@@ -297,7 +297,35 @@ function successProgress(result, previousCheckpoint, now) {
   if (!result.complete && !hasDueAt && !hasCheckpoint) {
     throw new SchedulerStepError('SCHEDULER_STEP_NO_PROGRESS', 'successful scheduler step must advance a checkpoint or dueAt');
   }
-  return { complete: result.complete, hasDueAt, nextDueAt: result.nextDueAt, hasCheckpoint, checkpoint: result.checkpoint };
+  const hasNextNeedsGmgn = result.nextNeedsGmgn !== undefined;
+  if (hasNextNeedsGmgn && typeof result.nextNeedsGmgn !== 'boolean') {
+    throw new SchedulerStepError('SCHEDULER_STEP_GMGN_ADMISSION_INVALID', 'successful scheduler GMGN admission must be a boolean');
+  }
+  const hasNextGmgnWeight = result.nextGmgnWeight !== undefined;
+  if (hasNextGmgnWeight && !positiveInteger(result.nextGmgnWeight)) {
+    throw new SchedulerStepError('SCHEDULER_STEP_GMGN_WEIGHT_INVALID', 'successful scheduler GMGN weight must be a positive integer');
+  }
+  if (hasNextGmgnWeight !== hasNextNeedsGmgn) {
+    throw new SchedulerStepError('SCHEDULER_STEP_GMGN_ADMISSION_INVALID', 'successful scheduler GMGN admission and weight must be supplied together');
+  }
+  const hasNextTask = result.nextTask !== undefined;
+  const nextTask = hasNextTask ? createTaskDescriptor(result.nextTask) : null;
+  if (hasNextTask && result.complete) {
+    throw new SchedulerStepError('SCHEDULER_STEP_RESULT_INVALID', 'completed scheduler work cannot replace its task');
+  }
+  return {
+    complete: result.complete,
+    hasDueAt,
+    nextDueAt: result.nextDueAt,
+    hasCheckpoint,
+    checkpoint: result.checkpoint,
+    hasNextNeedsGmgn,
+    nextNeedsGmgn: result.nextNeedsGmgn,
+    hasNextGmgnWeight,
+    nextGmgnWeight: result.nextGmgnWeight,
+    hasNextTask,
+    nextTask
+  };
 }
 
 function withRunning(tasks, inFlight) {
@@ -329,8 +357,9 @@ export function reserveGmgnAdmission(now, gmgn, task, minGmgnGapMs) {
 
 export class OneAlarmScheduler {
   #handlers;
+  #taskReconciler;
 
-  constructor({ store, alarms, handlers = {}, now = Date.now, leaseMs = 60_000, minGmgnGapMs = 1_100, externalRequestTimeoutMs = 30_000, maxRetryAttempts = MAX_RETRY_ATTEMPTS } = {}) {
+  constructor({ store, alarms, handlers = {}, taskReconciler = null, now = Date.now, leaseMs = 60_000, minGmgnGapMs = 1_100, externalRequestTimeoutMs = 30_000, maxRetryAttempts = MAX_RETRY_ATTEMPTS } = {}) {
     if (!store || typeof store.read !== 'function' || typeof store.update !== 'function' || typeof store.runLocalTransaction !== 'function') {
       throw new SchedulerPolicyError('SCHEDULER_STORE_INVALID', 'scheduler store must expose synchronous read, update, and local transaction methods');
     }
@@ -339,12 +368,14 @@ export class OneAlarmScheduler {
     }
     if (typeof now !== 'function' || !positiveInteger(leaseMs) || !positiveInteger(minGmgnGapMs)
       || !positiveInteger(externalRequestTimeoutMs) || externalRequestTimeoutMs >= leaseMs
-      || !positiveInteger(maxRetryAttempts) || maxRetryAttempts > MAX_RETRY_ATTEMPTS) {
+      || !positiveInteger(maxRetryAttempts) || maxRetryAttempts > MAX_RETRY_ATTEMPTS
+      || (taskReconciler !== null && typeof taskReconciler !== 'function')) {
       throw new SchedulerPolicyError('SCHEDULER_CONFIGURATION_INVALID', 'scheduler clock, lease, and GMGN spacing configuration are invalid');
     }
     this.store = store;
     this.alarms = alarms;
     this.#handlers = Object.freeze({ ...handlers });
+    this.#taskReconciler = taskReconciler;
     this.now = now;
     this.leaseMs = leaseMs;
     this.minGmgnGapMs = minGmgnGapMs;
@@ -383,7 +414,11 @@ export class OneAlarmScheduler {
 
   async recomputeAlarm() {
     const now = this.#now();
-    const state = this.snapshot();
+    const state = this.store.update(current => {
+      const currentState = schedulerSnapshot(current);
+      const tasks = this.#reconcileTasks(currentState.tasks);
+      return { state: { ...currentState, tasks }, value: { ...currentState, tasks } };
+    });
     const dueAt = nextDue(
       now,
       schedulerEligibleTasks(withRunning(state.tasks, state.runtime.inFlight), state.runtime.eligibility),
@@ -436,7 +471,8 @@ export class OneAlarmScheduler {
   async wake() {
     const now = this.#now();
     const result = this.store.update(current => {
-      const state = schedulerSnapshot(current);
+      const currentState = schedulerSnapshot(current);
+      const state = { ...currentState, tasks: this.#reconcileTasks(currentState.tasks) };
       if (state.runtime.inFlight && state.runtime.inFlight.leaseUntil > now) {
         return { state, value: { accepted: false, reason: 'step_in_flight' } };
       }
@@ -459,10 +495,20 @@ export class OneAlarmScheduler {
     return now;
   }
 
+  #reconcileTasks(tasks) {
+    if (!this.#taskReconciler) return tasks;
+    const reconciled = this.#taskReconciler(clone(tasks));
+    if (reconciled && typeof reconciled.then === 'function') {
+      throw new SchedulerPolicyError('SCHEDULER_RECONCILER_INVALID', 'scheduler task reconciliation must complete synchronously');
+    }
+    return uniqueTasks(reconciled).map(({ running: _running, ...task }) => task);
+  }
+
   #claim() {
     const now = this.#now();
     return this.store.update(current => {
-      const state = schedulerSnapshot(current);
+      const currentState = schedulerSnapshot(current);
+      const state = { ...currentState, tasks: this.#reconcileTasks(currentState.tasks) };
       if (state.runtime.inFlight) {
         if (state.runtime.inFlight.leaseUntil > now) return { state, value: { busy: true } };
         return this.#failureState(state, state.runtime.inFlight, Object.assign(
@@ -498,7 +544,15 @@ export class OneAlarmScheduler {
       };
       return {
         state: { tasks: state.tasks, runtime, gmgn },
-        value: { ...selected, epoch, handlerMode: usableHandler?.mode || 'unavailable', unavailable: usableHandler === undefined }
+        value: {
+          ...selected,
+          epoch,
+          handlerMode: usableHandler?.mode || 'unavailable',
+          unavailable: usableHandler === undefined,
+          gmgnReservation: selected.task.needsGmgn && usableHandler?.mode === 'external-request'
+            ? { requestAt: now, weight: selected.task.gmgnWeight, spacingReadyAt: gmgn.spacingReadyAt, keyEpoch: gmgn.keyEpoch }
+            : null
+        }
       };
     });
   }
@@ -508,11 +562,12 @@ export class OneAlarmScheduler {
       throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', `no bounded handler is registered for ${claim.task.kind}`);
     }
     const handler = this.#handlers[claim.task.kind];
-    const context = { task: clone(claim.task), epoch: claim.epoch };
+    const context = { task: clone(claim.task), epoch: claim.epoch, gmgnReservation: clone(claim.gmgnReservation) };
     if (handler.mode === 'external-request') {
       let requestCount = 0;
       let requestOpen = true;
       let requestPromise = null;
+      let requestObserved = false;
       try {
         const result = await handler.run({
           ...context,
@@ -535,11 +590,30 @@ export class OneAlarmScheduler {
               timeoutMs: this.externalRequestTimeoutMs
             }));
             requestPromise = Promise.race([operationResult, timeout]).finally(() => clearTimeout(timeoutId));
-            return requestPromise;
+            return Object.freeze({
+              then: (...args) => {
+                requestObserved = true;
+                return requestPromise.then(...args);
+              },
+              catch: (...args) => {
+                requestObserved = true;
+                return requestPromise.catch(...args);
+              },
+              finally: (...args) => {
+                requestObserved = true;
+                return requestPromise.finally(...args);
+              }
+            });
           }
         });
         requestOpen = false;
-        if (requestPromise) await requestPromise;
+        if (requestPromise) {
+          try {
+            await requestPromise;
+          } catch (error) {
+            if (!requestObserved) throw error;
+          }
+        }
         return result;
       } finally {
         requestOpen = false;
@@ -584,21 +658,38 @@ export class OneAlarmScheduler {
       if (!this.#ownsLease(state.runtime, claim)) return { state, value: { status: 'stale' } };
       const previousCheckpoint = state.runtime.checkpoints[claim.task.id];
       const progress = successProgress(result, previousCheckpoint, now);
+      const currentTask = state.tasks.find(task => task.id === claim.task.id);
+      const replacement = progress.hasNextTask
+        ? progress.nextTask
+        : {
+            ...currentTask,
+            ...(progress.hasDueAt ? { dueAt: progress.nextDueAt } : {}),
+            ...(progress.hasNextNeedsGmgn ? { needsGmgn: progress.nextNeedsGmgn } : {}),
+            ...(progress.hasNextGmgnWeight ? { gmgnWeight: progress.nextGmgnWeight } : {})
+          };
       const tasks = progress.complete
         ? state.tasks.filter(task => task.id !== claim.task.id)
-        : state.tasks.map(task => task.id === claim.task.id && progress.hasDueAt ? { ...task, dueAt: progress.nextDueAt } : task);
+        : progress.hasNextTask
+          ? [...state.tasks.filter(task => task.id !== claim.task.id && task.id !== replacement.id), replacement]
+          : state.tasks.map(task => task.id === claim.task.id ? replacement : task);
       const retries = { ...state.runtime.retries };
       delete retries[claim.task.id];
+      const checkpoints = { ...state.runtime.checkpoints };
+      delete checkpoints[claim.task.id];
+      if (progress.hasCheckpoint && !progress.complete) {
+        checkpoints[replacement.id] = progress.checkpoint;
+      }
       const runtime = {
         ...state.runtime,
         inFlight: null,
         retries,
         fairness: claim.task.kind === LOW_PRIORITY_KIND
-          ? { ...state.runtime.fairness, outbox: claim.task.id }
+          ? {
+              ...state.runtime.fairness,
+              outbox: progress.complete ? null : progress.hasNextTask ? replacement.kind === LOW_PRIORITY_KIND ? replacement.id : null : claim.task.id
+            }
           : state.runtime.fairness,
-        checkpoints: progress.hasCheckpoint
-          ? { ...state.runtime.checkpoints, [claim.task.id]: progress.checkpoint }
-          : state.runtime.checkpoints
+        checkpoints
       };
       return { state: { tasks, runtime, gmgn: state.gmgn }, value: { status: 'succeeded', taskId: claim.task.id } };
     });

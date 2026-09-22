@@ -13,6 +13,9 @@ import {
   schedulerEligibleTasks,
   selectReadyTask
 } from '../src/scheduler.mjs';
+import { GmgnClient } from '../src/providers/gmgn.mjs';
+import { RecoverableScanner } from '../src/recoverable-scanner.mjs';
+import { executeRecoverableScanStep } from '../src/recoverable-scan-executor.mjs';
 
 const NOW = 100_000;
 
@@ -96,6 +99,41 @@ function scheduler(options = {}) {
   };
 }
 
+function recoverableScanner({ now = () => NOW } = {}) {
+  const checkpoints = new Map();
+  const store = {
+    begin(value) {
+      const checkpoint = { tenantId: '1000', ...structuredClone(value) };
+      checkpoints.set(checkpoint.cycleId, checkpoint);
+      return structuredClone(checkpoint);
+    },
+    read(cycleId) {
+      const checkpoint = checkpoints.get(cycleId);
+      return checkpoint ? structuredClone(checkpoint) : null;
+    },
+    advance({ expected, next }) {
+      const current = checkpoints.get(next.cycleId);
+      assert.equal(current.phase, expected.phase);
+      checkpoints.set(next.cycleId, { tenantId: '1000', ...structuredClone(next) });
+      return this.read(next.cycleId);
+    },
+    readRiskExclusions() {
+      return [];
+    },
+    readAuditQueue() {
+      return [];
+    },
+    readOutcomes() {
+      return [];
+    }
+  };
+  return new RecoverableScanner({
+    store,
+    now,
+    settings: { scanIntervalMs: 120_000, maxDeepAuditsPerCycle: 1, auditCycleBudgetMs: 80_000, queueRetentionMs: 86_400_000 }
+  });
+}
+
 test('nextDue ignores expired or zero cooldowns and delays only GMGN tasks', () => {
   const scan = task('scan', 'scan', 110_000, { needsGmgn: true });
   const live = task('live', 'live', 120_000, { needsGmgn: true });
@@ -175,6 +213,226 @@ test('a claimed GMGN task reserves provider spacing before its first awaited req
   await instance.alarm();
   assert.equal(observedSpacingReadyAt, NOW + 100);
   assert.equal(store.read().tasks.length, 0);
+});
+
+test('the scheduler accepts an executor result, advances its checkpoint, and rearms the scan task', async () => {
+  const scanner = recoverableScanner();
+  scanner.begin({ cycleId: 'cycle-executor-scheduler', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: NOW + 60_000 });
+  const { instance, store, alarms } = scheduler({
+    store: new MemorySchedulerStore({
+      tasks: [task('scan:cycle-executor-scheduler', 'scan', NOW, { needsGmgn: true, gmgnWeight: 3 })],
+      runtime: { ...defaultSchedulerRuntime(), eligibility: { paused: false, configured: true } }
+    }),
+    handlers: {
+      scan: externalRequestHandler(({ task, request }) => executeRecoverableScanStep({
+        scanner,
+        cycleId: task.id.slice('scan:'.length),
+        gmgn: { trenches: async () => ({ completed: [] }) },
+        request,
+        now: () => NOW
+      }))
+    }
+  });
+
+  assert.deepEqual(await instance.alarm(), { status: 'succeeded', taskId: 'scan:cycle-executor-scheduler' });
+  assert.equal(scanner.checkpoint('cycle-executor-scheduler').endpointIndex, 1);
+  assert.equal(store.read().runtime.retries['scan:cycle-executor-scheduler'], undefined);
+  assert.equal(store.read().tasks[0].needsGmgn, true);
+  assert.equal(store.read().tasks[0].gmgnWeight, 1);
+  assert.equal(store.read().tasks[0].dueAt, NOW + 1);
+  assert.equal(alarms.at, NOW + 150);
+});
+
+test('alarm-driven empty discovery finalizes a future successor cycle', async () => {
+  let clock = NOW;
+  const scanner = recoverableScanner({ now: () => clock });
+  scanner.begin({ cycleId: 'cycle-cadence', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: NOW + 60_000 });
+  let gmgnRequests = 0;
+  const { instance, store, alarms } = scheduler({
+    now: () => clock,
+    store: new MemorySchedulerStore({
+      tasks: [task('scan:cycle-cadence', 'scan', NOW, { needsGmgn: true, gmgnWeight: 3 })],
+      runtime: { ...defaultSchedulerRuntime(), eligibility: { paused: false, configured: true } }
+    }),
+    handlers: {
+      scan: externalRequestHandler(async ({ task, request }) => {
+        const result = await executeRecoverableScanStep({
+          scanner,
+          cycleId: task.id.slice('scan:'.length),
+          gmgn: {
+            trenches: async () => { gmgnRequests += 1; return { completed: [] }; },
+            marketRank: async () => { gmgnRequests += 1; return { rank: [] }; }
+          },
+          request,
+          now: () => clock,
+          onFinalized: checkpoint => {
+            const summary = checkpoint.partial.summary;
+            const successor = scanner.begin({
+              cycleId: summary.nextCycleId,
+              chain: checkpoint.chain,
+              keyEpoch: checkpoint.keyEpoch,
+              controlEpoch: checkpoint.controlEpoch,
+              deadlineAt: summary.nextDeadlineAt,
+              partial: { rootCycleId: checkpoint.partial.rootCycleId, scanCount: summary.scanCount }
+            });
+            return {
+              checkpoint: successor,
+              task: {
+                id: `scan:${summary.nextCycleId}`,
+                kind: 'scan',
+                dueAt: summary.nextCycleAt,
+                enabled: true,
+                needsGmgn: true,
+                gmgnWeight: 3
+              }
+            };
+          }
+        });
+        return result;
+      })
+    }
+  });
+
+  for (let step = 0; step < 6; step += 1) {
+    assert.deepEqual(await instance.alarm(), { status: 'succeeded', taskId: 'scan:cycle-cadence' });
+    if (step < 5) clock = alarms.at;
+  }
+
+  const finalized = scanner.checkpoint('cycle-cadence');
+  const successorId = finalized.partial.summary.nextCycleId;
+  assert.equal(gmgnRequests, 2);
+  assert.deepEqual(finalized.partial.summary, {
+    completedAt: NOW + 154,
+    finalized: true,
+    scanCount: 1,
+    nextCycleId: successorId,
+    nextCycleAt: NOW + 120_000,
+    nextDeadlineAt: NOW + 200_000
+  });
+  assert.equal(scanner.checkpoint(successorId).phase, 'DISCOVER');
+  assert.deepEqual(store.read().tasks, [{
+    id: `scan:${successorId}`,
+    kind: 'scan',
+    dueAt: NOW + 120_000,
+    enabled: true,
+    needsGmgn: true,
+    gmgnWeight: 3
+  }]);
+  assert.equal(alarms.at, NOW + 120_000);
+});
+
+test('scheduler moves progress to a successor task without retaining completed task checkpoints', async () => {
+  let clock = NOW;
+  const { instance, store } = scheduler({
+    now: () => clock,
+    store: new MemorySchedulerStore({
+      tasks: [task('scan:0', 'scan', NOW, { needsGmgn: true })],
+      runtime: { ...defaultSchedulerRuntime(), eligibility: { paused: false, configured: true } }
+    }),
+    handlers: {
+      scan: externalRequestHandler(async ({ task: scheduledTask }) => {
+        const sequence = Number(scheduledTask.id.slice('scan:'.length));
+        return {
+          status: 'success',
+          complete: false,
+          checkpoint: `checkpoint:${sequence}`,
+          nextTask: task(`scan:${sequence + 1}`, 'scan', clock + 1_000, { needsGmgn: true })
+        };
+      })
+    }
+  });
+
+  for (let sequence = 0; sequence < 4; sequence += 1) {
+    assert.deepEqual(await instance.alarm(), { status: 'succeeded', taskId: `scan:${sequence}` });
+    assert.deepEqual(Object.keys(store.read().runtime.checkpoints), [`scan:${sequence + 1}`]);
+    clock += 1_000;
+  }
+});
+
+test('scheduler clears a terminal low-priority fairness cursor', async () => {
+  const { instance, store } = scheduler({
+    store: new MemorySchedulerStore({
+      tasks: [task('outbox:terminal', 'outbox', NOW)],
+      runtime: { ...defaultSchedulerRuntime(), fairness: { outbox: 'outbox:previous' } }
+    }),
+    handlers: { outbox: externalRequestHandler(async () => ({ status: 'success', complete: true })) }
+  });
+
+  await instance.alarm();
+  assert.equal(store.read().runtime.fairness.outbox, null);
+});
+
+test('a GMGN client consumes the scheduler reservation without another delay or weighted charge', async () => {
+  const waits = [];
+  let fetches = 0;
+  const store = new MemorySchedulerStore({
+    tasks: [task('live', 'live', NOW, { needsGmgn: true, gmgnWeight: 5 })],
+    runtime: { ...defaultSchedulerRuntime(), eligibility: { paused: false, configured: true } }
+  });
+  const admissionStateStore = {
+    async read() {
+      return store.read().gmgn;
+    },
+    async write(gmgn) {
+      store.update(current => ({ state: { ...current, gmgn }, value: null }));
+    }
+  };
+  const { instance } = scheduler({
+    store,
+    handlers: {
+      live: externalRequestHandler(async ({ request, gmgnReservation }) => {
+        const gmgn = new GmgnClient({
+          apiKeyProvider: () => `gmgn_${'a'.repeat(32)}`,
+          admissionStateStore,
+          admissionReservation: gmgnReservation,
+          now: () => NOW,
+          minRequestGapMs: 50,
+          wait: async delay => { waits.push(delay); },
+          fetch: async () => {
+            fetches += 1;
+            return new Response(JSON.stringify({ code: 0, data: {} }), { status: 200 });
+          }
+        });
+        await request(() => gmgn.tokenTopHolders('bsc', `0x${'1'.repeat(40)}`, { limit: 1 }));
+        return { status: 'success', complete: true };
+      })
+    }
+  });
+
+  await instance.alarm();
+  assert.equal(fetches, 1);
+  assert.deepEqual(waits, []);
+  assert.equal(store.read().gmgn.lastWeight, 5);
+  assert.equal(store.read().gmgn.spacingReadyAt, NOW + 250);
+});
+
+test('an external handler can persist a caught endpoint failure and complete its scheduler step', async () => {
+  let persistedError = null;
+  const { instance, store } = scheduler({
+    store: new MemorySchedulerStore({ tasks: [task('command', 'command', NOW)] }),
+    handlers: {
+      command: externalRequestHandler(async ({ request }) => {
+        try {
+          await request(async () => {
+            throw Object.assign(new Error('upstream unavailable'), { code: 'UPSTREAM_UNAVAILABLE' });
+          });
+        } catch (error) {
+          persistedError = { code: error.code, message: error.message };
+        }
+        return {
+          status: 'success',
+          complete: false,
+          checkpoint: 'endpoint-error-recorded',
+          nextDueAt: NOW + 1_000
+        };
+      })
+    }
+  });
+
+  assert.deepEqual(await instance.alarm(), { status: 'succeeded', taskId: 'command' });
+  assert.deepEqual(persistedError, { code: 'UPSTREAM_UNAVAILABLE', message: 'upstream unavailable' });
+  assert.equal(store.read().runtime.retries.command, undefined);
+  assert.equal(store.read().tasks[0].dueAt, NOW + 1_000);
 });
 
 test('failure persists a future retry before recomputing the alarm', async () => {

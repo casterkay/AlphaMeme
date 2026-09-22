@@ -1,11 +1,19 @@
 import { config } from './config.mjs';
 import { CHART_RISK_VERSION, applyRiskExclusion } from './scoring/chart-risk.mjs';
 import { discoveryScreen, deepScreen, marketCap, createdAt } from './scoring/index.mjs';
-import { socialGate } from './social.mjs';
+import { classifyDeepResult, mergeSecondaryClassification } from './scoring/classification.mjs';
 import { tokenInfoPrice } from './providers/gmgn.mjs';
 import { collectOutcomeSamples, dueOutcomeJobs, outcomeCoverage, sampleRejected } from './scoring/outcomes.mjs';
 import { tokenKey } from './storage/controls.mjs';
-import { sha256Hex } from './util/crypto.mjs';
+import {
+  addressKey,
+  buildQueue,
+  nextAuditDelay,
+  publicToken,
+  reviewRevision,
+  selectAuditQueue,
+  socialFrom
+} from './scanner-parity.mjs';
 
 const numberOrNull = value => {
   if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
@@ -30,26 +38,9 @@ const CHAIN_SCOPE_KEYS = Object.freeze([
   'auditQueue', 'auditQueueStats', 'outcomes', 'outcomeSummary', 'sourceHealth',
   'lastAttemptAt', 'lastSuccessAt', 'lastCompleteSuccessAt', 'lastCycleMs', 'retryAt', 'status', 'generatedAt', 'nextCycleAt'
 ]);
-const RESERVED_X_PATHS = new Set([
-  'home', 'explore', 'search', 'intent', 'share', 'i', 'messages', 'notifications', 'settings'
-]);
 
-// EVM addresses are case-insensitive. Solana addresses are base58 and
-// case-sensitive, so globally lower-casing every chain can merge distinct mints.
-function addressKey(value) {
-  const address = String(value ?? '').trim();
-  return /^0x[0-9a-f]{40}$/i.test(address) ? address.toLowerCase() : address;
-}
-
-export function twitterHandle(value) {
-  const source = String(value || '').trim();
-  if (!source) return '';
-  const withoutHost = source.replace(/^(?:https?:\/\/)?(?:www\.)?(?:twitter|x)\.com\//i, '');
-  const handle = withoutHost.replace(/^@/, '').split(/[/?#]/)[0];
-  if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) return '';
-  if (RESERVED_X_PATHS.has(handle.toLowerCase())) return '';
-  return handle;
-}
+export { classifyDeepResult, mergeSecondaryClassification };
+export { reviewRevision, selectAuditQueue, twitterHandle } from './scanner-parity.mjs';
 
 function cleanCandidate(row, defaultChain = '') {
   if (!row || typeof row !== 'object') return row;
@@ -63,161 +54,6 @@ function cleanCandidate(row, defaultChain = '') {
     clean.decisionReason = '风险规则已升级，等待重新核验';
   }
   return clean;
-}
-
-export async function reviewRevision(candidate) {
-  const security = candidate.deep?.security || {};
-  return (await sha256Hex(JSON.stringify({
-    status: candidate.status, checks: candidate.deep?.checks, failed: candidate.deep?.failed,
-    owner: security.ownerRenounced, mint: security.renouncedMint, freeze: security.renouncedFreezeAccount,
-    honeypot: security.honeypot, buyTax: security.buyTax, sellTax: security.sellTax,
-    lock: security.lockRate, burned: security.lpBurned,
-    secondary: candidate.secondary?.security?.verdict, conflicts: candidate.secondary?.conflicts,
-    website: candidate.info?.website, twitter: candidate.info?.twitter
-  }))).slice(0, 24);
-}
-
-function publicToken(row, screen, chain) {
-  const twitter = first(row.twitter, row.twitter_username, row.link?.twitter_username) || '';
-  const duplicateValue = first(row.twitter_dup, row.social_dup);
-  const duplicateSocial = ['1', 'true', 'yes'].includes(String(duplicateValue ?? '').toLowerCase());
-  return {
-    address: String(row.address),
-    chain,
-    symbol: String(row.symbol || '?').slice(0, 30),
-    name: String(row.name || '').slice(0, 80),
-    marketCap: screen.mc,
-    liquidity: screen.liquidity,
-    price: numberOrNull(first(row.price, row.price_usd, row.usd_price)),
-    createdAt: createdAt(row),
-    ageSec: screen.ageSec,
-    priorityBand: screen.priorityBand,
-    discoveryScore: screen.score,
-    holders: num(row.holder_count),
-    volume1h: num(first(row.volume_1h, row.volume)),
-    buys: num(first(row.buys_24h, row.buys)),
-    sells: num(first(row.sells_24h, row.sells)),
-    twitter: twitterHandle(twitter),
-    gmgnUrl: String(row.link?.gmgn || ''),
-    socialHints: {
-      followerCount: num(first(row.x_user_follower, row.x_follower)),
-      duplicateSocial
-    }
-  };
-}
-
-function socialFrom(token) {
-  return {
-    twitter: token.twitter,
-    ...socialGate({
-      twitter: token.twitter,
-      followerCount: token.socialHints.followerCount,
-      duplicateSocial: token.socialHints.duplicateSocial,
-      capability: { available: false, mode: 'manual', reason: '当前采用X人工复核模式' }
-    })
-  };
-}
-
-export function classifyDeepResult(deep, auditMeta = {}) {
-  const failed = new Set(deep?.failed || []);
-  const unknown = new Set(deep?.blockingUnknownFields || deep?.unknownFields || []);
-  const unknownCheck = name => {
-    const prefixes = {
-      openSource: ['openSource'], ownerRenounced: ['ownerRenounced', 'renouncedMint', 'renouncedFreezeAccount'],
-      lpLocked: ['lockRate'], notHoneypot: ['honeypot', 'sellability.'], tax: ['buyTax', 'sellTax'],
-      rug: ['rugRatio'], concentration: ['top10'], dev: ['devHold'], insider: ['insider'],
-      bundler: ['bundler'], sniper: ['sniperHold'], wash: ['wash'], liquidity: ['liquidity'],
-      wallets: ['holders.'], observation: ['candles'], chartRisk: ['chartRisk.']
-    }[name] || [];
-    return [...unknown].some(field => prefixes.some(prefix => field === prefix || field.startsWith(prefix)));
-  };
-  const transient = new Set(['wallets', 'observation', 'marketBehavior']);
-  if (deep?.honeypotEvidence !== '检测到貔貅') transient.add('notHoneypot');
-  const hardFailed = [...failed].filter(name => !transient.has(name) && !unknownCheck(name));
-  const waitingFailed = [...failed].filter(name => transient.has(name) || unknownCheck(name));
-  if (auditMeta.complete === false) waitingFailed.push('auditIncomplete');
-  if (hardFailed.length) return { status: 'HARD_REJECT', hardFailed, waitingFailed };
-  if (!deep?.chainPass || auditMeta.complete === false) return { status: 'WAIT_RECHECK', hardFailed, waitingFailed };
-  return { status: 'X_REVIEW', hardFailed: [], waitingFailed: [] };
-}
-
-export function mergeSecondaryClassification(baseClassification, secondary) {
-  const base = baseClassification || { status: 'WAIT_RECHECK', hardFailed: [], waitingFailed: [] };
-  if (!secondary) return { ...base, secondaryReason: '' };
-  const sources = Object.values(secondary.sources || {});
-  const supported = sources.some(source => source?.status !== 'UNSUPPORTED');
-  const fatal = secondary.security?.verdict === 'FATAL';
-  const blockingConflicts = (secondary.conflicts || []).filter(conflict =>
-    ['MARKET_MISMATCH', 'SECURITY_MISMATCH'].includes(conflict?.type)
-  );
-  const incomplete = supported && (secondary.status !== 'COMPLETE' || secondary.security?.verdict === 'UNKNOWN');
-  return {
-    ...base,
-    status: fatal
-      ? 'HARD_REJECT'
-      : base.status === 'X_REVIEW' && (incomplete || blockingConflicts.length)
-        ? 'WAIT_RECHECK'
-        : base.status,
-    secondaryReason: fatal
-      ? '第二安全源触发一票否决'
-      : incomplete
-        ? '第二数据源不完整，等待复查'
-        : blockingConflicts.length
-          ? '多源数据冲突，等待复查'
-          : (!supported ? '当前链暂无第二数据源，仅供人工查看' : '')
-  };
-}
-
-function queueSort(a, b) {
-  return Number(b.priorityBand) - Number(a.priorityBand)
-    || num(a.firstSeenAt) - num(b.firstSeenAt)
-    || num(b.score) - num(a.score);
-}
-
-export function selectAuditQueue(queue, availableAddresses, now, cycleNumber, limit) {
-  const available = new Set([...availableAddresses].map(addressKey));
-  const due = queue.filter(item => available.has(addressKey(item.address)) && num(item.nextAuditAt) <= now);
-  const never = due.filter(item => !num(item.lastAuditedAt)).sort(queueSort);
-  const rechecks = due.filter(item => num(item.lastAuditedAt)).sort(queueSort);
-  const selected = [];
-  while (selected.length < limit && (never.length || rechecks.length)) {
-    const slot = cycleNumber + selected.length;
-    const urgent = rechecks.findIndex(row => row.status === 'X_REVIEW' || row.watched);
-    if (urgent >= 0 && slot % 3 !== 1) selected.push(...rechecks.splice(urgent, 1));
-    else if (slot % 5 === 0 && never.length) {
-      // Reserve a fairness slot so lower-priority tokens are not starved forever.
-      const oldest = never.reduce((a, b) => num(a.firstSeenAt) < num(b.firstSeenAt) ? a : b);
-      selected.push(...never.splice(never.indexOf(oldest), 1));
-    } else selected.push((slot % 3 === 0 ? rechecks.shift() : never.shift()) || rechecks.shift() || never.shift());
-  }
-  return selected.filter(Boolean);
-}
-
-function nextAuditDelay(status, settings) {
-  if (status === 'HARD_REJECT') return settings.hardRejectRecheckMs;
-  if (status === 'X_REVIEW') return settings.chainPassRecheckMs;
-  return settings.dynamicRecheckMs;
-}
-
-function buildQueue(previous, prequalified, now, settings) {
-  const byAddress = new Map((previous || []).map(item => [addressKey(item.address), { ...item }]));
-  for (const { row, screen } of prequalified) {
-    const address = addressKey(row.address);
-    const old = byAddress.get(address);
-    byAddress.set(address, {
-      address: String(row.address),
-      firstSeenAt: num(old?.firstSeenAt, now),
-      lastSeenAt: now,
-      lastAuditedAt: num(old?.lastAuditedAt),
-      nextAuditAt: num(old?.nextAuditAt),
-      attempts: num(old?.attempts),
-      status: old?.status || 'QUEUED',
-      priorityBand: Boolean(screen.priorityBand),
-      score: screen.score
-      ,watched: Boolean(row._monitorOnly)
-    });
-  }
-  return [...byAddress.values()].filter(item => now - num(item.lastSeenAt, item.firstSeenAt) <= settings.queueRetentionMs);
 }
 
 function queueStats(queue, availableAddresses, now, settings) {
