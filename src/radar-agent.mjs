@@ -14,7 +14,7 @@ import { externalRequestHandler, localTransactionHandler, OneAlarmScheduler, Sch
 import { readGmgnApiKey, saveGmgnApiKey } from './storage/gmgn-credential.mjs';
 import { SqliteControlStateStore, assertCheckpointGeneration } from './storage/control-state.mjs';
 import { prepareCredentialVerification, verifyAndActivatePendingCredential } from './auth/connection.mjs';
-import { SqliteRecoverableScannerStore } from './storage/recoverable-scanner.mjs';
+import { restartRecoverableScanInTransaction, SqliteRecoverableScannerStore } from './storage/recoverable-scanner.mjs';
 import {
   enableSchedulerEligibilityInTransaction,
   ensureSchedulerTenant,
@@ -135,6 +135,7 @@ export class RadarAgent extends DurableObject {
 
   async beginRecoverableCycle(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
+    new SqliteControlStateStore(this.ctx.storage, tenantId).ensureActiveChain(value?.chain);
     const checkpoint = this.#recoverableScanner(tenantId, value?.settings).begin({
       ...value,
       afterBegin: current => scheduleRecoverableScanTaskInTransaction(
@@ -353,6 +354,11 @@ export class RadarAgent extends DurableObject {
         tenantId: store.tenantId,
         connectionGeneration: Number(match[1]),
         request,
+        afterActivate: state => restartRecoverableScanInTransaction(this.ctx.storage, store.tenantId, {
+          keyEpoch: state.keyEpoch,
+          controlEpoch: state.controlEpoch,
+          now: Date.now()
+        }),
         verify: (apiKey, options) => gmgn.verifyApiKey(apiKey, options)
       });
       return { status: 'success', complete: true, checkpoint: `credential:${result.connectionGeneration}` };

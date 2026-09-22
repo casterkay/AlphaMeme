@@ -1,5 +1,10 @@
 import { normalizeTenantId } from './gmgn-admission-state.mjs';
 import { assertCheckpointGeneration, SqliteControlStateStore } from './control-state.mjs';
+import {
+  readSchedulerStateInTransaction,
+  scheduleRecoverableScanTaskInTransaction,
+  writeSchedulerStateInTransaction
+} from './scheduler-state.mjs';
 
 export const SCAN_PHASES = Object.freeze([
   'DISCOVER', 'SCREEN', 'BUILD_QUEUE', 'AUDIT', 'SECONDARY',
@@ -196,6 +201,56 @@ function pruneExpiredOutcomes(storage, tenantId, now, retentionMs) {
     'DELETE FROM outcomes WHERE tenant_id = ? AND (baseline_at IS NULL OR baseline_at < ?)',
     tenantId, now - retentionMs
   );
+}
+
+function restartCycleId(rootCycleId, keyEpoch) {
+  const suffix = `:rotation:${keyEpoch}`;
+  return `${String(rootCycleId).slice(0, 127 - suffix.length)}${suffix}`;
+}
+
+export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch, controlEpoch, now } = {}) {
+  const tenantId = normalizeTenantId(tenant);
+  nonnegativeInteger(keyEpoch, 'key epoch');
+  nonnegativeInteger(controlEpoch, 'control epoch');
+  timestamp(now, 'restart time');
+  const checkpoints = storage.sql.exec(
+    'SELECT tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at FROM cycle_checkpoint WHERE tenant_id = ? ORDER BY updated_at DESC, cycle_id',
+    tenantId
+  ).toArray().map(checkpointFromRow);
+  const scheduler = readSchedulerStateInTransaction(storage, tenantId);
+  const tasks = scheduler.tasks.filter(task => task.kind !== 'scan');
+  storage.sql.exec('DELETE FROM cycle_checkpoint WHERE tenant_id = ?', tenantId);
+  if (!checkpoints.length) {
+    writeSchedulerStateInTransaction(storage, tenantId, { ...scheduler, tasks });
+    return [];
+  }
+  writeSchedulerStateInTransaction(storage, tenantId, { ...scheduler, tasks });
+  return checkpoints.map(selected => {
+    const settings = selected.partial.settings;
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)
+      || !Number.isSafeInteger(settings.auditCycleBudgetMs) || settings.auditCycleBudgetMs <= 0) {
+      throw new RecoverableScannerError('RECOVERABLE_SCANNER_SETTINGS_INVALID', 'restart requires persisted scanner settings');
+    }
+    const checkpoint = checkpointInput({
+      cycleId: restartCycleId(selected.partial.rootCycleId || selected.cycleId, keyEpoch),
+      chain: selected.chain,
+      keyEpoch,
+      controlEpoch,
+      deadlineAt: now + settings.auditCycleBudgetMs,
+      phase: 'DISCOVER',
+      tokenIndex: 0,
+      endpointIndex: 0,
+      partial: { rootCycleId: selected.partial.rootCycleId || selected.cycleId, scanCount: selected.partial.scanCount || 0, startedAt: now, settings },
+      updatedAt: now
+    });
+    storage.sql.exec(
+      'INSERT INTO cycle_checkpoint (tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      tenantId, checkpoint.cycleId, checkpoint.chain, checkpoint.keyEpoch, checkpoint.controlEpoch, checkpoint.deadlineAt,
+      checkpoint.phase, checkpoint.tokenIndex, checkpoint.endpointIndex, JSON.stringify(checkpoint.partial), checkpoint.updatedAt
+    );
+    scheduleRecoverableScanTaskInTransaction(storage, tenantId, checkpoint.cycleId, now, 3);
+    return Object.freeze({ tenantId, ...checkpoint });
+  });
 }
 
 function assertCurrent(storage, tenantId, current, expected) {
@@ -398,7 +453,7 @@ export class SqliteRecoverableScannerStore {
     const auditQueue = value.auditQueue.map(item => queueInput(item, this.tenantId, next.chain));
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
-      assertCurrent(current, expected);
+      assertCurrent(this.storage, this.tenantId, current, expected);
       if (!checkpointEqual(current, next)) {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
@@ -490,7 +545,7 @@ export class SqliteRecoverableScannerStore {
       .map(item => [item.address, item])).values()];
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
-      assertCurrent(current, expected);
+      assertCurrent(this.storage, this.tenantId, current, expected);
       if (!checkpointEqual(current, next)) {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }

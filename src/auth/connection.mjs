@@ -79,6 +79,7 @@ export async function verifyAndActivatePendingCredential({
   connectionGeneration,
   verify,
   request,
+  afterActivate,
   now = Date.now
 } = {}) {
   requireStorage(storage);
@@ -113,7 +114,7 @@ export async function verifyAndActivatePendingCredential({
     }
     let state;
     try {
-      state = activateCredentialInTransaction(storage, tenantId, { connectionGeneration: expectedGeneration });
+      state = activateCredentialInTransaction(storage, tenantId, { connectionGeneration: expectedGeneration }, afterActivate);
     } catch (error) {
       if (error instanceof ControlStateError) throw new ConnectionError(error.code, error.message);
       throw error;
