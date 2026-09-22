@@ -1,3 +1,4 @@
+import { decryptSecret, encryptSecret, SecretError } from '../util/crypto.mjs';
 import { normalizeGmgnApiKey } from '../gmgn-api-key.mjs';
 import { normalizeTenantId } from './gmgn-admission-state.mjs';
 
@@ -92,6 +93,9 @@ export async function encryptGmgnApiKey(masterKey, tenant, value, { field = CRED
   const tenantId = normalizeTenantId(tenant);
   const apiKey = normalizeGmgnApiKey(value);
   if (!apiKey) throw new GmgnCredentialError('GMGN_CREDENTIAL_INVALID', 'GMGN API key is invalid');
+  if (typeof masterKey === 'object' && masterKey !== null) {
+    return encryptSecret(masterKey, tenantId, credentialField(field), apiKey);
+  }
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES));
   const ciphertext = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv: nonce, additionalData: associatedData(tenantId, field), tagLength: 128 },
@@ -104,12 +108,28 @@ export async function encryptGmgnApiKey(masterKey, tenant, value, { field = CRED
 export async function decryptGmgnApiKey(masterKey, tenant, valueEnc, { field = CREDENTIAL_NAME } = {}) {
   const tenantId = normalizeTenantId(tenant);
   if (typeof valueEnc !== 'string') throw new GmgnCredentialError('GMGN_CREDENTIAL_CORRUPT', 'GMGN credential ciphertext is corrupt');
+  let version;
+  try { version = JSON.parse(valueEnc)?.v; } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new GmgnCredentialError('GMGN_CREDENTIAL_CORRUPT', 'GMGN credential ciphertext is corrupt');
+  }
+  if (version === 2) {
+    let value;
+    try { value = await decryptSecret(masterKey, tenantId, credentialField(field), valueEnc); } catch (error) {
+      if (!(error instanceof SecretError)) throw error;
+      throw new GmgnCredentialError('GMGN_CREDENTIAL_DECRYPT_FAILED', 'GMGN credential could not be decrypted');
+    }
+    const apiKey = normalizeGmgnApiKey(value);
+    if (!apiKey) throw new GmgnCredentialError('GMGN_CREDENTIAL_CORRUPT', 'GMGN credential plaintext is invalid');
+    return apiKey;
+  }
+  const legacyMasterKey = typeof masterKey === 'object' && masterKey !== null ? masterKey.keys?.['1'] : masterKey;
   const { nonce, ciphertext } = parseEnvelope(valueEnc);
   let plaintext;
   try {
     plaintext = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: nonce, additionalData: associatedData(tenantId, field), tagLength: 128 },
-      await encryptionKey(masterKey),
+      await encryptionKey(legacyMasterKey),
       ciphertext
     );
   } catch (error) {
