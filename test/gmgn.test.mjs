@@ -108,6 +108,20 @@ test('kline time arguments stay in milliseconds and priceAt preserves millisecon
   assert.equal(request.url.searchParams.get('to'), String(targetAt + 60_000));
 });
 
+test('priceAt forwards the bounded request signal to its kline read', async () => {
+  const controller = new AbortController();
+  const client = new GmgnClient();
+  let options;
+  client.tokenKline = async (_chain, _address, _resolution, _from, _to, receivedOptions) => {
+    options = receivedOptions;
+    return { list: [] };
+  };
+
+  await client.priceAt(address, now - 60_000, 'bsc', { deadline: now + 1_000, signal: controller.signal });
+  assert.equal(options.signal, controller.signal);
+  assert.equal(options.deadline, now + 1_000);
+});
+
 test('rejects nonzero or malformed envelopes and never accepts string zero as success', async () => {
   const responses = [
     new Response(JSON.stringify({ code: '0', data: {} }), { status: 200 }),

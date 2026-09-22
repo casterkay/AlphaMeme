@@ -2,11 +2,23 @@ import { DurableObject } from 'cloudflare:workers';
 import {
   normalizeTenantId,
   readGmgnAdmissionState,
-  writeGmgnAdmissionState
+  SqliteGmgnAdmissionStateStore,
+  writeGmgnAdmissionState,
+  writeGmgnAdmissionStateInTransaction
 } from './storage/gmgn-admission-state.mjs';
 import { initializeRadarSchema } from './storage/schema.mjs';
-import { localTransactionHandler, OneAlarmScheduler, SchedulerStepError } from './scheduler.mjs';
-import { ensureSchedulerTenant, readSchedulerTenant, SqliteSchedulerStore } from './storage/scheduler-state.mjs';
+import { GmgnClient } from './providers/gmgn.mjs';
+import { RecoverableScanner } from './recoverable-scanner.mjs';
+import { executeRecoverableScanStep } from './recoverable-scan-executor.mjs';
+import { externalRequestHandler, localTransactionHandler, OneAlarmScheduler, SchedulerStepError } from './scheduler.mjs';
+import { readGmgnApiKey, saveGmgnApiKey } from './storage/gmgn-credential.mjs';
+import { SqliteRecoverableScannerStore } from './storage/recoverable-scanner.mjs';
+import {
+  ensureSchedulerTenant,
+  readSchedulerTenant,
+  scheduleRecoverableScanTaskInTransaction,
+  SqliteSchedulerStore
+} from './storage/scheduler-state.mjs';
 import { validateTelegramReceipt } from './telegram-intake.mjs';
 
 export class RadarAgent extends DurableObject {
@@ -58,6 +70,59 @@ export class RadarAgent extends DurableObject {
     return this.#schedulerForTenant(value).snapshot();
   }
 
+  async setRecoverableGmgnCredential(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    return saveGmgnApiKey(this.ctx.storage, this.env.MASTER_ENC_KEY, tenantId, value?.apiKey, {
+      afterWrite: () => {
+        const current = readGmgnAdmissionState(this.ctx.storage, tenantId);
+        writeGmgnAdmissionStateInTransaction(this.ctx.storage, tenantId, { ...current, keyEpoch: current.keyEpoch + 1 });
+      }
+    });
+  }
+
+  async beginRecoverableCycle(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    const checkpoint = this.#recoverableScanner(tenantId, value?.settings).begin({
+      ...value,
+      afterBegin: current => scheduleRecoverableScanTaskInTransaction(this.ctx.storage, tenantId, current.cycleId, current.updatedAt + 1_000)
+    });
+    await this.#schedulerForTenant(tenantId).recomputeAlarm();
+    return checkpoint;
+  }
+
+  async getRecoverableCycle(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    return new SqliteRecoverableScannerStore(this.ctx.storage, tenantId).read(value?.cycleId);
+  }
+
+  async nextRecoverableScanRequest(value) {
+    return this.#recoverableScannerForCycle(value).nextRequest(value?.cycleId);
+  }
+
+  async recordRecoverableScanRequest(value) {
+    return this.#recoverableScannerForCycle(value).recordRequest(value?.cycleId, {
+      value: value?.response,
+      error: value?.error || null,
+      collectedAt: value?.collectedAt
+    });
+  }
+
+  async advanceRecoverableScan(value) {
+    return this.#recoverableScannerForCycle(value).advanceLocal(value?.cycleId);
+  }
+
+  async commitRecoverableClassification(value) {
+    return this.#recoverableScannerForCycle(value).commitClassification(value?.cycleId);
+  }
+
+  async recordRecoverableOutcomeSample(value) {
+    return this.#recoverableScannerForCycle(value).recordOutcomeSample(value?.cycleId, {
+      sample: value?.sample || null,
+      error: value?.error || null,
+      collectedAt: value?.collectedAt
+    });
+  }
+
   async wake() {
     const scheduler = this.#schedulerForPersistedTenant();
     if (!scheduler) return { accepted: false, reason: 'scheduler_not_initialized' };
@@ -103,6 +168,25 @@ export class RadarAgent extends DurableObject {
     return tenantId ? this.#scheduler(new SqliteSchedulerStore(this.ctx.storage, tenantId)) : null;
   }
 
+  #recoverableScanner(tenantId, settings) {
+    return new RecoverableScanner({
+      store: new SqliteRecoverableScannerStore(this.ctx.storage, tenantId),
+      settings
+    });
+  }
+
+  #recoverableScannerForCycle(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    const store = new SqliteRecoverableScannerStore(this.ctx.storage, tenantId);
+    const checkpoint = store.read(value?.cycleId);
+    if (!checkpoint) {
+      const error = new Error('cycle checkpoint does not exist');
+      error.code = 'CYCLE_CHECKPOINT_MISSING';
+      throw error;
+    }
+    return new RecoverableScanner({ store, settings: checkpoint.partial.settings });
+  }
+
   #scheduler(store) {
     return new OneAlarmScheduler({
       store,
@@ -110,7 +194,28 @@ export class RadarAgent extends DurableObject {
         setAlarm: at => this.ctx.storage.setAlarm(at),
         deleteAlarm: () => this.ctx.storage.deleteAlarm()
       },
-      handlers: { command: this.#receivedInboxHandler(store), ...this.#schedulerHandlers }
+      handlers: {
+        command: this.#receivedInboxHandler(store),
+        scan: this.#recoverableScanHandler(store),
+        ...this.#schedulerHandlers
+      }
+    });
+  }
+
+  #recoverableScanHandler(store) {
+    return externalRequestHandler(async ({ task, request }) => {
+      if (!task.id.startsWith('scan:')) {
+        throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', 'recoverable scan task identity is invalid');
+      }
+      const cycleId = task.id.slice('scan:'.length);
+      const scanner = this.#recoverableScannerForCycle({ tenantId: store.tenantId, cycleId });
+      const apiKey = await readGmgnApiKey(this.ctx.storage, this.env.MASTER_ENC_KEY, store.tenantId);
+      const gmgn = new GmgnClient({
+        apiKeyProvider: () => apiKey,
+        legacyKeyProvider: () => '',
+        admissionStateStore: new SqliteGmgnAdmissionStateStore(this.ctx.storage, store.tenantId)
+      });
+      return executeRecoverableScanStep({ scanner, cycleId, gmgn, request });
     });
   }
 

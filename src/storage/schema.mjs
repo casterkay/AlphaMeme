@@ -3,8 +3,8 @@ export const RADAR_SCHEMA_VERSION = 1;
 const SCHEMA_TENANT_ID = '__schema__';
 const SCHEMA_VERSION_KEY = 'schema.version';
 
-// `__cf_kv` is Cloudflare's hidden DO KV table; `_cf_KV` is its exact Workers-test-runtime spelling.
-const PLATFORM_STORAGE_TABLES = Object.freeze(['_cf_KV', '__cf_kv', '__miniflare_do_name']);
+// Cloudflare reserves these Durable Object tables for its KV, alarm, and test-runtime metadata.
+const PLATFORM_STORAGE_TABLES = Object.freeze(['_cf_KV', '_cf_METADATA', '__cf_kv', '__miniflare_do_name']);
 
 export class SchemaError extends Error {
   constructor(code, message) {

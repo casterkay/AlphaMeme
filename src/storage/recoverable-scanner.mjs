@@ -1,0 +1,505 @@
+import { normalizeTenantId } from './gmgn-admission-state.mjs';
+
+export const SCAN_PHASES = Object.freeze([
+  'DISCOVER', 'SCREEN', 'BUILD_QUEUE', 'AUDIT', 'SECONDARY',
+  'CLASSIFY_AND_COMMIT', 'OUTCOMES_SAMPLE', 'SUMMARIZE'
+]);
+
+export class RecoverableScannerError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'RecoverableScannerError';
+    this.code = code;
+  }
+}
+
+function clone(value) {
+  return structuredClone(value);
+}
+
+function positiveInteger(value, name) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_INVALID', `${name} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function nonnegativeInteger(value, name) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_INVALID', `${name} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+function timestamp(value, name, { nullable = false } = {}) {
+  if (nullable && value === null) return null;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_INVALID', `${name} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+function cycleId(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/.test(value)) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_INVALID', 'cycle id must be a stable bounded identifier');
+  }
+  return value;
+}
+
+function chain(value) {
+  if (typeof value !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(value)) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_INVALID', 'chain must be a normalized identifier');
+  }
+  return value;
+}
+
+function phase(value) {
+  if (!SCAN_PHASES.includes(value)) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_PHASE_INVALID', 'cycle checkpoint phase is not supported');
+  }
+  return value;
+}
+
+function index(value, name) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_INVALID', `${name} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+function json(value, name) {
+  if (value === undefined) return {};
+  try {
+    return clone(value);
+  } catch (error) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_JSON_INVALID', `${name} is not structured-cloneable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function parseJson(value, name) {
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed === null) throw new Error('must not be null');
+    return parsed;
+  } catch (error) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_CORRUPT', `${name} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function checkpointPartial(value, name) {
+  const parsed = parseJson(value, name);
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_CORRUPT', `${name} must be an object`);
+  }
+  return parsed;
+}
+
+function atMostOne(rows, name) {
+  if (rows.length > 1) throw new RecoverableScannerError('CYCLE_CHECKPOINT_CORRUPT', `${name} has duplicate rows`);
+  return rows[0] || null;
+}
+
+function stablePart(value) {
+  return encodeURIComponent(String(value));
+}
+
+function canonicalAddress(chainName, value) {
+  const address = String(value || '').trim();
+  return chainName === 'sol' ? address : address.toLowerCase();
+}
+
+// A deterministic tuple is preferable to a random UUID: retrying the same
+// completed token must address the same durable effects.
+export function stableEffectId(tenantId, cycle, chainName, address, effectType) {
+  const normalizedTenantId = normalizeTenantId(tenantId);
+  cycleId(cycle);
+  chain(chainName);
+  if (typeof address !== 'string' || !address.trim()) {
+    throw new RecoverableScannerError('EFFECT_ID_INVALID', 'effect address must be a non-empty string');
+  }
+  if (typeof effectType !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(effectType)) {
+    throw new RecoverableScannerError('EFFECT_ID_INVALID', 'effect type must be a stable upper-case identifier');
+  }
+  return `effect:${stablePart(normalizedTenantId)}:${stablePart(cycle)}:${stablePart(chainName)}:${stablePart(address)}:${effectType}`;
+}
+
+export function checkpointFromRow(row) {
+  if (!row) return null;
+  return Object.freeze({
+    tenantId: normalizeTenantId(row.tenant_id),
+    cycleId: cycleId(row.cycle_id),
+    chain: chain(row.chain),
+    keyEpoch: nonnegativeInteger(row.key_epoch, 'key epoch'),
+    controlEpoch: nonnegativeInteger(row.control_epoch, 'control epoch'),
+    deadlineAt: timestamp(row.deadline_at, 'deadline', { nullable: true }),
+    phase: phase(row.phase),
+    tokenIndex: index(row.token_index, 'token index'),
+    endpointIndex: index(row.endpoint_index, 'endpoint index'),
+    partial: checkpointPartial(row.partial_json, 'cycle checkpoint partial'),
+    updatedAt: timestamp(row.updated_at, 'updated at')
+  });
+}
+
+function checkpointInput(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_INVALID', 'cycle checkpoint must be an object');
+  }
+  return {
+    cycleId: cycleId(value.cycleId),
+    chain: chain(value.chain),
+    keyEpoch: nonnegativeInteger(value.keyEpoch, 'key epoch'),
+    controlEpoch: nonnegativeInteger(value.controlEpoch, 'control epoch'),
+    deadlineAt: timestamp(value.deadlineAt, 'deadline', { nullable: true }),
+    phase: phase(value.phase),
+    tokenIndex: index(value.tokenIndex ?? 0, 'token index'),
+    endpointIndex: index(value.endpointIndex ?? 0, 'endpoint index'),
+    partial: json(value.partial, 'cycle checkpoint partial'),
+    updatedAt: timestamp(value.updatedAt, 'updated at')
+  };
+}
+
+function checkpointEqual(left, right) {
+  return left.cycleId === right.cycleId && left.chain === right.chain
+    && left.keyEpoch === right.keyEpoch && left.controlEpoch === right.controlEpoch
+    && left.deadlineAt === right.deadlineAt;
+}
+
+function existingCheckpoint(storage, tenantId, currentCycleId) {
+  return checkpointFromRow(atMostOne(storage.sql.exec(
+    'SELECT tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at FROM cycle_checkpoint WHERE tenant_id = ? AND cycle_id = ?',
+    tenantId, currentCycleId
+  ).toArray(), 'cycle checkpoint'));
+}
+
+function assertCurrent(current, expected) {
+  if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
+  if (expected.phase !== undefined && current.phase !== expected.phase) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_PHASE_CONFLICT', 'cycle checkpoint phase changed while work was in flight');
+  }
+  if (expected.keyEpoch !== undefined && current.keyEpoch !== expected.keyEpoch) {
+    throw new RecoverableScannerError('CYCLE_KEY_EPOCH_STALE', 'cycle checkpoint key epoch changed while work was in flight');
+  }
+  if (expected.controlEpoch !== undefined && current.controlEpoch !== expected.controlEpoch) {
+    throw new RecoverableScannerError('CYCLE_CONTROL_EPOCH_STALE', 'cycle checkpoint control epoch changed while work was in flight');
+  }
+}
+
+function eventInput(value, tenantId, currentCycleId, chainName, address, now) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const effectType = value.effectType;
+  const id = stableEffectId(tenantId, currentCycleId, chainName, address, effectType);
+  if (typeof value.type !== 'string' || !value.type) {
+    throw new RecoverableScannerError('EFFECT_INVALID', 'event type must be a non-empty string');
+  }
+  return {
+    id,
+    at: timestamp(value.at ?? now, 'event at'),
+    type: value.type,
+    message: typeof value.message === 'string' ? value.message : '',
+    data: json(value.data, 'event data'),
+    outbox: value.outbox === undefined ? null : json(value.outbox, 'outbox intent')
+  };
+}
+
+function candidateInput(value, tenantId, chainName) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.address !== 'string' || !value.address) {
+    throw new RecoverableScannerError('CANDIDATE_INVALID', 'candidate address is required');
+  }
+  if (value.chain !== undefined && value.chain !== chainName) {
+    throw new RecoverableScannerError('CANDIDATE_INVALID', 'candidate chain must match the checkpoint chain');
+  }
+  if (typeof value.status !== 'string' || !value.status) {
+    throw new RecoverableScannerError('CANDIDATE_INVALID', 'candidate status is required');
+  }
+  return { ...json(value, 'candidate'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
+}
+
+function queueInput(value, tenantId, chainName) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.address !== 'string' || !value.address) {
+    throw new RecoverableScannerError('AUDIT_QUEUE_INVALID', 'audit queue address is required');
+  }
+  return { ...json(value, 'audit queue'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
+}
+
+function exclusionInput(value, tenantId, chainName) {
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.address !== 'string' || !value.address) {
+    throw new RecoverableScannerError('RISK_EXCLUSION_INVALID', 'risk exclusion address is required');
+  }
+  return { ...json(value, 'risk exclusion'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
+}
+
+function outcomeInput(value, tenantId, chainName) {
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.address !== 'string' || !value.address) {
+    throw new RecoverableScannerError('OUTCOME_INVALID', 'outcome address is required');
+  }
+  if (typeof value.initialDecision !== 'string' || !value.initialDecision) {
+    throw new RecoverableScannerError('OUTCOME_INVALID', 'outcome initial decision is required');
+  }
+  return { ...json(value, 'outcome'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
+}
+
+function stringOrNull(value) {
+  return typeof value === 'string' ? value : null;
+}
+
+function numberOrNull(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function integerOrNull(value) {
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+export class SqliteRecoverableScannerStore {
+  constructor(storage, tenantId) {
+    if (!storage?.sql || typeof storage.transactionSync !== 'function') {
+      throw new RecoverableScannerError('RECOVERABLE_SCANNER_STORAGE_INVALID', 'recoverable scanner requires Durable Object SQLite storage');
+    }
+    this.storage = storage;
+    this.tenantId = normalizeTenantId(tenantId);
+  }
+
+  read(currentCycleId) {
+    return existingCheckpoint(this.storage, this.tenantId, cycleId(currentCycleId));
+  }
+
+  begin(value) {
+    const afterBegin = value?.afterBegin;
+    if (afterBegin !== undefined && typeof afterBegin !== 'function') {
+      throw new RecoverableScannerError('CYCLE_CHECKPOINT_INVALID', 'cycle checkpoint begin hook is invalid');
+    }
+    const next = checkpointInput(value);
+    return this.storage.transactionSync(() => {
+      const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
+      if (current) {
+        if (!checkpointEqual(current, next)) {
+          throw new RecoverableScannerError('CYCLE_CHECKPOINT_CONFLICT', 'cycle id already belongs to another immutable cycle');
+        }
+        afterBegin?.(current);
+        return current;
+      }
+      this.storage.sql.exec(
+        'INSERT INTO cycle_checkpoint (tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        this.tenantId, next.cycleId, next.chain, next.keyEpoch, next.controlEpoch, next.deadlineAt,
+        next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt
+      );
+      afterBegin?.({ tenantId: this.tenantId, ...next });
+      return Object.freeze({ tenantId: this.tenantId, ...next });
+    });
+  }
+
+  advance(value) {
+    const next = checkpointInput(value.next);
+    const expected = value.expected || {};
+    return this.storage.transactionSync(() => {
+      const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
+      assertCurrent(current, expected);
+      if (!checkpointEqual(current, next)) {
+        throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
+      }
+      this.storage.sql.exec(
+        'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
+        next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
+      );
+      return Object.freeze({ tenantId: this.tenantId, ...next });
+    });
+  }
+
+  readRiskExclusions(chainName) {
+    return this.storage.sql.exec(
+      'SELECT address, version, codes_json, reasons_json, at, details_json FROM risk_exclusions WHERE tenant_id = ? AND chain = ?',
+      this.tenantId, chain(chainName)
+    ).toArray().map(row => ({
+      chain: chainName,
+      address: row.address,
+      version: row.version,
+      codes: parseJson(row.codes_json, 'risk exclusion codes'),
+      reasons: parseJson(row.reasons_json, 'risk exclusion reasons'),
+      at: row.at,
+      ...parseJson(row.details_json, 'risk exclusion details')
+    }));
+  }
+
+  readAuditQueue(chainName) {
+    return this.storage.sql.exec(
+      'SELECT address, first_seen_at, last_seen_at, last_audited_at, next_audit_at, attempts, status, priority_band, score, watched, details_json FROM audit_queue WHERE tenant_id = ? AND chain = ?',
+      this.tenantId, chain(chainName)
+    ).toArray().map(row => ({
+      address: row.address,
+      firstSeenAt: row.first_seen_at,
+      lastSeenAt: row.last_seen_at,
+      lastAuditedAt: row.last_audited_at,
+      nextAuditAt: row.next_audit_at,
+      attempts: row.attempts,
+      status: row.status,
+      priorityBand: Boolean(row.priority_band),
+      score: row.score,
+      watched: Boolean(row.watched),
+      ...parseJson(row.details_json, 'audit queue details')
+    }));
+  }
+
+  readCandidateReview(chainName, address) {
+    const rows = this.storage.sql.exec(
+      'SELECT review_evidence, review_revision, status FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ?',
+      this.tenantId, chain(chainName), String(address)
+    ).toArray();
+    const row = atMostOne(rows, 'candidate review');
+    return row ? { reviewEvidence: row.review_evidence, reviewRevision: row.review_revision, status: row.status } : null;
+  }
+
+  readOutcomes(chainName) {
+    return this.storage.sql.exec(
+      'SELECT address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json FROM outcomes WHERE tenant_id = ? AND chain = ?',
+      this.tenantId, chain(chainName)
+    ).toArray().map(row => ({
+      address: row.address,
+      initialDecision: row.initial_decision,
+      latestDecision: row.latest_decision,
+      baselineAt: row.baseline_at,
+      baselinePrice: row.baseline_price,
+      lastAuditedAt: row.last_audited_at,
+      symbol: row.symbol,
+      latestFailed: parseJson(row.latest_failed_json, 'outcome latest failures'),
+      sampling: row.sampling,
+      strategyVersion: row.strategy_version,
+      samples: parseJson(row.samples_json, 'outcome samples'),
+      sampleRetries: parseJson(row.sample_retries_json, 'outcome sample retries'),
+      cohortMetadata: parseJson(row.cohort_metadata_json, 'outcome cohort metadata')
+    }));
+  }
+
+  commitClassification(value) {
+    const expected = value.expected || {};
+    const next = checkpointInput(value.next);
+    const candidate = candidateInput(value.candidate, this.tenantId, next.chain);
+    const auditQueue = queueInput(value.auditQueue, this.tenantId, next.chain);
+    const exclusion = exclusionInput(value.riskExclusion, this.tenantId, next.chain);
+    const outcome = outcomeInput(value.outcome, this.tenantId, next.chain);
+    const event = eventInput(value.event, this.tenantId, next.cycleId, next.chain, candidate.address, next.updatedAt);
+
+    return this.storage.transactionSync(() => {
+      const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
+      assertCurrent(current, { ...expected, phase: expected.phase ?? 'CLASSIFY_AND_COMMIT' });
+      if (!checkpointEqual(current, next)) {
+        throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
+      }
+
+      this.storage.sql.exec(
+        `INSERT INTO candidates (tenant_id, chain, address, symbol, name, info_json, review_evidence, status, priority_band, discovery_score, market_cap, liquidity, price, created_at, age_sec, holders, volume_1h, buys, sells, twitter, gmgn_url, audited_at, stale_at, review_revision, decision_reason, audit_error, deep_json, secondary_json, social_json, audit_health_json, metadata_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
+           symbol = excluded.symbol, name = excluded.name, info_json = excluded.info_json, review_evidence = excluded.review_evidence,
+           status = excluded.status, priority_band = excluded.priority_band, discovery_score = excluded.discovery_score,
+           market_cap = excluded.market_cap, liquidity = excluded.liquidity, price = excluded.price, created_at = excluded.created_at,
+           age_sec = excluded.age_sec, holders = excluded.holders, volume_1h = excluded.volume_1h, buys = excluded.buys,
+           sells = excluded.sells, twitter = excluded.twitter, gmgn_url = excluded.gmgn_url, audited_at = excluded.audited_at,
+           stale_at = excluded.stale_at, review_revision = excluded.review_revision, decision_reason = excluded.decision_reason,
+           audit_error = excluded.audit_error, deep_json = excluded.deep_json, secondary_json = excluded.secondary_json,
+           social_json = excluded.social_json, audit_health_json = excluded.audit_health_json, metadata_json = excluded.metadata_json`,
+        candidate.tenantId, candidate.chain, candidate.address, stringOrNull(candidate.symbol), stringOrNull(candidate.name),
+        JSON.stringify(candidate.info || {}), stringOrNull(candidate.reviewEvidence), candidate.status, candidate.priorityBand ? 1 : 0,
+        numberOrNull(candidate.discoveryScore), numberOrNull(candidate.marketCap), numberOrNull(candidate.liquidity), numberOrNull(candidate.price),
+        integerOrNull(candidate.createdAt), numberOrNull(candidate.ageSec), integerOrNull(candidate.holders), numberOrNull(candidate.volume1h),
+        integerOrNull(candidate.buys), integerOrNull(candidate.sells), stringOrNull(candidate.twitter), stringOrNull(candidate.gmgnUrl),
+        integerOrNull(candidate.auditedAt), integerOrNull(candidate.staleAt), stringOrNull(candidate.reviewRevision),
+        stringOrNull(candidate.decisionReason), stringOrNull(candidate.auditError), JSON.stringify(candidate.deep || {}),
+        JSON.stringify(candidate.secondary || null), JSON.stringify(candidate.social || {}), JSON.stringify(candidate.auditHealth || {}),
+        JSON.stringify(candidate.metadata || {})
+      );
+
+      this.storage.sql.exec(
+        `INSERT INTO audit_queue (tenant_id, chain, address, first_seen_at, last_seen_at, last_audited_at, next_audit_at, attempts, status, priority_band, score, watched, details_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
+           first_seen_at = excluded.first_seen_at, last_seen_at = excluded.last_seen_at, last_audited_at = excluded.last_audited_at,
+           next_audit_at = excluded.next_audit_at, attempts = excluded.attempts, status = excluded.status,
+           priority_band = excluded.priority_band, score = excluded.score, watched = excluded.watched, details_json = excluded.details_json`,
+        auditQueue.tenantId, auditQueue.chain, auditQueue.address, integerOrNull(auditQueue.firstSeenAt), integerOrNull(auditQueue.lastSeenAt),
+        integerOrNull(auditQueue.lastAuditedAt), integerOrNull(auditQueue.nextAuditAt), integerOrNull(auditQueue.attempts),
+        stringOrNull(auditQueue.status), auditQueue.priorityBand ? 1 : 0, numberOrNull(auditQueue.score), auditQueue.watched ? 1 : 0,
+        JSON.stringify(auditQueue.details || {})
+      );
+
+      if (exclusion) {
+        this.storage.sql.exec(
+          `INSERT INTO risk_exclusions (tenant_id, chain, address, version, codes_json, reasons_json, at, details_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
+             version = excluded.version, codes_json = excluded.codes_json, reasons_json = excluded.reasons_json,
+             at = excluded.at, details_json = excluded.details_json`,
+          exclusion.tenantId, exclusion.chain, exclusion.address, integerOrNull(exclusion.version), JSON.stringify(exclusion.codes || []),
+          JSON.stringify(exclusion.reasons || []), integerOrNull(exclusion.at), JSON.stringify(exclusion.details || {})
+        );
+      }
+
+      if (outcome) {
+        this.storage.sql.exec(
+          `INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
+             latest_decision = excluded.latest_decision, last_audited_at = excluded.last_audited_at, symbol = excluded.symbol,
+             latest_failed_json = excluded.latest_failed_json, samples_json = excluded.samples_json,
+             sample_retries_json = excluded.sample_retries_json, cohort_metadata_json = excluded.cohort_metadata_json`,
+          outcome.tenantId, outcome.chain, outcome.address, outcome.initialDecision, stringOrNull(outcome.latestDecision),
+          integerOrNull(outcome.baselineAt), numberOrNull(outcome.baselinePrice), integerOrNull(outcome.lastAuditedAt),
+          stringOrNull(outcome.symbol), JSON.stringify(outcome.latestFailed || []), stringOrNull(outcome.sampling),
+          stringOrNull(outcome.strategyVersion), JSON.stringify(outcome.samples || {}), JSON.stringify(outcome.sampleRetries || {}),
+          JSON.stringify(outcome.cohortMetadata || {})
+        );
+      }
+
+      if (event) {
+        this.storage.sql.exec(
+          'INSERT INTO events (tenant_id, id, at, type, chain, address, message, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, id) DO NOTHING',
+          this.tenantId, event.id, event.at, event.type, next.chain, candidate.address, event.message, JSON.stringify(event.data)
+        );
+        if (event.outbox) {
+          this.storage.sql.exec(
+            'INSERT INTO outbox (tenant_id, id, event_id, chat_id, payload_json, desired_revision, delivery_class, action_reason, ui_session_id, status, attempts, next_at, ambiguous_retries) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, id) DO NOTHING',
+            this.tenantId, `outbox:${event.id}`, event.id, String(event.outbox.chatId || this.tenantId), JSON.stringify(event.outbox.payload || {}),
+            stringOrNull(event.outbox.desiredRevision), stringOrNull(event.outbox.deliveryClass) || 'NOTIFICATION',
+            stringOrNull(event.outbox.actionReason), stringOrNull(event.outbox.uiSessionId), 'PENDING', 0,
+            integerOrNull(event.outbox.nextAt) ?? next.updatedAt, 0
+          );
+        }
+      }
+
+      this.storage.sql.exec(
+        'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
+        next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
+      );
+      return Object.freeze({ checkpoint: { tenantId: this.tenantId, ...next }, effectId: event?.id || null });
+    });
+  }
+
+  commitOutcomeProgress(value) {
+    const next = checkpointInput(value.next);
+    const expected = value.expected || {};
+    const outcome = outcomeInput(value.outcome, this.tenantId, next.chain);
+    if (!outcome) throw new RecoverableScannerError('OUTCOME_INVALID', 'outcome progress requires an outcome');
+    return this.storage.transactionSync(() => {
+      const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
+      assertCurrent(current, { ...expected, phase: expected.phase ?? 'OUTCOMES_SAMPLE' });
+      if (!checkpointEqual(current, next)) {
+        throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
+      }
+      const result = this.storage.sql.exec(
+        'UPDATE outcomes SET latest_decision = ?, last_audited_at = ?, latest_failed_json = ?, samples_json = ?, sample_retries_json = ?, cohort_metadata_json = ? WHERE tenant_id = ? AND chain = ? AND address = ?',
+        stringOrNull(outcome.latestDecision), integerOrNull(outcome.lastAuditedAt), JSON.stringify(outcome.latestFailed || []),
+        JSON.stringify(outcome.samples || {}), JSON.stringify(outcome.sampleRetries || {}), JSON.stringify(outcome.cohortMetadata || {}),
+        this.tenantId, next.chain, outcome.address
+      );
+      if (result.rowsWritten !== undefined && result.rowsWritten !== 1) {
+        throw new RecoverableScannerError('OUTCOME_MISSING', 'outcome disappeared before its sample checkpoint could commit');
+      }
+      this.storage.sql.exec(
+        'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
+        next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
+      );
+      return Object.freeze({ checkpoint: { tenantId: this.tenantId, ...next } });
+    });
+  }
+}

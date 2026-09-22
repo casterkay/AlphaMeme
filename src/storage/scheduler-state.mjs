@@ -211,4 +211,19 @@ export class SqliteSchedulerStore {
   }
 }
 
+export function scheduleRecoverableScanTaskInTransaction(storage, tenant, cycleId, dueAt) {
+  const tenantId = normalizeTenantId(tenant);
+  if (typeof cycleId !== 'string' || !/^[a-z0-9][a-z0-9:_-]{0,127}$/i.test(cycleId)
+    || !Number.isSafeInteger(dueAt) || dueAt < 0) {
+    throw new SchedulerStateError('SCHEDULER_RECOVERABLE_TASK_INVALID', 'recoverable scanner task is invalid');
+  }
+  const current = taskRecord(readRecord(storage, tenantId, TASKS_KEY, { version: 1, tasks: [] }));
+  const task = { id: `scan:${cycleId}`, kind: 'scan', dueAt, enabled: true, needsGmgn: true, gmgnWeight: 1 };
+  const tasks = current.tasks.some(item => item.id === task.id)
+    ? current.tasks.map(item => item.id === task.id ? task : item)
+    : [...current.tasks, task];
+  writeRecord(storage, tenantId, TASKS_KEY, taskRecord({ version: 1, tasks }));
+  return task;
+}
+
 export const SCHEDULER_STATE_KEYS = Object.freeze({ INSTANCE_KEY, RUNTIME_KEY, TASKS_KEY });
