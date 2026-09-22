@@ -68,7 +68,7 @@ export function assertCheckpointGeneration(storage, tenant, checkpoint) {
   return current;
 }
 
-export function activateCredentialInTransaction(storage, tenant, expected) {
+export function activateCredentialInTransaction(storage, tenant, expected, afterActivate) {
   const tenantId = normalizeTenantId(tenant);
   if (!expected || !Number.isSafeInteger(expected.connectionGeneration) || expected.connectionGeneration < 0) {
     throw new ControlStateError('CONNECTION_GENERATION_INVALID', 'credential activation generation is invalid');
@@ -86,6 +86,10 @@ export function activateCredentialInTransaction(storage, tenant, expected) {
     live: {}
   });
   write(storage, tenantId, next);
+  if (afterActivate !== undefined) {
+    if (typeof afterActivate !== 'function') throw new ControlStateError('CONNECTION_ACTIVATION_INVALID', 'credential activation hook is invalid');
+    afterActivate(snapshot(next));
+  }
   return snapshot(next);
 }
 
@@ -152,7 +156,14 @@ export class SqliteControlStateStore {
       gmgn: {},
       live: {},
       tasks: state.tasks
-    }));
+    }), { rebindCheckpointChainsExcept: state => state.runtime.control.activeChain });
+  }
+
+  ensureActiveChain(value) {
+    const activeChain = chain(value);
+    return this.#update(state => state.runtime.control.activeChain === null
+      ? nextControl(state, { eligibility: {}, control: { activeChain }, gmgn: {}, live: {} })
+      : state);
   }
 
   disconnect() {
@@ -187,6 +198,15 @@ export class SqliteControlStateStore {
           "UPDATE inbox SET status = 'CANCELLED', payload_enc = NULL, payload_json = NULL, next_at = NULL WHERE tenant_id = ? AND status IN ('RECEIVED', 'RUNNING') AND LOWER(command_type) IN ('setkey', 'credential_verify')",
           this.tenantId
         );
+      }
+      if (effects.rebindCheckpointChainsExcept) {
+        const outgoingChain = effects.rebindCheckpointChainsExcept(state);
+        if (outgoingChain !== null) {
+          this.storage.sql.exec(
+            'UPDATE cycle_checkpoint SET control_epoch = ? WHERE tenant_id = ? AND chain <> ?',
+            next.runtime.control.controlEpoch, this.tenantId, outgoingChain
+          );
+        }
       }
       write(this.storage, this.tenantId, next);
       return snapshot(next);

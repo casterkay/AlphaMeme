@@ -17,6 +17,7 @@ import {
   socialFrom
 } from './scanner-parity.mjs';
 import { RecoverableScannerError, SCAN_PHASES } from './storage/recoverable-scanner.mjs';
+import { SqliteControlStateStore } from './storage/control-state.mjs';
 
 const AUDIT_ENDPOINTS = Object.freeze(['info', 'security', 'pool', 'holders', 'traders', 'candles']);
 const DISCOVERY_ENDPOINTS = Object.freeze(['trenches', 'trending']);

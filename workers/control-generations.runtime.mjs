@@ -4,12 +4,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { prepareCredentialVerification } from '../src/auth/connection.mjs';
 import { GmgnClient } from '../src/providers/gmgn.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
+import { restartRecoverableScanInTransaction } from '../src/storage/recoverable-scanner.mjs';
 import {
   SqliteGmgnAdmissionStateStore,
   writeGmgnAdmissionState
 } from '../src/storage/gmgn-admission-state.mjs';
 
 const settings = Object.freeze({
+  scanIntervalMs: 120_000,
   maxDeepAuditsPerCycle: 1,
   auditCycleBudgetMs: 60_000,
   queueRetentionMs: 60_000,
@@ -52,6 +54,20 @@ describe('Radar control generations', () => {
     expect(resumed.checkpoint.controlEpoch).toBe(2);
     await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { completed: [] }, collectedAt: Date.now() });
     expect((await radar.getRecoverableCycle({ tenantId, cycleId })).endpointIndex).toBe(1);
+  });
+
+  it('keeps scanning paused when an explicit resume cannot revalidate its checkpoint', async () => {
+    const tenantId = '19108';
+    const cycleId = 'expired-resume';
+    const radar = await configuredRadar(tenantId);
+    await radar.beginRecoverableCycle({ tenantId, cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 1, settings });
+    await radar.pause({ tenantId });
+    await new Promise(resolve => setTimeout(resolve, 2));
+
+    await runInDurableObject(radar, async instance => {
+      await expect(instance.resume({ tenantId, cycleId })).rejects.toMatchObject({ code: 'CYCLE_DEADLINE_EXPIRED' });
+    });
+    expect((await radar.getStatus(tenantId)).control).toMatchObject({ paused: true, controlEpoch: 1 });
   });
 
   it('revalidates every persisted checkpoint for a generic resume', async () => {
@@ -132,6 +148,39 @@ describe('Radar control generations', () => {
       await expect(instance.recordRecoverableScanRequest({ tenantId, cycleId, response: { completed: [] }, collectedAt: Date.now() }))
         .rejects.toMatchObject({ code: 'CYCLE_CONTROL_EPOCH_STALE' });
     });
+  });
+
+  it('switching chains retains unrelated checkpoints under the new control epoch', async () => {
+    const tenantId = '19109';
+    const radar = await configuredRadar(tenantId);
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'sol-cycle', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'base-cycle', chain: 'base', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+
+    await radar.switchChain({ tenantId, chain: 'base' });
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'sol-cycle' })).toMatchObject({ controlEpoch: 0 });
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'base-cycle' })).toMatchObject({ controlEpoch: 1 });
+  });
+
+  it('credential replacement recreates every chain scan from persisted settings', async () => {
+    const tenantId = '19110';
+    const radar = await configuredRadar(tenantId);
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'sol-rotation', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'base-rotation', chain: 'base', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+
+    await runInDurableObject(radar, async (_instance, state) => {
+      const restarted = restartRecoverableScanInTransaction(state.storage, tenantId, {
+        keyEpoch: 1,
+        controlEpoch: 1,
+        now: Date.now()
+      });
+      expect(restarted).toHaveLength(2);
+    });
+    const snapshot = await radar.getSchedulerSnapshot(tenantId);
+    expect(snapshot.tasks.filter(task => task.kind === 'scan').map(task => task.id).sort()).toEqual([
+      'scan:base-rotation:rotation:1', 'scan:sol-rotation:rotation:1'
+    ]);
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'sol-rotation' })).toBeNull();
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'base-rotation' })).toBeNull();
   });
 
   it('disconnect prevents an encrypted candidate from being persisted after its crypto await', async () => {
