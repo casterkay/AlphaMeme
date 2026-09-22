@@ -7,6 +7,7 @@ export const SCAN_PHASES = Object.freeze([
 
 const NOTIFICATION_EFFECT_TYPES = new Set(['CANDIDATE_NEW', 'RISK_WORSENED']);
 const NOTIFICATION_DEDUP_WINDOW_MS = 30 * 60_000;
+const MAX_PUBLIC_CANDIDATES = 200;
 
 export class RecoverableScannerError extends Error {
   constructor(code, message) {
@@ -174,6 +175,28 @@ function existingCheckpoint(storage, tenantId, currentCycleId) {
   ).toArray(), 'cycle checkpoint'));
 }
 
+function pruneSupersededFinalizedCheckpoints(storage, tenantId, next) {
+  const rootCycleId = next.partial.rootCycleId;
+  if (typeof rootCycleId !== 'string' || !rootCycleId) return;
+  const rows = storage.sql.exec(
+    'SELECT cycle_id, phase, partial_json FROM cycle_checkpoint WHERE tenant_id = ? AND chain = ? AND cycle_id <> ?',
+    tenantId, next.chain, next.cycleId
+  ).toArray();
+  for (const row of rows) {
+    if (row.phase !== 'SUMMARIZE') continue;
+    const partial = checkpointPartial(row.partial_json, 'completed cycle checkpoint partial');
+    if (partial.rootCycleId !== rootCycleId || partial.summary?.nextCycleId === next.cycleId) continue;
+    storage.sql.exec('DELETE FROM cycle_checkpoint WHERE tenant_id = ? AND cycle_id = ?', tenantId, row.cycle_id);
+  }
+}
+
+function pruneExpiredOutcomes(storage, tenantId, now, retentionMs) {
+  storage.sql.exec(
+    'DELETE FROM outcomes WHERE tenant_id = ? AND (baseline_at IS NULL OR baseline_at < ?)',
+    tenantId, now - retentionMs
+  );
+}
+
 function assertCurrent(current, expected) {
   if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
   if (expected.phase !== undefined && current.phase !== expected.phase) {
@@ -232,7 +255,7 @@ function exclusionInput(value, tenantId, chainName) {
   return { ...json(value, 'risk exclusion'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
 }
 
-function outcomeInput(value, tenantId, chainName) {
+function outcomeInput(value, tenantId, chainName, { allowCrossChain = false } = {}) {
   if (value === null || value === undefined) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.address !== 'string' || !value.address) {
     throw new RecoverableScannerError('OUTCOME_INVALID', 'outcome address is required');
@@ -240,7 +263,11 @@ function outcomeInput(value, tenantId, chainName) {
   if (typeof value.initialDecision !== 'string' || !value.initialDecision) {
     throw new RecoverableScannerError('OUTCOME_INVALID', 'outcome initial decision is required');
   }
-  return { ...json(value, 'outcome'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
+  const outcomeChain = value.chain === undefined ? chainName : chain(value.chain);
+  if (!allowCrossChain && outcomeChain !== chainName) {
+    throw new RecoverableScannerError('OUTCOME_INVALID', 'classification outcomes must remain on the checkpoint chain');
+  }
+  return { ...json(value, 'outcome'), address: canonicalAddress(outcomeChain, value.address), tenantId, chain: outcomeChain };
 }
 
 function screenDowngradeInput(value, chainName) {
@@ -296,6 +323,7 @@ export class SqliteRecoverableScannerStore {
         this.tenantId, next.cycleId, next.chain, next.keyEpoch, next.controlEpoch, next.deadlineAt,
         next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt
       );
+      pruneSupersededFinalizedCheckpoints(this.storage, this.tenantId, next);
       afterBegin?.({ tenantId: this.tenantId, ...next });
       return Object.freeze({ tenantId: this.tenantId, ...next });
     });
@@ -342,6 +370,64 @@ export class SqliteRecoverableScannerStore {
           JSON.stringify(row.details || {})
         );
       }
+      this.storage.sql.exec(
+        'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
+        next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
+      );
+      return Object.freeze({ tenantId: this.tenantId, ...next });
+    });
+  }
+
+  commitSummary(value) {
+    const next = checkpointInput(value.next);
+    const expected = value.expected || {};
+    const candidateRetentionMs = positiveInteger(value.candidateRetentionMs, 'candidate retention');
+    const outcomeRetentionMs = positiveInteger(value.outcomeRetentionMs, 'outcome retention');
+    return this.storage.transactionSync(() => {
+      const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
+      assertCurrent(current, expected);
+      if (!checkpointEqual(current, next)) {
+        throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
+      }
+      const retentionBoundary = next.updatedAt - candidateRetentionMs;
+      this.storage.sql.exec(
+        `DELETE FROM candidates
+         WHERE tenant_id = ? AND chain = ?
+           AND address NOT IN (SELECT address FROM annotations WHERE tenant_id = ? AND chain = ? AND favorite = 1)
+           AND (audited_at IS NULL OR audited_at < ?)`,
+        this.tenantId, next.chain, this.tenantId, next.chain, retentionBoundary
+      );
+      this.storage.sql.exec(
+        `DELETE FROM candidates
+         WHERE tenant_id = ? AND chain = ? AND address NOT IN (
+           SELECT address FROM candidates
+           WHERE tenant_id = ? AND chain = ?
+           ORDER BY CASE status WHEN 'X_REVIEW' THEN 3 WHEN 'WAIT_RECHECK' THEN 2 WHEN 'HARD_REJECT' THEN 1 ELSE 0 END DESC,
+                    priority_band DESC, discovery_score DESC, address ASC
+           LIMIT ?
+         )`,
+        this.tenantId, next.chain, this.tenantId, next.chain, MAX_PUBLIC_CANDIDATES
+      );
+      pruneExpiredOutcomes(this.storage, this.tenantId, next.updatedAt, outcomeRetentionMs);
+      this.storage.sql.exec(
+        'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
+        next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
+      );
+      return Object.freeze({ tenantId: this.tenantId, ...next });
+    });
+  }
+
+  commitOutcomeSelection(value) {
+    const next = checkpointInput(value.next);
+    const expected = value.expected || {};
+    const outcomeRetentionMs = positiveInteger(value.outcomeRetentionMs, 'outcome retention');
+    return this.storage.transactionSync(() => {
+      const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
+      assertCurrent(current, { ...expected, phase: expected.phase ?? 'OUTCOMES_SAMPLE' });
+      if (!checkpointEqual(current, next)) {
+        throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
+      }
+      pruneExpiredOutcomes(this.storage, this.tenantId, next.updatedAt, outcomeRetentionMs);
       this.storage.sql.exec(
         'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
         next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
@@ -434,14 +520,18 @@ export class SqliteRecoverableScannerStore {
     return row ? { reviewEvidence: row.review_evidence, reviewRevision: row.review_revision, status: row.status } : null;
   }
 
-  readMonitorCandidates(chainName) {
+  readMonitorCandidates(chainName, candidateRetentionMs = null, now = null) {
     const normalizedChain = chain(chainName);
+    const hasRetentionBoundary = Number.isSafeInteger(candidateRetentionMs) && candidateRetentionMs > 0
+      && Number.isSafeInteger(now) && now >= candidateRetentionMs;
+    const retentionBoundary = hasRetentionBoundary ? now - candidateRetentionMs : 0;
     return this.storage.sql.exec(
       `SELECT c.address, c.symbol, c.name, c.price, c.market_cap, c.liquidity, c.created_at, c.age_sec
        FROM candidates c
        LEFT JOIN annotations a
          ON a.tenant_id = c.tenant_id AND a.chain = c.chain AND a.address = c.address
-       WHERE c.tenant_id = ? AND c.chain = ? AND (c.status = 'X_REVIEW' OR a.favorite = 1)
+       WHERE c.tenant_id = ? AND c.chain = ?
+         AND ((c.status = 'X_REVIEW' AND (? = 0 OR c.audited_at >= ?)) OR a.favorite = 1)
        UNION ALL
        SELECT a.address, NULL, NULL, NULL, NULL, NULL, NULL, NULL
        FROM annotations a
@@ -449,7 +539,7 @@ export class SqliteRecoverableScannerStore {
          ON c.tenant_id = a.tenant_id AND c.chain = a.chain AND c.address = a.address
        WHERE a.tenant_id = ? AND a.chain = ? AND a.favorite = 1 AND c.address IS NULL
        ORDER BY 1`,
-      this.tenantId, normalizedChain, this.tenantId, normalizedChain
+      this.tenantId, normalizedChain, hasRetentionBoundary ? 1 : 0, retentionBoundary, this.tenantId, normalizedChain
     ).toArray().map(row => ({
       address: row.address,
       symbol: row.symbol,
@@ -462,11 +552,19 @@ export class SqliteRecoverableScannerStore {
     }));
   }
 
-  readOutcomes(chainName) {
-    return this.storage.sql.exec(
-      'SELECT address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json FROM outcomes WHERE tenant_id = ? AND chain = ?',
-      this.tenantId, chain(chainName)
-    ).toArray().map(row => ({
+  readOutcomes(chainName = null) {
+    const normalizedChain = chainName === null ? null : chain(chainName);
+    const rows = normalizedChain === null
+      ? this.storage.sql.exec(
+        'SELECT chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json FROM outcomes WHERE tenant_id = ?',
+        this.tenantId
+      ).toArray()
+      : this.storage.sql.exec(
+        'SELECT chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json FROM outcomes WHERE tenant_id = ? AND chain = ?',
+        this.tenantId, normalizedChain
+      ).toArray();
+    return rows.map(row => ({
+      chain: row.chain,
       address: row.address,
       initialDecision: row.initial_decision,
       latestDecision: row.latest_decision,
@@ -598,7 +696,7 @@ export class SqliteRecoverableScannerStore {
   commitOutcomeProgress(value) {
     const next = checkpointInput(value.next);
     const expected = value.expected || {};
-    const outcome = outcomeInput(value.outcome, this.tenantId, next.chain);
+    const outcome = outcomeInput(value.outcome, this.tenantId, next.chain, { allowCrossChain: true });
     if (!outcome) throw new RecoverableScannerError('OUTCOME_INVALID', 'outcome progress requires an outcome');
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
@@ -610,7 +708,7 @@ export class SqliteRecoverableScannerStore {
         'UPDATE outcomes SET latest_decision = ?, last_audited_at = ?, latest_failed_json = ?, samples_json = ?, sample_retries_json = ?, cohort_metadata_json = ? WHERE tenant_id = ? AND chain = ? AND address = ?',
         stringOrNull(outcome.latestDecision), integerOrNull(outcome.lastAuditedAt), JSON.stringify(outcome.latestFailed || []),
         JSON.stringify(outcome.samples || {}), JSON.stringify(outcome.sampleRetries || {}), JSON.stringify(outcome.cohortMetadata || {}),
-        this.tenantId, next.chain, outcome.address
+        this.tenantId, outcome.chain, outcome.address
       );
       if (result.rowsWritten !== undefined && result.rowsWritten !== 1) {
         throw new RecoverableScannerError('OUTCOME_MISSING', 'outcome disappeared before its sample checkpoint could commit');

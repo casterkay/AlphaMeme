@@ -3,6 +3,7 @@ import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'c
 import { describe, expect, it } from 'vitest';
 import { stableEffectId } from '../src/storage/recoverable-scanner.mjs';
 import { SqliteRecoverableScannerStore } from '../src/storage/recoverable-scanner.mjs';
+import { RecoverableScanner } from '../src/recoverable-scanner.mjs';
 
 const settings = Object.freeze({
   scanIntervalMs: 120_000,
@@ -14,6 +15,8 @@ const settings = Object.freeze({
   chainPassRecheckMs: 5 * 60_000,
   hardRejectRecheckMs: 6 * 60 * 60_000,
   outcomeReadsPerCycle: 4,
+  candidateRetentionMs: 2 * 60 * 60_000,
+  outcomeRetentionMs: 7 * 24 * 60 * 60_000,
   minAgeSec: 5 * 60,
   maxAgeSec: 7 * 86400,
   discoveryMinMarketCap: 10_000,
@@ -414,6 +417,117 @@ describe('recoverable Radar scanner', () => {
       }
       expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM events WHERE tenant_id = ?', tenantId).one().count).toBe(1);
       expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM outbox WHERE tenant_id = ?', tenantId).one().count).toBe(1);
+    });
+  });
+
+  it('samples a due inactive-chain outcome atomically while another chain finalizes', async () => {
+    const tenantId = '19009';
+    const cycleId = 'cycle-sol-outcome-sample';
+    const address = `0x${'4'.repeat(40)}`;
+    const expiredAddress = `0x${'5'.repeat(40)}`;
+    const now = Date.now();
+    const baselineAt = now - 400_000;
+    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    await runInDurableObject(radar, async (_instance, state) => {
+      state.storage.sql.exec(
+        'INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        tenantId, 'bsc', address, 'X_REVIEW', 'X_REVIEW', baselineAt, 1, baselineAt, 'BSC', '[]', 'FULL', 'radar-v3', '{}', '{}', '{}'
+      );
+      state.storage.sql.exec(
+        'INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        tenantId, 'bsc', expiredAddress, 'X_REVIEW', 'X_REVIEW', now - settings.outcomeRetentionMs - 400_000, 1,
+        now - settings.outcomeRetentionMs - 400_000, 'EXPIRED', '[]', 'FULL', 'radar-v3', '{}', '{}', '{}'
+      );
+      state.storage.sql.exec(
+        'INSERT INTO cycle_checkpoint (tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        tenantId, cycleId, 'sol', 0, 0, null, 'OUTCOMES_SAMPLE', 0, 0, JSON.stringify({ settings }), now
+      );
+      const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
+      const scanner = new RecoverableScanner({ store, settings, now: () => now });
+      scanner.advanceLocal(cycleId);
+      expect(scanner.nextRequest(cycleId)).toMatchObject({ kind: 'OUTCOMES_SAMPLE', chain: 'bsc', address });
+      scanner.recordOutcomeSample(cycleId, { sample: { price: 2, at: baselineAt + 300_000 }, collectedAt: now });
+      const sampled = state.storage.sql.exec(
+        'SELECT samples_json FROM outcomes WHERE tenant_id = ? AND chain = ? AND address = ?', tenantId, 'bsc', address
+      ).one();
+      expect(JSON.parse(sampled.samples_json).m5.price).toBe(2);
+      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM outcomes WHERE tenant_id = ? AND address = ?', tenantId, expiredAddress).one().count).toBe(0);
+      expect(store.read(cycleId).phase).toBe('SUMMARIZE');
+    });
+  });
+
+  it('prunes stale candidates and caps the per-chain durable candidate projection at finalization', async () => {
+    const tenantId = '19010';
+    const cycleId = 'cycle-candidate-retention';
+    const now = Date.now();
+    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    await runInDurableObject(radar, async (_instance, state) => {
+      state.storage.sql.exec(
+        'INSERT INTO cycle_checkpoint (tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        tenantId, cycleId, 'sol', 0, 0, null, 'SUMMARIZE', 0, 0, JSON.stringify({ settings }), now
+      );
+      state.storage.sql.exec(
+        'INSERT INTO candidates (tenant_id, chain, address, status, audited_at, priority_band, discovery_score) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        tenantId, 'sol', 'stale-candidate', 'X_REVIEW', now - settings.candidateRetentionMs - 1, 1, 100
+      );
+      state.storage.sql.exec(
+        'INSERT INTO candidates (tenant_id, chain, address, status, audited_at, priority_band, discovery_score) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        tenantId, 'sol', 'favorite-candidate', 'X_REVIEW', now - settings.candidateRetentionMs - 1, 1, 1_000
+      );
+      state.storage.sql.exec(
+        'INSERT INTO annotations (tenant_id, chain, address, favorite, note, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        tenantId, 'sol', 'favorite-candidate', 1, '', now
+      );
+      for (let index = 0; index < 201; index += 1) {
+        state.storage.sql.exec(
+          'INSERT INTO candidates (tenant_id, chain, address, status, audited_at, priority_band, discovery_score) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          tenantId, 'sol', `active-${String(index).padStart(3, '0')}`, 'WAIT_RECHECK', now, 0, index
+        );
+      }
+      const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
+      store.commitSummary({
+        expected: { phase: 'SUMMARIZE', keyEpoch: 0, controlEpoch: 0 },
+        next: {
+          cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: null,
+          phase: 'SUMMARIZE', tokenIndex: 0, endpointIndex: 0, partial: { settings, summary: { finalized: true } }, updatedAt: now
+        },
+        candidateRetentionMs: settings.candidateRetentionMs,
+        outcomeRetentionMs: settings.outcomeRetentionMs
+      });
+      const rows = state.storage.sql.exec('SELECT address FROM candidates WHERE tenant_id = ? AND chain = ?', tenantId, 'sol').toArray();
+      expect(rows).toHaveLength(200);
+      expect(rows.some(row => row.address === 'stale-candidate')).toBe(false);
+      expect(rows.some(row => row.address === 'favorite-candidate')).toBe(true);
+    });
+  });
+
+  it('keeps only the replay predecessor and successor checkpoints across repeated cycles', async () => {
+    const tenantId = '19011';
+    const rootCycleId = 'cycle-root';
+    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    await runInDurableObject(radar, async (_instance, state) => {
+      const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
+      const checkpoint = (cycleId, phase, partial, updatedAt) => ({
+        cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: null,
+        phase, tokenIndex: 0, endpointIndex: 0, partial, updatedAt
+      });
+      store.begin(checkpoint('cycle-root', 'SUMMARIZE', {
+        rootCycleId, summary: { finalized: true, nextCycleId: 'cycle-root:cycle:2' }
+      }, 1));
+      const second = store.begin(checkpoint('cycle-root:cycle:2', 'DISCOVER', { rootCycleId }, 2));
+      store.advance({
+        expected: { phase: 'DISCOVER', keyEpoch: 0, controlEpoch: 0 },
+        next: checkpoint('cycle-root:cycle:2', 'SUMMARIZE', {
+          rootCycleId, summary: { finalized: true, nextCycleId: 'cycle-root:cycle:3' }
+        }, 3)
+      });
+      const third = store.begin(checkpoint('cycle-root:cycle:3', 'DISCOVER', { rootCycleId }, 4));
+      const replay = store.begin(checkpoint('cycle-root:cycle:3', 'DISCOVER', { rootCycleId }, 4));
+
+      expect(store.read('cycle-root')).toBeNull();
+      expect(store.read(second.cycleId)).toMatchObject({ phase: 'SUMMARIZE' });
+      expect(replay).toEqual(third);
+      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM cycle_checkpoint WHERE tenant_id = ?', tenantId).one().count).toBe(2);
     });
   });
 });

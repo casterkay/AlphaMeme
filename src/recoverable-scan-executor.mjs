@@ -143,7 +143,7 @@ export async function executeRecoverableScanStep({ scanner, cycleId, gmgn, secon
       }), now);
   } else if (next.kind === 'OUTCOMES_SAMPLE') {
     result = await recordOutcomeRequest(scanner, cycleId, request,
-      ({ signal, timeoutMs }) => gmgn.priceAt(next.address, next.targetAt, next.checkpoint.chain, {
+      ({ signal, timeoutMs }) => gmgn.priceAt(next.address, next.targetAt, next.chain || next.checkpoint.chain, {
         deadline: requestDeadline(next.checkpoint, timeoutMs), signal
       }), now);
   } else {

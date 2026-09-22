@@ -56,6 +56,20 @@ function outcomeReadLimit(settings) {
     ? settings.outcomeReadsPerCycle : 4;
 }
 
+function candidateRetentionLimit(settings) {
+  return Number.isSafeInteger(settings.candidateRetentionMs) && settings.candidateRetentionMs > 0
+    ? settings.candidateRetentionMs : 2 * 60 * 60_000;
+}
+
+function outcomeRetentionLimit(settings) {
+  return Number.isSafeInteger(settings.outcomeRetentionMs) && settings.outcomeRetentionMs > 0
+    ? settings.outcomeRetentionMs : 7 * 24 * 60 * 60_000;
+}
+
+function retainedOutcomes(outcomes, now, retentionMs) {
+  return outcomes.filter(outcome => now - num(outcome.baselineAt) <= retentionMs);
+}
+
 function monitorItem(row) {
   return {
     row: {
@@ -175,6 +189,10 @@ function outcomeWithSample(outcome, job, sample, error, now) {
     };
   }
   return next;
+}
+
+function outcomeKey(outcome, fallbackChain) {
+  return tokenKey(outcome.chain || fallbackChain, outcome.address);
 }
 
 async function outcomeForClassification(store, chain, candidate, now) {
@@ -350,7 +368,7 @@ export class RecoverableScanner {
         return { row, screen };
       });
       partial.monitors = typeof this.store.readMonitorCandidates === 'function'
-        ? this.store.readMonitorCandidates(current.chain).map(monitorItem) : [];
+        ? this.store.readMonitorCandidates(current.chain, candidateRetentionLimit(settings), now).map(monitorItem) : [];
       const downgrades = typeof this.store.readCandidateReview === 'function'
         ? partial.screened.flatMap(({ row, screen }) => !screen.pass && this.store.readCandidateReview(current.chain, row.address)?.status === 'X_REVIEW'
           ? [{ address: row.address, reason: screen.reasons.join('；') }] : [])
@@ -397,10 +415,10 @@ export class RecoverableScanner {
       return this.store.advance({ expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch }, next });
     } else if (current.phase === 'OUTCOMES_SAMPLE') {
       const jobs = num(partial.outcomeReads) < outcomeReadLimit(settings)
-        ? dueOutcomeJobs(typeof this.store.readOutcomes === 'function' ? this.store.readOutcomes(current.chain) : [], now) : [];
+        ? dueOutcomeJobs(retainedOutcomes(typeof this.store.readOutcomes === 'function' ? this.store.readOutcomes() : [], now, outcomeRetentionLimit(settings)), now) : [];
       const job = jobs[0];
       if (job) {
-        partial.outcomes = { job: { address: job.row.address, key: job.key, targetAt: job.targetAt } };
+        partial.outcomes = { job: { chain: job.row.chain || current.chain, address: job.row.address, key: job.key, targetAt: job.targetAt } };
         nextPhase = 'OUTCOMES_SAMPLE';
       } else {
         delete partial.outcomes;
@@ -426,8 +444,20 @@ export class RecoverableScanner {
     } else {
       throw phaseError('current checkpoint phase does not have a local transition');
     }
-    return this.store.advance({ expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch },
-      next: { ...current, phase: nextPhase, tokenIndex, endpointIndex, partial, updatedAt: now } });
+    const next = { ...current, phase: nextPhase, tokenIndex, endpointIndex, partial, updatedAt: now };
+    const expected = { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch };
+    if (current.phase === 'SUMMARIZE' && typeof this.store.commitSummary === 'function') {
+      return this.store.commitSummary({
+        expected,
+        next,
+        candidateRetentionMs: candidateRetentionLimit(settings),
+        outcomeRetentionMs: outcomeRetentionLimit(settings)
+      });
+    }
+    if (current.phase === 'OUTCOMES_SAMPLE' && typeof this.store.commitOutcomeSelection === 'function') {
+      return this.store.commitOutcomeSelection({ expected, next, outcomeRetentionMs: outcomeRetentionLimit(settings) });
+    }
+    return this.store.advance({ expected, next });
   }
 
   async commitClassification(cycleId) {
@@ -538,16 +568,17 @@ export class RecoverableScanner {
     if (typeof this.store.readOutcomes !== 'function') {
       throw new RecoverableScannerError('RECOVERABLE_SCANNER_STORE_INVALID', 'recoverable scanner store cannot read outcomes');
     }
-    const outcomes = this.store.readOutcomes(current.chain);
-    const outcome = outcomes.find(row => addressKey(row.address) === addressKey(job.address));
+    const outcomes = this.store.readOutcomes();
+    const jobChain = job.chain || current.chain;
+    const outcome = outcomes.find(row => outcomeKey(row, current.chain) === tokenKey(jobChain, job.address));
     if (!outcome) throw new RecoverableScannerError('OUTCOME_MISSING', 'outcome sample target no longer exists');
     const progressed = outcomeWithSample(outcome, job, sample, error, collectedAt);
-    const nextOutcomes = outcomes.map(row => addressKey(row.address) === addressKey(job.address) ? progressed : row);
+    const nextOutcomes = outcomes.map(row => outcomeKey(row, current.chain) === tokenKey(jobChain, job.address) ? progressed : row);
     const partial = clone(current.partial);
     partial.outcomeReads = num(partial.outcomeReads) + 1;
     const nextJob = partial.outcomeReads < outcomeReadLimit(partial.settings || this.settings)
       ? dueOutcomeJobs(nextOutcomes, collectedAt)[0] : null;
-    if (nextJob) partial.outcomes = { job: { address: nextJob.row.address, key: nextJob.key, targetAt: nextJob.targetAt } };
+    if (nextJob) partial.outcomes = { job: { chain: nextJob.row.chain || current.chain, address: nextJob.row.address, key: nextJob.key, targetAt: nextJob.targetAt } };
     else delete partial.outcomes;
     return this.store.commitOutcomeProgress({
       expected: { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch },

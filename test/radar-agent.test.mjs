@@ -356,6 +356,43 @@ test('recoverable scanner caps outcome reads for a cycle', () => {
   assert.equal(store.outcomes.find(row => row.address !== target).sampleRetries.m5, undefined);
 });
 
+test('recoverable scanner samples an overdue cohort on another chain and preserves its target chain', async () => {
+  const store = new MemoryScannerStore();
+  const address = `0x${'3'.repeat(40)}`;
+  const baselineAt = NOW - 400_000;
+  store.outcomes = [{
+    chain: 'bsc', address, initialDecision: 'X_REVIEW', latestDecision: 'X_REVIEW', baselineAt, baselinePrice: 1,
+    lastAuditedAt: baselineAt, symbol: 'BSC', latestFailed: [], samples: {}, sampleRetries: {}
+  }];
+  store.checkpoints.set('cycle-cross-chain-outcome', {
+    tenantId: '1000', cycleId: 'cycle-cross-chain-outcome', chain: 'sol', keyEpoch: 0, controlEpoch: 0,
+    deadlineAt: null, phase: 'OUTCOMES_SAMPLE', tokenIndex: 0, endpointIndex: 0, updatedAt: NOW,
+    partial: { settings: { ...settings, outcomeReadsPerCycle: 1 } }
+  });
+  const scanner = new RecoverableScanner({ store, settings, now: () => NOW });
+  scanner.advanceLocal('cycle-cross-chain-outcome');
+  const next = scanner.nextRequest('cycle-cross-chain-outcome');
+  let requestedChain = null;
+
+  await executeRecoverableScanStep({
+    scanner,
+    cycleId: 'cycle-cross-chain-outcome',
+    gmgn: {
+      async priceAt(_address, targetAt, chain) {
+        requestedChain = chain;
+        return { price: 2, at: targetAt };
+      }
+    },
+    now: () => NOW,
+    request: operation => operation({ signal: new AbortController().signal, timeoutMs: 5_000 })
+  });
+
+  assert.equal(next.chain, 'bsc');
+  assert.equal(requestedChain, 'bsc');
+  assert.equal(store.outcomes[0].samples.m5.price, 2);
+  assert.equal(store.read('cycle-cross-chain-outcome').phase, 'SUMMARIZE');
+});
+
 test('a hard rejection from the final audit endpoint skips secondary source work', () => {
   const address = `0x${'1'.repeat(40)}`;
   const holders = Array.from({ length: 10 }, (_, index) => ({
