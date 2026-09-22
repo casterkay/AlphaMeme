@@ -1,0 +1,26 @@
+docs/CLOUDFLARE-TELEGRAM-REFACTOR.md
+  s_af43b1390f962a::t_263cba5b5193c9 6-9
+docs/TELEGRAM-M3-INTERFACE-DESIGN.md
+  s_af43b1390f962a::t_430df13e091e86 1-927
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d88d72238b284729d3a8d5e30a8abb52c4683cf0",
+  "prompts": {},
+  "humans": {
+    "h_0528fe13c98664": {
+      "author": "casterkay <poetrycoder>"
+    }
+  },
+  "sessions": {
+    "s_af43b1390f962a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c899-d3ac-7300-9317-ade2482306b8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
