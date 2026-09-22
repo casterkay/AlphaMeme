@@ -1,0 +1,23 @@
+scripts/spikes/ed25519.mjs
+  s_428ea927e420c8::t_8bf23710e69a00 1-37
+workers/ed25519.runtime.mjs
+  s_428ea927e420c8::t_1b5005406964c8 1-18
+workers/fixtures/ed25519-spike.mjs
+  s_428ea927e420c8::t_c4ca852174490e 1-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c2ba6d426bec9dcfaab0a1ca80570816589737d1",
+  "prompts": {},
+  "sessions": {
+    "s_428ea927e420c8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-32c0-7c12-a10f-c5b52f0221e4",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
