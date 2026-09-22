@@ -9,7 +9,7 @@ function receipt({ tenantId = '18100', updateId = '1', commandType = 'command:st
     actorUserId: tenantId,
     updateId,
     commandType,
-    payload: commandType === 'callback' ? { callbackId: 'action' } : { source: 'message' },
+    payload: commandType === 'callback' ? { callbackId: 'action', callbackQueryId: 'query' } : { source: 'message', arguments: '' },
     dueAt: Date.now() + 60_000,
     messageDate: 1_700_000_000,
     sourceMessageId: '10'
@@ -39,7 +39,7 @@ describe('Telegram first-contact intake', () => {
       expect(state.storage.sql.exec('SELECT tenant_id, owner_user_id, onboard_state FROM tenants').toArray())
         .toEqual([{ tenant_id: '18100', owner_user_id: '18100', onboard_state: 'none' }]);
       expect(state.storage.sql.exec('SELECT update_id, command_type, payload_json, payload_enc, status, next_at FROM inbox').toArray())
-        .toEqual([{ update_id: '1', command_type: 'command:start', payload_json: '{"source":"message"}', payload_enc: null, status: 'RECEIVED', next_at: first.dueAt }]);
+        .toEqual([{ update_id: '1', command_type: 'command:start', payload_json: '{"source":"message","arguments":""}', payload_enc: null, status: 'RECEIVED', next_at: first.dueAt }]);
       expect(state.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', '18100', 'scheduler.tasks.v1').one())
         .toMatchObject({ value_json: expect.stringContaining('inbox:1') });
       expect(await state.storage.getAlarm()).toBe(first.dueAt);
@@ -118,7 +118,7 @@ describe('Telegram first-contact intake', () => {
     });
   });
 
-  it('registers before tenant receipt and acknowledges ignored or credential updates without any route write', async () => {
+  it('registers before tenant receipt and routes credentials separately without storing plaintext in ordinary receipts', async () => {
     const calls = [];
     const fakeEnv = {
       TELEGRAM_WEBHOOK_SECRET: 'test-webhook-secret',
@@ -131,6 +131,12 @@ describe('Telegram first-contact intake', () => {
         idFromName(name) { calls.push(`id:${name}`); return name; },
         get() {
           return {
+            receiveTelegramCredential: async (receipt, secret) => {
+              expect(secret).toBe('/setkey gmgn_secret_value');
+              expect(JSON.stringify(receipt)).not.toContain('gmgn_secret_value');
+              calls.push(`credential:${receipt.tenantId}`);
+              return { accepted: true };
+            },
             receiveTelegramUpdate: async message => {
               calls.push(`receive:${message.tenantId}`);
               return { accepted: true };
@@ -152,7 +158,7 @@ describe('Telegram first-contact intake', () => {
     calls.length = 0;
     const credential = { ...valid, update_id: 4, message: { ...valid.message, text: '/setkey gmgn_secret_value' } };
     expect((await worker.fetch(webhookRequest(credential), fakeEnv)).status).toBe(200);
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(['register:18102', 'id:radar:18102', 'credential:18102']);
 
     calls.length = 0;
     const group = { ...valid, update_id: 5, message: { ...valid.message, chat: { id: -18102, type: 'group' } } };
