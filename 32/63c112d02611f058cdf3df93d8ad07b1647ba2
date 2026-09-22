@@ -1,0 +1,23 @@
+src/bot/live.mjs
+  s_0df94942fd1199::t_56af3a10713d01 1-128
+src/live-discovery.mjs
+  s_0df94942fd1199::t_c73a8ee3091e0d 3,5
+src/live-normalize.mjs
+  s_0df94942fd1199::t_59ded0bf5d4564 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3263c112d02611f058cdf3df93d8ad07b1647ba2",
+  "prompts": {},
+  "sessions": {
+    "s_0df94942fd1199": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-9604-76b0-93ae-75ee505fa7d2",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
