@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
-import { describe,it,expect } from 'vitest';
+import { describe,it,expect,vi } from 'vitest';
 import { TelegramRuntime } from '../src/bot/runtime.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { readGmgnApiKey } from '../src/storage/gmgn-credential.mjs';
@@ -44,7 +44,7 @@ async function withRuntime(tenantId,operation) {
     };
     const click=async(binding,overrides={})=>{
       const input=receipt('callback',{callbackId:binding.id,callbackQueryId:`query-${update+1}`},{sourceMessageId:binding.origin_message_id,...overrides});
-      runtime.receive(input);await runtime.runCommand(input.updateId);await drain();return input;
+      runtime.receive(input);await runtime.answerCallback(input);await runtime.runCommand(input.updateId);await drain();return input;
     };
     const seed=(count=1)=>{
       for(let index=0;index<count;index++) storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?)',tenantId,'robinhood',`0x${index.toString(16).padStart(40,'a')}`,`TOKEN${index}`,'X_REVIEW',at-1000,`revision-${index}`,JSON.stringify({chainPass:true,chartRisk:{version:CHART_RISK_VERSION},checks:{openSource:true},failed:[],unknownFields:[]}));
@@ -54,6 +54,36 @@ async function withRuntime(tenantId,operation) {
 }
 
 describe('Telegram complete command and delivery flows',()=>{
+  it('RadarAgent acknowledges a callback only after durable receipt and alarm scheduling without waiting for command execution',async()=>{
+    const tenantId='22911',radar=env.RADAR.get(env.RADAR.idFromName(`telegram-e2e:${tenantId}`));
+    await runInDurableObject(radar,async(instance,{storage})=>{
+      const previousToken=instance.env.TELEGRAM_BOT_TOKEN;
+      instance.env.TELEGRAM_BOT_TOKEN='test-only-telegram-token';
+      let release,acknowledgment;
+      const gate=new Promise(resolve=>{release=resolve;});
+      const original=TelegramRuntime.prototype.answerCallback;
+      const answerSpy=vi.spyOn(TelegramRuntime.prototype,'answerCallback').mockImplementation(function(receipt) {
+        acknowledgment=original.call(this,receipt);return acknowledgment;
+      });
+      const fetchSpy=vi.spyOn(globalThis,'fetch').mockImplementation(async(url,options)=>{
+        expect(String(url)).toContain('/answerCallbackQuery');
+        expect(JSON.parse(options.body)).toEqual({callback_query_id:'immediate-query'});
+        expect(storage.sql.exec('SELECT status FROM inbox WHERE tenant_id=? AND update_id=?',tenantId,'1').one()).toEqual({status:'RECEIVED'});
+        expect(await storage.getAlarm()).not.toBeNull();
+        await gate;
+        return new Response(JSON.stringify({ok:true,result:true}),{status:200});
+      });
+      try {
+        const now=Date.now();
+        const response=await instance.receiveTelegramUpdate({tenantId,actorUserId:tenantId,updateId:'1',commandType:'callback',payload:{callbackId:'expired-shortlink',callbackQueryId:'immediate-query'},dueAt:now+60_000,messageDate:Math.floor(now/1000),sourceMessageId:'100'});
+        expect(response.accepted).toBe(true);expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(storage.sql.exec('SELECT status FROM inbox WHERE tenant_id=?',tenantId).one().status).toBe('RECEIVED');
+        expect(storage.sql.exec('SELECT id FROM outbox WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
+        release();await acknowledgment;
+      } finally {release();await acknowledgment;fetchSpy.mockRestore();answerSpy.mockRestore();instance.env.TELEGRAM_BOT_TOKEN=previousToken;}
+    });
+  });
+
   it('binds independent root messages, edits the originating panel, and rejects stale and cross-owner callbacks',async()=>{
     await withRuntime('22901',async({runtime,storage,tenantId,sent,command,sessions,link,click,seed,receipt})=>{
       seed(7);await command('radar');await command('audits');
