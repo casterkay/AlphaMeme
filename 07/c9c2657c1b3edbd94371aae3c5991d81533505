@@ -1,0 +1,31 @@
+src/bot/commands.mjs
+  s_af43b1390f962a::t_87602118c4e0a2 47-53
+src/bot/runtime.mjs
+  s_af43b1390f962a::t_6719fbb8bed389 95,206,241-252,263,281,286,288-289
+src/radar-agent.mjs
+  s_af43b1390f962a::t_3d61212ee5cedc 160,252-260,263,270
+src/recoverable-scanner.mjs
+  s_af43b1390f962a::t_2c05202857219b 621
+src/storage/recoverable-scanner.mjs
+  s_af43b1390f962a::t_461725370e3d5d 338,406,410-411,833,849-850
+workers/radar-agent.runtime.mjs
+  s_af43b1390f962a::t_1cf37739295a99 217,222-223,391-404,430,436
+workers/telegram-e2e.runtime.mjs
+  s_af43b1390f962a::t_df06055589cfb2 241-287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "07c9c2657c1b3edbd94371aae3c5991d81533505",
+  "prompts": {},
+  "sessions": {
+    "s_af43b1390f962a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c899-d3ac-7300-9317-ade2482306b8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
