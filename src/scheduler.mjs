@@ -1,8 +1,9 @@
-const TASK_KINDS = Object.freeze(['local-control', 'live', 'command', 'scan', 'outbox']);
+const TASK_KINDS = Object.freeze(['local-control', 'live', 'command', 'credential', 'scan', 'outbox']);
 const TASK_PRIORITY = Object.freeze({
   'local-control': 0,
   live: 1,
   command: 2,
+  credential: 2,
   scan: 3,
   outbox: 4
 });
@@ -90,6 +91,14 @@ function runtimeEligibility(value) {
   return value;
 }
 
+function runtimeControl(value) {
+  if (!isPlainObject(value) || !isTimestamp(value.controlEpoch) || !isTimestamp(value.connectionGeneration)
+    || (value.activeChain !== null && (typeof value.activeChain !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(value.activeChain)))) {
+    throw new SchedulerPolicyError('SCHEDULER_CONTROL_STATE_INVALID', 'scheduler control state is invalid');
+  }
+  return value;
+}
+
 function retryState(value) {
   for (const [id, retry] of Object.entries(value)) {
     taskId(id);
@@ -105,25 +114,34 @@ function retryState(value) {
 }
 
 export function normalizeSchedulerRuntime(value) {
-  if (!isPlainObject(value) || value.version !== 1 || !positiveInteger(value.nextLeaseEpoch)
-    || !isPlainObject(value.eligibility) || !isPlainObject(value.fairness)
-    || !isPlainObject(value.retries) || !isPlainObject(value.checkpoints) || !isPlainObject(value.lowPriorityWaitMs)) {
+  if (!isPlainObject(value)) {
     throw new SchedulerPolicyError('SCHEDULER_RUNTIME_INVALID', 'scheduler runtime state has an unsupported shape');
   }
-  runtimeEligibility(value.eligibility);
-  retryState(value.retries);
-  if (value.fairness.outbox !== null && typeof value.fairness.outbox !== 'string') {
+  // `control` was added after the initial scheduler record. Existing persisted
+  // scheduler state remains valid and receives the deterministic zero state.
+  const normalized = value.control === undefined
+    ? { ...value, control: { controlEpoch: 0, connectionGeneration: 0, activeChain: null } }
+    : value;
+  if (normalized.version !== 1 || !positiveInteger(normalized.nextLeaseEpoch)
+    || !isPlainObject(normalized.eligibility) || !isPlainObject(normalized.fairness)
+    || !isPlainObject(normalized.control) || !isPlainObject(normalized.retries) || !isPlainObject(normalized.checkpoints) || !isPlainObject(normalized.lowPriorityWaitMs)) {
+    throw new SchedulerPolicyError('SCHEDULER_RUNTIME_INVALID', 'scheduler runtime state has an unsupported shape');
+  }
+  runtimeEligibility(normalized.eligibility);
+  runtimeControl(normalized.control);
+  retryState(normalized.retries);
+  if (normalized.fairness.outbox !== null && typeof normalized.fairness.outbox !== 'string') {
     throw new SchedulerPolicyError('SCHEDULER_RUNTIME_INVALID', 'scheduler outbox fairness cursor is invalid');
   }
-  if (value.inFlight !== null) {
-    const lease = value.inFlight;
+  if (normalized.inFlight !== null) {
+    const lease = normalized.inFlight;
     if (!isPlainObject(lease) || typeof lease.taskId !== 'string' || !positiveInteger(lease.epoch)
       || !isTimestamp(lease.startedAt) || !isTimestamp(lease.leaseUntil)
       || !['external-request', 'local-transaction', 'unavailable'].includes(lease.mode)) {
       throw new SchedulerPolicyError('SCHEDULER_RUNTIME_INVALID', 'scheduler in-flight lease is invalid');
     }
   }
-  return clone(value);
+  return clone(normalized);
 }
 
 export function defaultSchedulerRuntime() {
@@ -132,6 +150,7 @@ export function defaultSchedulerRuntime() {
     nextLeaseEpoch: 1,
     inFlight: null,
     eligibility: { paused: false, configured: false },
+    control: { controlEpoch: 0, connectionGeneration: 0, activeChain: null },
     fairness: { outbox: null },
     retries: {},
     checkpoints: {},

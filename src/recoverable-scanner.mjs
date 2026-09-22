@@ -108,6 +108,14 @@ function responseRecord(value, error, collectedAt) {
   });
 }
 
+function checkpointEvidenceIsFresh(value, now, maximumAgeMs) {
+  if (!value || typeof value !== 'object') return true;
+  if (Number.isSafeInteger(value.collectedAt)) {
+    if (value.collectedAt > now || now - value.collectedAt > maximumAgeMs) return false;
+  }
+  return Object.values(value).every(item => checkpointEvidenceIsFresh(item, now, maximumAgeMs));
+}
+
 function discoveryRows(discovery) {
   if (Array.isArray(discovery?.rows)) return boundedRows(discovery.rows);
   const trenches = discovery?.responses?.trenches?.error ? [] : normalizeGmgnList(discovery?.responses?.trenches?.value, ['completed']);
@@ -249,6 +257,23 @@ export class RecoverableScanner {
 
   checkpoint(cycleId) {
     return this.store.read(cycleId);
+  }
+
+  resumeCheckpoint(cycleId) {
+    if (typeof this.store.resumeCheckpoint !== 'function') {
+      throw new RecoverableScannerError('RECOVERABLE_SCANNER_STORE_INVALID', 'recoverable scanner cannot resume a checkpoint');
+    }
+    const current = this.checkpoint(cycleId);
+    if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
+    const now = this.now();
+    const maximumAgeMs = Number.isSafeInteger(this.settings.staleCandidateMs) && this.settings.staleCandidateMs > 0
+      ? this.settings.staleCandidateMs
+      : 10 * 60_000;
+    return this.store.resumeCheckpoint({
+      cycleId,
+      now,
+      evidenceFresh: checkpointEvidenceIsFresh(current.partial, now, maximumAgeMs)
+    });
   }
 
   nextRequest(cycleId) {

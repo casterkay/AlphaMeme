@@ -67,6 +67,31 @@ function runtimeRecord(value) {
   return normalizeSchedulerRuntime(value);
 }
 
+export function readSchedulerStateInTransaction(storage, value) {
+  const tenantId = normalizeTenantId(value);
+  return {
+    tasks: taskRecord(readRecord(storage, tenantId, TASKS_KEY, { version: 1, tasks: [] })).tasks,
+    runtime: runtimeRecord(readRecord(storage, tenantId, RUNTIME_KEY, defaultSchedulerRuntime())),
+    gmgn: readGmgnAdmissionState(storage, tenantId)
+  };
+}
+
+export function writeSchedulerStateInTransaction(storage, value, nextState) {
+  const tenantId = normalizeTenantId(value);
+  if (!nextState || typeof nextState !== 'object') {
+    throw new SchedulerStateError('SCHEDULER_STATE_UPDATE_INVALID', 'scheduler state update is invalid');
+  }
+  const tasks = taskRecord({ version: 1, tasks: nextState.tasks }).tasks;
+  const runtime = runtimeRecord(nextState.runtime);
+  const gmgn = readGmgnAdmissionState(storage, tenantId);
+  writeRecord(storage, tenantId, TASKS_KEY, { version: 1, tasks });
+  writeRecord(storage, tenantId, RUNTIME_KEY, runtime);
+  if (JSON.stringify(nextState.gmgn) !== JSON.stringify(gmgn)) {
+    writeGmgnAdmissionStateInTransaction(storage, tenantId, nextState.gmgn);
+  }
+  return { tasks: clone(tasks), runtime: clone(runtime), gmgn: clone(nextState.gmgn) };
+}
+
 function schedulerInstanceRecord(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || value.version !== 1 || Object.keys(value).length !== 1) {
     throw new SchedulerStateError('SCHEDULER_INSTANCE_INVALID', 'scheduler instance state has an unsupported shape');
@@ -114,10 +139,7 @@ export class SqliteSchedulerStore {
   }
 
   read() {
-    const tasks = taskRecord(readRecord(this.storage, this.tenantId, TASKS_KEY, { version: 1, tasks: [] })).tasks;
-    const runtime = runtimeRecord(readRecord(this.storage, this.tenantId, RUNTIME_KEY, defaultSchedulerRuntime()));
-    const gmgn = readGmgnAdmissionState(this.storage, this.tenantId);
-    return { tasks, runtime, gmgn };
+    return readSchedulerStateInTransaction(this.storage, this.tenantId);
   }
 
   update(mutator) {
@@ -128,13 +150,7 @@ export class SqliteSchedulerStore {
       if (!update || typeof update !== 'object' || !update.state || typeof update.state !== 'object' || !Object.hasOwn(update, 'value')) {
         throw new SchedulerStateError('SCHEDULER_STATE_UPDATE_INVALID', 'scheduler update must return state and value');
       }
-      const tasks = taskRecord({ version: 1, tasks: update.state.tasks }).tasks;
-      const runtime = runtimeRecord(update.state.runtime);
-      writeRecord(this.storage, this.tenantId, TASKS_KEY, { version: 1, tasks });
-      writeRecord(this.storage, this.tenantId, RUNTIME_KEY, runtime);
-      if (JSON.stringify(update.state.gmgn) !== JSON.stringify(current.gmgn)) {
-        writeGmgnAdmissionStateInTransaction(this.storage, this.tenantId, update.state.gmgn);
-      }
+      writeSchedulerStateInTransaction(this.storage, this.tenantId, update.state);
       return clone(update.value);
     });
   }
@@ -231,6 +247,25 @@ export function scheduleRecoverableScanTaskInTransaction(storage, tenant, cycleI
   const tasks = current.tasks.some(item => item.id === task.id)
     ? current.tasks.map(item => item.id === task.id ? task : item)
     : [...current.tasks, task];
+  writeRecord(storage, tenantId, TASKS_KEY, taskRecord({ version: 1, tasks }));
+  return task;
+}
+
+export function scheduleCredentialVerificationTaskInTransaction(storage, tenant, generation, dueAt) {
+  const tenantId = normalizeTenantId(tenant);
+  if (!Number.isSafeInteger(generation) || generation < 0 || !Number.isSafeInteger(dueAt) || dueAt < 0) {
+    throw new SchedulerStateError('SCHEDULER_CREDENTIAL_TASK_INVALID', 'credential verification task is invalid');
+  }
+  const current = taskRecord(readRecord(storage, tenantId, TASKS_KEY, { version: 1, tasks: [] }));
+  const task = {
+    id: `credential:${generation}`,
+    kind: 'credential',
+    dueAt,
+    enabled: true,
+    needsGmgn: true,
+    gmgnWeight: 1
+  };
+  const tasks = [...current.tasks.filter(item => item.kind !== 'credential'), task];
   writeRecord(storage, tenantId, TASKS_KEY, taskRecord({ version: 1, tasks }));
   return task;
 }

@@ -1,0 +1,127 @@
+import { env } from 'cloudflare:workers';
+import { runInDurableObject } from 'cloudflare:test';
+import { describe, expect, it, vi } from 'vitest';
+import { prepareCredentialVerification } from '../src/auth/connection.mjs';
+import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
+
+const settings = Object.freeze({
+  maxDeepAuditsPerCycle: 1,
+  auditCycleBudgetMs: 60_000,
+  queueRetentionMs: 60_000,
+  staleCandidateMs: 60_000
+});
+
+async function configuredRadar(tenantId) {
+  const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+  await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
+  return radar;
+}
+
+describe('Radar control generations', () => {
+  it('makes a late scan response stale after pause without waiting for the scan task', async () => {
+    const tenantId = '19100';
+    const cycleId = 'pause-generation';
+    const radar = await configuredRadar(tenantId);
+    await radar.beginRecoverableCycle({ tenantId, cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+
+    const paused = await radar.pause({ tenantId });
+    expect(paused.paused).toBe(true);
+    expect(paused.controlEpoch).toBe(1);
+    await runInDurableObject(radar, async instance => {
+      await expect(instance.recordRecoverableScanRequest({ tenantId, cycleId, response: { completed: [] }, collectedAt: Date.now() }))
+        .rejects.toMatchObject({ code: 'CYCLE_CONTROL_EPOCH_STALE' });
+    });
+    expect((await radar.getRecoverableCycle({ tenantId, cycleId })).endpointIndex).toBe(0);
+  });
+
+  it('revalidates a paused checkpoint in a dedicated resume transition', async () => {
+    const tenantId = '19101';
+    const cycleId = 'resume-generation';
+    const radar = await configuredRadar(tenantId);
+    await radar.beginRecoverableCycle({ tenantId, cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.pause({ tenantId });
+
+    const resumed = await radar.resume({ tenantId, cycleId });
+    expect(resumed.paused).toBe(false);
+    expect(resumed.controlEpoch).toBe(2);
+    expect(resumed.checkpoint.controlEpoch).toBe(2);
+    await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { completed: [] }, collectedAt: Date.now() });
+    expect((await radar.getRecoverableCycle({ tenantId, cycleId })).endpointIndex).toBe(1);
+  });
+
+  it('disconnect invalidates every generation while retaining the durable provider cooldown', async () => {
+    const tenantId = '19102';
+    const cycleId = 'disconnect-generation';
+    const radar = await configuredRadar(tenantId);
+    await radar.setGmgnAdmissionState({ tenantId, state: {
+      nextAllowedAt: Date.now() + 60_000,
+      backoffFactor: 2,
+      lastRequestAt: Date.now(),
+      lastWeight: 1,
+      successStreak: 0,
+      spacingReadyAt: Date.now() + 30_000,
+      keyEpoch: 0
+    } });
+    await radar.beginRecoverableCycle({ tenantId, cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    const disconnected = await radar.disconnect({ tenantId });
+    expect(disconnected).toMatchObject({ paused: true, configured: false, keyEpoch: 1, controlEpoch: 1, connectionGeneration: 1 });
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId })).toBeNull();
+    const admission = await radar.getGmgnAdmissionState({ tenantId });
+    expect(admission).toMatchObject({ keyEpoch: 1, backoffFactor: 2 });
+    expect(admission.nextAllowedAt).toBeGreaterThan(Date.now());
+    await runInDurableObject(radar, async (_instance, state) => {
+      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM keys WHERE tenant_id = ?', tenantId).one().count).toBe(0);
+    });
+  });
+
+  it('switching chains fences old partial work without deleting other scheduled chains', async () => {
+    const tenantId = '19103';
+    const cycleId = 'switch-generation';
+    const radar = await configuredRadar(tenantId);
+    await radar.beginRecoverableCycle({ tenantId, cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    const switched = await radar.switchChain({ tenantId, chain: 'base' });
+    expect(switched).toMatchObject({ activeChain: 'base', controlEpoch: 1 });
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId })).toMatchObject({ chain: 'sol', controlEpoch: 0 });
+    await runInDurableObject(radar, async instance => {
+      await expect(instance.recordRecoverableScanRequest({ tenantId, cycleId, response: { completed: [] }, collectedAt: Date.now() }))
+        .rejects.toMatchObject({ code: 'CYCLE_CONTROL_EPOCH_STALE' });
+    });
+  });
+
+  it('disconnect prevents an encrypted candidate from being persisted after its crypto await', async () => {
+    const tenantId = '19104';
+    const radar = await configuredRadar(tenantId);
+    const originalEncrypt = crypto.subtle.encrypt.bind(crypto.subtle);
+    let encryptionStarted;
+    let releaseEncryption;
+    const started = new Promise(resolve => { encryptionStarted = resolve; });
+    const release = new Promise(resolve => { releaseEncryption = resolve; });
+    const encryptSpy = vi.spyOn(crypto.subtle, 'encrypt').mockImplementation(async (...args) => {
+      encryptionStarted();
+      await release;
+      return originalEncrypt(...args);
+    });
+
+    try {
+      await runInDurableObject(radar, async (_instance, state) => {
+        const preparing = prepareCredentialVerification({
+          storage: state.storage,
+          masterKey: 'workers-runtime-test-master-key',
+          tenantId,
+          apiKey: `gmgn_${'a'.repeat(32)}`
+        });
+        await started;
+        new SqliteControlStateStore(state.storage, tenantId).disconnect();
+        releaseEncryption();
+        await expect(preparing).rejects.toMatchObject({ code: 'CONNECTION_GENERATION_STALE' });
+        expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM keys WHERE tenant_id = ?', tenantId).one().count).toBe(0);
+        const runtime = state.storage.sql
+          .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'scheduler.runtime.v1')
+          .one().value_json;
+        expect(runtime).not.toContain('gmgn_');
+      });
+    } finally {
+      encryptSpy.mockRestore();
+    }
+  });
+});
