@@ -391,6 +391,7 @@ describe('recoverable Radar scanner', () => {
     const address = candidateRow(Date.now()).address;
     const now = Date.now();
     const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
     await runInDurableObject(radar, async (_instance, state) => {
       const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
       for (const [index, cycleId] of ['cycle-event-first', 'cycle-event-repeat'].entries()) {

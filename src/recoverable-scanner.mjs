@@ -17,7 +17,6 @@ import {
   socialFrom
 } from './scanner-parity.mjs';
 import { RecoverableScannerError, SCAN_PHASES } from './storage/recoverable-scanner.mjs';
-import { SqliteControlStateStore } from './storage/control-state.mjs';
 
 const AUDIT_ENDPOINTS = Object.freeze(['info', 'security', 'pool', 'holders', 'traders', 'candles']);
 const DISCOVERY_ENDPOINTS = Object.freeze(['trenches', 'trending']);
@@ -275,29 +274,6 @@ export class RecoverableScanner {
       now,
       evidenceFresh: checkpointEvidenceIsFresh(current.partial, now, maximumAgeMs)
     });
-  }
-
-  validateResumeCheckpoint(cycleId) {
-    const current = this.checkpoint(cycleId);
-    if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
-    const now = this.now();
-    const maximumAgeMs = Number.isSafeInteger(this.settings.staleCandidateMs) && this.settings.staleCandidateMs > 0
-      ? this.settings.staleCandidateMs
-      : 10 * 60_000;
-    const control = new SqliteControlStateStore(this.store.storage, current.tenantId).snapshot();
-    if (!control.configured) {
-      throw new RecoverableScannerError('CYCLE_RESUME_NOT_ELIGIBLE', 'cycle cannot resume while scanning is disabled');
-    }
-    if (current.keyEpoch !== control.keyEpoch) {
-      throw new RecoverableScannerError('CYCLE_KEY_EPOCH_STALE', 'cycle credential epoch cannot resume');
-    }
-    if (current.deadlineAt !== null && current.deadlineAt <= now) {
-      throw new RecoverableScannerError('CYCLE_DEADLINE_EXPIRED', 'cycle deadline elapsed while paused');
-    }
-    if (!checkpointEvidenceIsFresh(current.partial, now, maximumAgeMs)) {
-      throw new RecoverableScannerError('CYCLE_EVIDENCE_STALE', 'cycle evidence must be revalidated before resuming');
-    }
-    return current;
   }
 
   nextRequest(cycleId) {

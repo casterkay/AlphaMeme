@@ -145,18 +145,40 @@ export class SqliteControlStateStore {
     }));
   }
 
+  resumeWith(afterResume) {
+    if (typeof afterResume !== 'function') {
+      throw new ControlStateError('CONTROL_RESUME_INVALID', 'resume transition requires a checkpoint revalidation callback');
+    }
+    return this.storage.transactionSync(() => {
+      const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
+      const next = nextControl(state, {
+        eligibility: { paused: false },
+        control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
+        gmgn: {},
+        live: {}
+      });
+      const control = snapshot(next);
+      const value = afterResume(control);
+      write(this.storage, this.tenantId, next);
+      return Object.freeze({ control, value });
+    });
+  }
+
   switchChain(value) {
     const activeChain = chain(value);
-    return this.#update(state => nextControl(state, {
-      eligibility: {},
-      control: {
-        controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch'),
-        activeChain
-      },
-      gmgn: {},
-      live: {},
-      tasks: state.tasks
-    }), { rebindCheckpointChainsExcept: state => state.runtime.control.activeChain });
+    return this.#update(state => state.runtime.control.activeChain === activeChain ? state : nextControl(state, {
+        eligibility: {},
+        control: {
+          controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch'),
+          activeChain
+        },
+        gmgn: {},
+        live: {},
+        tasks: state.tasks
+    }), {
+      rebindCheckpointChainsExcept: state => state.runtime.control.activeChain,
+      enableScanChain: activeChain
+    });
   }
 
   ensureActiveChain(value) {
@@ -186,7 +208,7 @@ export class SqliteControlStateStore {
   #update(mutator, effects = {}) {
     return this.storage.transactionSync(() => {
       const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
-      const next = mutator(state);
+      let next = mutator(state);
       if (effects.deleteKeys) {
         this.storage.sql.exec('DELETE FROM keys WHERE tenant_id = ?', this.tenantId);
       }
@@ -199,7 +221,8 @@ export class SqliteControlStateStore {
           this.tenantId
         );
       }
-      if (effects.rebindCheckpointChainsExcept) {
+      const chainChanged = state.runtime.control.activeChain !== next.runtime.control.activeChain;
+      if (effects.rebindCheckpointChainsExcept && chainChanged) {
         const outgoingChain = effects.rebindCheckpointChainsExcept(state);
         if (outgoingChain !== null) {
           this.storage.sql.exec(
@@ -207,6 +230,17 @@ export class SqliteControlStateStore {
             next.runtime.control.controlEpoch, this.tenantId, outgoingChain
           );
         }
+      }
+      if (effects.enableScanChain && chainChanged) {
+        const checkpointChains = new Map(this.storage.sql.exec(
+          'SELECT cycle_id, chain FROM cycle_checkpoint WHERE tenant_id = ?', this.tenantId
+        ).toArray().map(row => [row.cycle_id, row.chain]));
+        next = {
+          ...next,
+          tasks: next.tasks.map(task => task.kind === 'scan'
+            ? { ...task, enabled: checkpointChains.get(task.id.slice('scan:'.length)) === effects.enableScanChain }
+            : task)
+        };
       }
       write(this.storage, this.tenantId, next);
       return snapshot(next);

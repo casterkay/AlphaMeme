@@ -14,7 +14,11 @@ import { externalRequestHandler, localTransactionHandler, OneAlarmScheduler, Sch
 import { readGmgnApiKey, saveGmgnApiKey } from './storage/gmgn-credential.mjs';
 import { SqliteControlStateStore, assertCheckpointGeneration } from './storage/control-state.mjs';
 import { prepareCredentialVerification, verifyAndActivatePendingCredential } from './auth/connection.mjs';
-import { restartRecoverableScanInTransaction, SqliteRecoverableScannerStore } from './storage/recoverable-scanner.mjs';
+import {
+  restartRecoverableScanInTransaction,
+  resumeRecoverableCheckpointsInTransaction,
+  SqliteRecoverableScannerStore
+} from './storage/recoverable-scanner.mjs';
 import {
   enableSchedulerEligibilityInTransaction,
   ensureSchedulerTenant,
@@ -107,16 +111,22 @@ export class RadarAgent extends DurableObject {
 
   async resume(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
-    const controlStore = new SqliteControlStateStore(this.ctx.storage, tenantId);
     const checkpointIds = value?.cycleId
       ? [value.cycleId]
-      : new SqliteRecoverableScannerStore(this.ctx.storage, tenantId).list().map(checkpoint => checkpoint.cycleId);
-    const scanners = checkpointIds.map(cycleId => this.#recoverableScannerForCycle({ tenantId, cycleId }));
-    for (let index = 0; index < scanners.length; index++) scanners[index].validateResumeCheckpoint(checkpointIds[index]);
-    const control = controlStore.resume();
-    const checkpoints = checkpointIds.map((cycleId, index) => scanners[index].resumeCheckpoint(cycleId));
+      : (() => {
+          const activeCycleIds = new Set(new SqliteSchedulerStore(this.ctx.storage, tenantId).read().tasks
+            .filter(task => task.kind === 'scan' && task.id.startsWith('scan:'))
+            .map(task => task.id.slice('scan:'.length)));
+          return new SqliteRecoverableScannerStore(this.ctx.storage, tenantId).list()
+            .filter(checkpoint => activeCycleIds.has(checkpoint.cycleId))
+            .map(checkpoint => checkpoint.cycleId);
+        })();
+    const now = Date.now();
+    const resumed = new SqliteControlStateStore(this.ctx.storage, tenantId).resumeWith(control =>
+      resumeRecoverableCheckpointsInTransaction(this.ctx.storage, tenantId, { cycleIds: checkpointIds, control, now })
+    );
     const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
-    return { ...control, checkpoint: value?.cycleId ? checkpoints[0] : null, checkpoints, dueAt };
+    return { ...resumed.control, checkpoint: value?.cycleId ? resumed.value[0] : null, checkpoints: resumed.value, dueAt };
   }
 
   async switchChain(value) {

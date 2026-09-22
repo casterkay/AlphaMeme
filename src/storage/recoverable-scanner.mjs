@@ -218,14 +218,18 @@ export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch,
     tenantId
   ).toArray().map(checkpointFromRow);
   const scheduler = readSchedulerStateInTransaction(storage, tenantId);
+  const activeCycleIds = new Set(scheduler.tasks
+    .filter(task => task.kind === 'scan' && task.id.startsWith('scan:'))
+    .map(task => task.id.slice('scan:'.length)));
+  const activeCheckpoints = checkpoints.filter(checkpoint => activeCycleIds.has(checkpoint.cycleId));
   const tasks = scheduler.tasks.filter(task => task.kind !== 'scan');
   storage.sql.exec('DELETE FROM cycle_checkpoint WHERE tenant_id = ?', tenantId);
-  if (!checkpoints.length) {
+  if (!activeCheckpoints.length) {
     writeSchedulerStateInTransaction(storage, tenantId, { ...scheduler, tasks });
     return [];
   }
   writeSchedulerStateInTransaction(storage, tenantId, { ...scheduler, tasks });
-  return checkpoints.map(selected => {
+  return activeCheckpoints.map(selected => {
     const settings = selected.partial.settings;
     if (!settings || typeof settings !== 'object' || Array.isArray(settings)
       || !Number.isSafeInteger(settings.auditCycleBudgetMs) || settings.auditCycleBudgetMs <= 0) {
@@ -251,6 +255,46 @@ export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch,
     scheduleRecoverableScanTaskInTransaction(storage, tenantId, checkpoint.cycleId, now, 3);
     return Object.freeze({ tenantId, ...checkpoint });
   });
+}
+
+function checkpointEvidenceFresh(value, now, maximumAgeMs) {
+  if (!value || typeof value !== 'object') return true;
+  if (Number.isSafeInteger(value.collectedAt)
+    && (value.collectedAt > now || now - value.collectedAt > maximumAgeMs)) return false;
+  return Object.values(value).every(item => checkpointEvidenceFresh(item, now, maximumAgeMs));
+}
+
+export function resumeRecoverableCheckpointsInTransaction(storage, tenant, { cycleIds, control, now } = {}) {
+  const tenantId = normalizeTenantId(tenant);
+  if (!Array.isArray(cycleIds)) {
+    throw new RecoverableScannerError('CYCLE_CHECKPOINT_INVALID', 'resume cycle ids are invalid');
+  }
+  timestamp(now, 'resume time');
+  if (!control || control.paused || !control.configured) {
+    throw new RecoverableScannerError('CYCLE_RESUME_NOT_ELIGIBLE', 'cycle cannot resume while scanning is disabled');
+  }
+  const checkpoints = cycleIds.map(value => existingCheckpoint(storage, tenantId, cycleId(value)));
+  for (const checkpoint of checkpoints) {
+    if (!checkpoint) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
+    if (checkpoint.keyEpoch !== control.keyEpoch) {
+      throw new RecoverableScannerError('CYCLE_KEY_EPOCH_STALE', 'cycle credential epoch cannot resume');
+    }
+    if (checkpoint.deadlineAt !== null && checkpoint.deadlineAt <= now) {
+      throw new RecoverableScannerError('CYCLE_DEADLINE_EXPIRED', 'cycle deadline elapsed while paused');
+    }
+    const staleCandidateMs = checkpoint.partial.settings?.staleCandidateMs;
+    const maximumAgeMs = Number.isSafeInteger(staleCandidateMs) && staleCandidateMs > 0 ? staleCandidateMs : 10 * 60_000;
+    if (!checkpointEvidenceFresh(checkpoint.partial, now, maximumAgeMs)) {
+      throw new RecoverableScannerError('CYCLE_EVIDENCE_STALE', 'cycle evidence must be revalidated before resuming');
+    }
+  }
+  for (const checkpoint of checkpoints) {
+    storage.sql.exec(
+      'UPDATE cycle_checkpoint SET control_epoch = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
+      control.controlEpoch, now, tenantId, checkpoint.cycleId
+    );
+  }
+  return checkpoints.map(checkpoint => existingCheckpoint(storage, tenantId, checkpoint.cycleId));
 }
 
 function assertCurrent(storage, tenantId, current, expected) {
