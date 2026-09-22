@@ -1,0 +1,21 @@
+src/bot/notification-policy.mjs
+  s_0df94942fd1199::t_350d0019b6216c 1-143
+test/notification-policy.test.mjs
+  s_0df94942fd1199::t_299dc7568e7e49 1-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "82badb0ad5d648e06e7d9b9716df3f1b6f88864c",
+  "prompts": {},
+  "sessions": {
+    "s_0df94942fd1199": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-9604-76b0-93ae-75ee505fa7d2",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
