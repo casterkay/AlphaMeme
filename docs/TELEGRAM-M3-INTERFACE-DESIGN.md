@@ -1,8 +1,9 @@
 # Telegram interface — implementable M3 design
 
-Status: design proposal, 2026-09-22. No runtime implementation or GitHub milestone
-change is implied. The requested scope proposal moves the M4 dependencies into
-M3; it does not waive their acceptance criteria.
+Status: implementation contract, 2026-09-22. M3 implementation includes the
+formerly M4 dependencies; acceptance criteria remain required. See
+[implementation and validation status](TELEGRAM-M3-OPERATIONS.md). Deployed timing
+evidence (#29) remains a release blocker.
 
 ## 1. Evidence, scope, and milestone proposal
 
@@ -59,7 +60,8 @@ Move #26–29 without duplicating or renumbering them. Retire the emptied M4
 milestone after the move is approved; retain M5 release/migration/security work.
 Update refactor-plan §8 and affected issue dependencies together with that move.
 Do not mark M3 complete by rendering placeholders for its newly included features.
-GitHub edits are a separate action; this document is the concrete proposal.
+Implementation adopts this scope; GitHub #26–29 now belong to M3. Deployed
+timing acceptance remains open and M3 must not be marked complete before it passes.
 
 ### Design decisions that complete the existing contract
 
