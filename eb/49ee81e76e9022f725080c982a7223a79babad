@@ -1,0 +1,39 @@
+scripts/telegram-register.mjs
+  s_af43b1390f962a::t_cf53df5d22da04 1-9
+src/auth/connection.mjs
+  s_af43b1390f962a::t_d3bd0e003caea8 144,187
+src/bot/inbox.mjs
+  s_af43b1390f962a::t_4176e35beaa790 46,81
+src/bot/outbox.mjs
+  s_af43b1390f962a::t_9d1400a8b32ce6 22,25
+src/bot/panels.mjs
+  s_af43b1390f962a::t_9aab3685e87c28 38-41,94
+src/bot/review.mjs
+  s_af43b1390f962a::t_2bcd36030e65b7 70
+src/bot/sessions.mjs
+  s_af43b1390f962a::t_e564aff40afb99 1-81
+src/bot/telegram-transport.mjs
+  s_af43b1390f962a::t_d72766be0de6d3 1
+src/config.mjs
+  s_af43b1390f962a::t_b16d9041761f10 1,14,16-17
+src/radar-agent.mjs
+  s_af43b1390f962a::t_5281795923dc18 1,38-39,206-208,210-213,215-222,226-229,280-287,292,316,325,330-339,351,390-391,409-413
+src/scanner-settings.mjs
+  s_af43b1390f962a::t_914d8e968aba32 1-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "eb49ee81e76e9022f725080c982a7223a79babad",
+  "prompts": {},
+  "sessions": {
+    "s_af43b1390f962a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c899-d3ac-7300-9317-ade2482306b8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
