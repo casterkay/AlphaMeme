@@ -1,0 +1,161 @@
+import { env } from 'cloudflare:workers';
+import { runInDurableObject } from 'cloudflare:test';
+import { describe,it,expect } from 'vitest';
+import { TelegramRuntime } from '../src/bot/runtime.mjs';
+import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
+import { readGmgnApiKey } from '../src/storage/gmgn-credential.mjs';
+import { readActiveSigningKey } from '../src/auth/key-store.mjs';
+
+const at=1_800_000_000_000;
+const masterKey={activeVersion:'1',keys:{'1':'e2e-only-master-key'}};
+const apiKey=`gmgn_${'a'.repeat(32)}`;
+const request=operation=>operation({signal:new AbortController().signal,timeoutMs:1000});
+
+async function withRuntime(tenantId,operation) {
+  const radar=env.RADAR.get(env.RADAR.idFromName(`telegram-e2e:${tenantId}`));
+  return runInDurableObject(radar,async(_instance,{storage})=>{
+    let update=0,message=100;
+    const runtime=new TelegramRuntime({storage,tenantId,env:{MASTER_ENC_KEY:masterKey},now:()=>at});
+    const sent=[];
+    runtime.outbox.transport=async input=>{
+      sent.push(structuredClone({method:input.method,params:input.params}));
+      return {ok:true,result:input.method==='sendMessage'?{message_id:++message}:input.method==='editMessageText'?{message_id:Number(input.params.message_id)}:true};
+    };
+    const receipt=(commandType,payload,overrides={})=>({tenantId,actorUserId:tenantId,updateId:String(++update),commandType,payload,dueAt:at+60_000,messageDate:at/1000,sourceMessageId:String(1000+update),...overrides});
+    const drain=async()=>{
+      for(let count=0;count<100;count++) {
+        const tasks=storage.transactionSync(()=>runtime.outbox.reconcileInTransaction());
+        const task=tasks.find(task=>task.dueAt<=at);
+        if(!task) return;
+        await runtime.outbox.deliverOne(task.id.slice('outbox:'.length),{request});
+      }
+      throw new Error('Outbox failed to converge after 100 deterministic deliveries');
+    };
+    const command=async(name,args='')=>{
+      const input=receipt(`command:${name}`,{source:'message',arguments:args});
+      runtime.receive(input);await runtime.runCommand(input.updateId);await drain();return input;
+    };
+    const sessions=()=>storage.sql.exec('SELECT id FROM ui_sessions WHERE tenant_id=? ORDER BY rowid',tenantId).toArray().map(row=>runtime.commands.sessions.get(row.id));
+    const link=(session,action,predicate=()=>true)=>{
+      const rows=storage.sql.exec('SELECT * FROM shortlinks WHERE tenant_id=? AND ui_session_id=? AND expected_ui_version=? AND action=?',tenantId,session.id,session.version,action).toArray();
+      const found=rows.find(row=>predicate(JSON.parse(row.params_json),row));
+      if(!found) throw new Error(`Missing ${action} in ${session.panel} v${session.version}`);
+      return found;
+    };
+    const click=async(binding,overrides={})=>{
+      const input=receipt('callback',{callbackId:binding.id,callbackQueryId:`query-${update+1}`},{sourceMessageId:binding.origin_message_id,...overrides});
+      runtime.receive(input);await runtime.runCommand(input.updateId);await drain();return input;
+    };
+    const seed=(count=1)=>{
+      for(let index=0;index<count;index++) storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?)',tenantId,'robinhood',`0x${index.toString(16).padStart(40,'a')}`,`TOKEN${index}`,'X_REVIEW',at-1000,`revision-${index}`,JSON.stringify({chainPass:true,chartRisk:{version:CHART_RISK_VERSION},checks:{openSource:true},failed:[],unknownFields:[]}));
+    };
+    await operation({runtime,storage,tenantId,sent,receipt,drain,command,sessions,link,click,seed});
+  });
+}
+
+describe('Telegram complete command and delivery flows',()=>{
+  it('binds independent root messages, edits the originating panel, and rejects stale and cross-owner callbacks',async()=>{
+    await withRuntime('22901',async({runtime,storage,tenantId,sent,command,sessions,link,click,seed,receipt})=>{
+      seed(7);await command('radar');await command('audits');
+      const [overview,audits]=sessions();
+      expect(overview.messageId).not.toBe(audits.messageId);expect(overview.panel).toBe('radar');expect(audits.panel).toBe('audits');
+      const next=link(audits,'page.set',params=>params.page===1),oldDetail=link(audits,'panel.open',params=>params.panel==='detail');
+      await click(next);
+      const after=runtime.commands.sessions.get(audits.id);
+      expect(after.query.page).toBe(1);expect(after.messageId).toBe(audits.messageId);expect(runtime.commands.sessions.get(overview.id).version).toBe(0);
+      expect(sent.filter(row=>row.method==='editMessageText').at(-1).params.message_id).toBe(audits.messageId);
+      const stale=await click(oldDetail);expect(runtime.inbox.get(stale.updateId).status).toBe('FAILED');expect(runtime.commands.sessions.get(audits.id).panel).toBe('audits');
+      const current=link(after,'panel.open',params=>params.panel==='detail');
+      const forged=receipt('callback',{callbackId:current.id,callbackQueryId:'wrong-owner'},{actorUserId:'99999',sourceMessageId:after.messageId});
+      expect(()=>runtime.receive(forged)).toThrow('owner mismatch');expect(runtime.inbox.get(forged.updateId)).toBeNull();
+      expect(storage.sql.exec('SELECT COUNT(*) AS count FROM manual_marks WHERE tenant_id=?',tenantId).one().count).toBe(0);
+      expect(sent.some(row=>row.method==='answerCallbackQuery')).toBe(true);
+    });
+  });
+
+  it('approves, clears and annotates through a delivered ForceReply without changing panel identity or losing favorites',async()=>{
+    await withRuntime('22902',async({runtime,storage,tenantId,sent,command,sessions,link,click,seed,receipt,drain})=>{
+      seed();await command('audits');const audits=sessions()[0];
+      await click(link(audits,'panel.open',params=>params.panel==='detail'));
+      let detail=runtime.commands.sessions.get(audits.id);expect(detail.messageId).toBe(audits.messageId);
+      const pass=link(detail,'mark.set_passed');await click(pass);
+      expect(storage.sql.exec('SELECT decision,mark_version FROM manual_marks WHERE tenant_id=?',tenantId).one()).toEqual({decision:'passed',mark_version:1});
+      const duplicate=await click(pass);expect(runtime.inbox.get(duplicate.updateId).status).toBe('FAILED');
+      detail=runtime.commands.sessions.get(audits.id);await click(link(detail,'mark.clear'));
+      expect(storage.sql.exec('SELECT decision,mark_version FROM manual_marks WHERE tenant_id=?',tenantId).one()).toEqual({decision:null,mark_version:2});
+      detail=runtime.commands.sessions.get(audits.id);await click(link(detail,'favorite.set',params=>params.value===true));
+      detail=runtime.commands.sessions.get(audits.id);await click(link(detail,'note.begin'));
+      const pending=runtime.commands.sessions.get(audits.id);
+      expect(pending.messageId).toBe(audits.messageId);expect(pending.query.pendingInput.promptMessageId).not.toBe(pending.messageId);
+      expect(sent.find(row=>String(row.params.reply_markup?.force_reply)==='true')).toBeTruthy();
+      const reply=receipt('reply',{source:'reply',text:'Reviewed official comments',replyToMessageId:pending.query.pendingInput.promptMessageId});
+      runtime.receive(reply);await runtime.runCommand(reply.updateId);await drain();
+      expect(storage.sql.exec('SELECT favorite,note FROM annotations WHERE tenant_id=?',tenantId).one()).toEqual({favorite:1,note:'Reviewed official comments'});
+      expect(runtime.commands.sessions.get(audits.id).query.pendingInput).toBeUndefined();expect(runtime.commands.sessions.get(audits.id).messageId).toBe(audits.messageId);
+      const replay=receipt('reply',{source:'reply',text:'Late overwrite',replyToMessageId:pending.query.pendingInput.promptMessageId});
+      runtime.receive(replay);await runtime.runCommand(replay.updateId);expect(runtime.inbox.get(replay.updateId).status).toBe('FAILED');
+      expect(storage.sql.exec('SELECT note FROM annotations WHERE tenant_id=?',tenantId).one().note).toBe('Reviewed official comments');
+      expect(storage.sql.exec('SELECT message_id FROM message_map WHERE tenant_id=?',tenantId).one().message_id).toBe(audits.messageId);
+    });
+  });
+
+  it('resolves an exact symbol before substring matches and shows candidates in an ambiguous note picker',async()=>{
+    await withRuntime('22906',async({runtime,command,sessions,seed})=>{
+      seed(12);await command('note','TOKEN1');
+      const exact=sessions()[0];
+      expect(exact.panel).toBe('detail');expect(exact.query.pendingInput.kind).toBe('note');
+      expect(exact.query.selectedToken.address).toBe(`0x${'1'.padStart(40,'a')}`);
+      await command('note','TOKEN');
+      const picker=sessions().at(-1);
+      const rows=runtime.outbox.rows().filter(row=>row.ui_session_id===picker.id);
+      const keyboard=runtime.outbox.payload(rows.at(-1)).params.reply_markup.inline_keyboard.flat();
+      expect(keyboard.some(button=>button.text.includes('TOKEN0'))).toBe(true);
+      expect(keyboard.some(button=>button.text.includes('TOKEN1'))).toBe(true);
+    });
+  });
+
+  it('scopes reply cancellation to one prompt and leaves the independent prompt usable',async()=>{
+    await withRuntime('22907',async({runtime,storage,tenantId,command,sessions,receipt,drain,seed})=>{
+      seed(2);await command('note','TOKEN0');await command('note','TOKEN1');
+      const [first,second]=sessions();
+      const cancel=receipt('command:cancel',{source:'message',arguments:'',replyToMessageId:first.query.pendingInput.promptMessageId});
+      runtime.receive(cancel);await runtime.runCommand(cancel.updateId);await drain();
+      expect(runtime.commands.sessions.get(first.id).query.pendingInput).toBeUndefined();
+      expect(runtime.commands.sessions.get(second.id).query.pendingInput.promptMessageId).toBe(second.query.pendingInput.promptMessageId);
+      const reply=receipt('reply',{source:'reply',text:'Second prompt survives',replyToMessageId:second.query.pendingInput.promptMessageId});
+      runtime.receive(reply);await runtime.runCommand(reply.updateId);await drain();
+      expect(storage.sql.exec('SELECT address,note FROM annotations WHERE tenant_id=?',tenantId).toArray()).toEqual([{address:second.query.selectedToken.address,note:'Second prompt survives'}]);
+    });
+  });
+
+  it('encrypts a key submission, verifies with the bound signing key, and atomically completes the receipt and connection',async()=>{
+    await withRuntime('22903',async({runtime,storage,tenantId,sent,command,receipt,drain})=>{
+      await command('onboard');expect(sent.some(row=>row.params.text?.includes('BEGIN PUBLIC KEY'))).toBe(true);
+      const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);
+      const pending=runtime.inbox.get(input.updateId);expect(pending.payload_enc).toBeTruthy();expect(pending.payload_enc).not.toContain(apiKey);expect(pending.payload_json).not.toContain(apiKey);
+      await runtime.runCommand(input.updateId);const generation=runtime.inbox.get(input.updateId).generation;
+      let verified=0;
+      await runtime.verifyCredential(generation,{request,gmgn:{verifyApiKey:async(key,{privateKey})=>{verified++;expect(key).toBe(apiKey);expect(privateKey.extractable).toBe(false);expect((await crypto.subtle.sign('Ed25519',privateKey,new Uint8Array([1]))).byteLength).toBe(64);return {verified:true};}}});
+      await drain();expect(verified).toBe(1);expect(runtime.inbox.get(input.updateId).status).toBe('DONE');expect(runtime.inbox.get(input.updateId).payload_enc).toBeNull();expect(runtime.control.snapshot().configured).toBe(true);
+      expect(await readGmgnApiKey(storage,masterKey,tenantId)).toBe(apiKey);expect((await readActiveSigningKey(runtime.keyOptions())).extractable).toBe(false);
+      expect(storage.sql.exec('SELECT value_enc FROM keys WHERE tenant_id=?',tenantId).toArray().every(row=>!row.value_enc.includes(apiKey))).toBe(true);
+      expect(sent.some(row=>row.method==='deleteMessage' && row.params.message_id===input.sourceMessageId)).toBe(true);expect(JSON.stringify(sent)).not.toContain(apiKey);
+      expect(runtime.commands.preference('notifications',false)).toBe(false);expect(runtime.control.snapshot().live.subscribed).toBe(false);
+    });
+  });
+
+  it.each(['pause','disconnect'])('commits /%s during a suspended verification before its network completion',async action=>{
+    await withRuntime(action==='pause'?'22904':'22905',async({runtime,storage,tenantId,command,receipt})=>{
+      await command('onboard');const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,apiKey);await runtime.runCommand(input.updateId);
+      let release,entered;
+      const gate=new Promise(resolve=>{release=resolve;});const started=new Promise(resolve=>{entered=resolve;});
+      const verification=runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,{request,gmgn:{verifyApiKey:async()=>{entered();await gate;return {verified:true};}}});
+      await started;
+      const control=receipt(`command:${action}`,{source:'message',arguments:''});runtime.receive(control);
+      expect(runtime.inbox.get(control.updateId).status).toBe('DONE');expect(runtime.control.snapshot().paused).toBe(true);
+      release();await verification;
+      if(action==='pause') {expect(runtime.control.snapshot().configured).toBe(true);expect(runtime.control.snapshot().paused).toBe(true);expect(runtime.inbox.get(input.updateId).status).toBe('DONE');}
+      else {expect(runtime.control.snapshot().configured).toBe(false);expect(runtime.inbox.get(input.updateId).status).toBe('CANCELLED');expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);}
+    });
+  });
+});

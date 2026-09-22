@@ -67,7 +67,7 @@ describe('Telegram first-contact intake', () => {
     });
   });
 
-  it('rearms a received inbox task with its bounded local handler instead of exhausting retries', async () => {
+  it('completes a due durable command and creates a response instead of rearming the M2 receipt stub', async () => {
     const radar = env.RADAR.get(env.RADAR.idFromName('radar:18105'));
     const pending = receipt({ tenantId: '18105', updateId: '5' });
     await radar.receiveTelegramUpdate(pending);
@@ -78,6 +78,7 @@ describe('Telegram first-contact intake', () => {
         .one();
       const tasks = JSON.parse(row.value_json);
       tasks.tasks[0].dueAt = Date.now() - 1;
+      state.storage.sql.exec('UPDATE inbox SET next_at = ? WHERE tenant_id = ? AND update_id = ?', Date.now() - 1, '18105', '5');
       state.storage.sql.exec(
         'UPDATE scheduler_state SET value_json = ? WHERE tenant_id = ? AND key = ?',
         JSON.stringify(tasks),
@@ -89,12 +90,13 @@ describe('Telegram first-contact intake', () => {
 
     expect(await runDurableObjectAlarm(radar)).toBe(true);
     await runInDurableObject(radar, async (_instance, state) => {
-      expect(state.storage.sql.exec('SELECT status FROM inbox WHERE update_id = ?', '5').one()).toEqual({ status: 'RECEIVED' });
-      const task = JSON.parse(state.storage.sql
+      expect(state.storage.sql.exec('SELECT status FROM inbox WHERE update_id = ?', '5').one()).toEqual({ status: 'DONE' });
+      const tasks = JSON.parse(state.storage.sql
         .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', '18105', 'scheduler.tasks.v1')
-        .one().value_json).tasks[0];
-      expect(task).toMatchObject({ id: 'inbox:5', kind: 'command', enabled: true });
-      expect(task.dueAt).toBeGreaterThan(Date.now());
+        .one().value_json).tasks;
+      expect(tasks.some(task => task.id === 'inbox:5')).toBe(false);
+      expect(state.storage.sql.exec('SELECT panel FROM ui_sessions WHERE tenant_id = ?', '18105').toArray()).toEqual([{ panel: 'radar' }]);
+      expect(state.storage.sql.exec('SELECT delivery_class FROM outbox WHERE tenant_id = ?', '18105').toArray()).toEqual([{ delivery_class: 'USER_RESPONSE' }]);
       expect(JSON.parse(state.storage.sql
         .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', '18105', 'scheduler.runtime.v1')
         .one().value_json).retries).toEqual({});
