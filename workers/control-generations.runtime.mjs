@@ -74,6 +74,34 @@ describe('Radar control generations', () => {
     });
   });
 
+  it('disconnect cancels every scanner task and clears credential verification payloads', async () => {
+    const tenantId = '19105';
+    const radar = await configuredRadar(tenantId);
+    await radar.replaceSchedulerTasks({ tenantId, tasks: [
+      { id: 'scan:local-stage', kind: 'scan', dueAt: Date.now(), enabled: true, needsGmgn: false, gmgnWeight: 1 },
+      { id: 'live:subscription', kind: 'live', dueAt: Date.now(), enabled: true, needsGmgn: false, gmgnWeight: 1 },
+      { id: 'credential:1', kind: 'credential', dueAt: Date.now(), enabled: true, needsGmgn: false, gmgnWeight: 1 },
+      { id: 'outbox:retain', kind: 'outbox', dueAt: Date.now(), enabled: true, needsGmgn: false, gmgnWeight: 1 }
+    ] });
+    await runInDurableObject(radar, async (_instance, state) => {
+      state.storage.sql.exec(
+        "INSERT INTO inbox (tenant_id, update_id, actor_user_id, command_type, payload_json, payload_enc, status, generation, received_at, attempts, next_at, expires_at, message_date, source_message_id, result_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        tenantId, '1', tenantId, 'setkey', '{"candidate":"redacted"}', 'ciphertext', 'RECEIVED', 1, Date.now(), 0, Date.now(), null, null, null, null
+      );
+    });
+
+    const disconnected = await radar.disconnect({ tenantId });
+    expect(disconnected.live).toEqual({ subscribed: false, leaseUntil: 0 });
+    expect((await radar.getSchedulerSnapshot(tenantId)).tasks).toEqual([
+      { id: 'outbox:retain', kind: 'outbox', dueAt: expect.any(Number), enabled: true, needsGmgn: false, gmgnWeight: 1 }
+    ]);
+    await runInDurableObject(radar, async (_instance, state) => {
+      expect(state.storage.sql.exec(
+        'SELECT status, payload_json, payload_enc, next_at FROM inbox WHERE tenant_id = ? AND update_id = ?', tenantId, '1'
+      ).one()).toEqual({ status: 'CANCELLED', payload_json: null, payload_enc: null, next_at: null });
+    });
+  });
+
   it('switching chains fences old partial work without deleting other scheduled chains', async () => {
     const tenantId = '19103';
     const cycleId = 'switch-generation';

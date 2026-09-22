@@ -40,8 +40,21 @@ function requireMasterKey(value) {
   return value;
 }
 
-function associatedData(tenantId) {
-  return encoder.encode(`meme-radar:gmgn-api-key:v${ENVELOPE_VERSION}:${tenantId}`);
+function credentialField(value) {
+  if (typeof value !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(value)) {
+    throw new GmgnCredentialError('GMGN_CREDENTIAL_FIELD_INVALID', 'GMGN credential field is invalid');
+  }
+  return value;
+}
+
+function associatedData(tenantId, field) {
+  const credentialName = credentialField(field);
+
+  // Keep the established active-record binding readable; pending credentials
+  // use a distinct field-bound namespace and therefore cannot be substituted.
+  return encoder.encode(credentialName === CREDENTIAL_NAME
+    ? `meme-radar:gmgn-api-key:v${ENVELOPE_VERSION}:${tenantId}`
+    : `meme-radar:gmgn-credential:v${ENVELOPE_VERSION}:${credentialName}:${tenantId}`);
 }
 
 async function encryptionKey(masterKey) {
@@ -75,27 +88,27 @@ function credentialRow(storage, tenantId) {
   return rows[0] || null;
 }
 
-export async function encryptGmgnApiKey(masterKey, tenant, value) {
+export async function encryptGmgnApiKey(masterKey, tenant, value, { field = CREDENTIAL_NAME } = {}) {
   const tenantId = normalizeTenantId(tenant);
   const apiKey = normalizeGmgnApiKey(value);
   if (!apiKey) throw new GmgnCredentialError('GMGN_CREDENTIAL_INVALID', 'GMGN API key is invalid');
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES));
   const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: nonce, additionalData: associatedData(tenantId), tagLength: 128 },
+    { name: 'AES-GCM', iv: nonce, additionalData: associatedData(tenantId, field), tagLength: 128 },
     await encryptionKey(masterKey),
     encoder.encode(apiKey)
   );
   return JSON.stringify({ v: ENVELOPE_VERSION, n: bytesToBase64url(nonce), c: bytesToBase64url(new Uint8Array(ciphertext)) });
 }
 
-export async function decryptGmgnApiKey(masterKey, tenant, valueEnc) {
+export async function decryptGmgnApiKey(masterKey, tenant, valueEnc, { field = CREDENTIAL_NAME } = {}) {
   const tenantId = normalizeTenantId(tenant);
   if (typeof valueEnc !== 'string') throw new GmgnCredentialError('GMGN_CREDENTIAL_CORRUPT', 'GMGN credential ciphertext is corrupt');
   const { nonce, ciphertext } = parseEnvelope(valueEnc);
   let plaintext;
   try {
     plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: nonce, additionalData: associatedData(tenantId), tagLength: 128 },
+      { name: 'AES-GCM', iv: nonce, additionalData: associatedData(tenantId, field), tagLength: 128 },
       await encryptionKey(masterKey),
       ciphertext
     );

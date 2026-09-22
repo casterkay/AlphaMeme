@@ -4,6 +4,8 @@ import {
   writeSchedulerStateInTransaction
 } from './scheduler-state.mjs';
 
+const SUPPORTED_CHAIN_IDS = new Set(['sol', 'bsc', 'base', 'eth', 'robinhood', 'arc', 'stable']);
+
 export class ControlStateError extends Error {
   constructor(code, message) {
     super(message);
@@ -13,8 +15,8 @@ export class ControlStateError extends Error {
 }
 
 function chain(value) {
-  if (typeof value !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(value)) {
-    throw new ControlStateError('CONTROL_CHAIN_INVALID', 'control chain must be a normalized identifier');
+  if (typeof value !== 'string' || !SUPPORTED_CHAIN_IDS.has(value)) {
+    throw new ControlStateError('CONTROL_CHAIN_INVALID', 'control chain is not supported');
   }
   return value;
 }
@@ -33,6 +35,7 @@ function snapshot(state) {
     controlEpoch: state.runtime.control.controlEpoch,
     connectionGeneration: state.runtime.control.connectionGeneration,
     activeChain: state.runtime.control.activeChain,
+    live: Object.freeze({ ...state.runtime.live }),
     keyEpoch: state.gmgn.keyEpoch
   });
 }
@@ -47,7 +50,8 @@ function nextControl(state, changes) {
     runtime: {
       ...state.runtime,
       eligibility: { ...state.runtime.eligibility, ...changes.eligibility },
-      control: { ...state.runtime.control, ...changes.control }
+      control: { ...state.runtime.control, ...changes.control },
+      live: { ...state.runtime.live, ...changes.live }
     },
     gmgn: { ...state.gmgn, ...changes.gmgn },
     tasks: changes.tasks || state.tasks
@@ -58,13 +62,6 @@ export function assertCheckpointGeneration(storage, tenant, checkpoint) {
   const tenantId = normalizeTenantId(tenant);
   const state = readSchedulerStateInTransaction(storage, tenantId);
   const current = snapshot(state);
-  if (!current.configured && current.keyEpoch === 0 && current.controlEpoch === 0
-    && current.connectionGeneration === 0 && current.activeChain === null
-    && checkpoint.keyEpoch === 0 && checkpoint.controlEpoch === 0) {
-    // This is the pre-control bootstrap record used by M2's isolated scanner
-    // fixtures. Production scan tasks remain ineligible until configured.
-    return current;
-  }
   if (!current.configured) throw new ControlStateError('CYCLE_CONNECTION_UNCONFIGURED', 'GMGN connection is not configured');
   if (checkpoint.keyEpoch !== current.keyEpoch) throw new ControlStateError('CYCLE_KEY_EPOCH_STALE', 'GMGN credential epoch changed while work was in flight');
   if (checkpoint.controlEpoch !== current.controlEpoch) throw new ControlStateError('CYCLE_CONTROL_EPOCH_STALE', 'control epoch changed while work was in flight');
@@ -85,7 +82,8 @@ export function activateCredentialInTransaction(storage, tenant, expected) {
     control: {
       connectionGeneration: increment(state.runtime.control.connectionGeneration, 'connection generation')
     },
-    gmgn: { keyEpoch: increment(state.gmgn.keyEpoch, 'key epoch') }
+    gmgn: { keyEpoch: increment(state.gmgn.keyEpoch, 'key epoch') },
+    live: {}
   });
   write(storage, tenantId, next);
   return snapshot(next);
@@ -105,7 +103,8 @@ export function beginCredentialVerificationInTransaction(storage, tenant, expect
     control: {
       connectionGeneration: increment(state.runtime.control.connectionGeneration, 'connection generation')
     },
-    gmgn: {}
+    gmgn: {},
+    live: {}
   });
   write(storage, tenantId, next);
   return snapshot(next);
@@ -128,7 +127,8 @@ export class SqliteControlStateStore {
     return this.#update(state => nextControl(state, {
       eligibility: { paused: true },
       control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
-      gmgn: {}
+      gmgn: {},
+      live: { leaseUntil: 0 }
     }));
   }
 
@@ -136,7 +136,8 @@ export class SqliteControlStateStore {
     return this.#update(state => nextControl(state, {
       eligibility: { paused: false },
       control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
-      gmgn: {}
+      gmgn: {},
+      live: {}
     }));
   }
 
@@ -149,6 +150,7 @@ export class SqliteControlStateStore {
         activeChain
       },
       gmgn: {},
+      live: {},
       tasks: state.tasks
     }));
   }
@@ -161,8 +163,9 @@ export class SqliteControlStateStore {
         connectionGeneration: increment(state.runtime.control.connectionGeneration, 'connection generation')
       },
       gmgn: { keyEpoch: increment(state.gmgn.keyEpoch, 'key epoch') },
-      tasks: state.tasks.filter(task => !task.needsGmgn)
-    }), { discardCheckpoints: true, deleteKeys: true });
+      live: { subscribed: false, leaseUntil: 0 },
+      tasks: state.tasks.filter(task => !['scan', 'live', 'credential'].includes(task.kind))
+    }), { discardCheckpoints: true, deleteKeys: true, cancelCredentialInbox: true });
   }
 
   activateCredential(expected) {
@@ -178,6 +181,12 @@ export class SqliteControlStateStore {
       }
       if (effects.discardCheckpoints) {
         this.storage.sql.exec('DELETE FROM cycle_checkpoint WHERE tenant_id = ?', this.tenantId);
+      }
+      if (effects.cancelCredentialInbox) {
+        this.storage.sql.exec(
+          "UPDATE inbox SET status = 'CANCELLED', payload_enc = NULL, payload_json = NULL, next_at = NULL WHERE tenant_id = ? AND status IN ('RECEIVED', 'RUNNING') AND LOWER(command_type) IN ('setkey', 'credential_verify')",
+          this.tenantId
+        );
       }
       write(this.storage, this.tenantId, next);
       return snapshot(next);

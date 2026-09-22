@@ -99,6 +99,13 @@ function runtimeControl(value) {
   return value;
 }
 
+function runtimeLive(value) {
+  if (!isPlainObject(value) || typeof value.subscribed !== 'boolean' || !isTimestamp(value.leaseUntil)) {
+    throw new SchedulerPolicyError('SCHEDULER_LIVE_STATE_INVALID', 'scheduler live state is invalid');
+  }
+  return value;
+}
+
 function retryState(value) {
   for (const [id, retry] of Object.entries(value)) {
     taskId(id);
@@ -119,16 +126,23 @@ export function normalizeSchedulerRuntime(value) {
   }
   // `control` was added after the initial scheduler record. Existing persisted
   // scheduler state remains valid and receives the deterministic zero state.
-  const normalized = value.control === undefined
-    ? { ...value, control: { controlEpoch: 0, connectionGeneration: 0, activeChain: null } }
-    : value;
+  const normalized = {
+    ...value,
+    control: value.control === undefined
+      ? { controlEpoch: 0, connectionGeneration: 0, activeChain: null }
+      : value.control,
+    live: value.live === undefined
+      ? { subscribed: false, leaseUntil: 0 }
+      : value.live
+  };
   if (normalized.version !== 1 || !positiveInteger(normalized.nextLeaseEpoch)
     || !isPlainObject(normalized.eligibility) || !isPlainObject(normalized.fairness)
-    || !isPlainObject(normalized.control) || !isPlainObject(normalized.retries) || !isPlainObject(normalized.checkpoints) || !isPlainObject(normalized.lowPriorityWaitMs)) {
+    || !isPlainObject(normalized.control) || !isPlainObject(normalized.live) || !isPlainObject(normalized.retries) || !isPlainObject(normalized.checkpoints) || !isPlainObject(normalized.lowPriorityWaitMs)) {
     throw new SchedulerPolicyError('SCHEDULER_RUNTIME_INVALID', 'scheduler runtime state has an unsupported shape');
   }
   runtimeEligibility(normalized.eligibility);
   runtimeControl(normalized.control);
+  runtimeLive(normalized.live);
   retryState(normalized.retries);
   if (normalized.fairness.outbox !== null && typeof normalized.fairness.outbox !== 'string') {
     throw new SchedulerPolicyError('SCHEDULER_RUNTIME_INVALID', 'scheduler outbox fairness cursor is invalid');
@@ -151,6 +165,7 @@ export function defaultSchedulerRuntime() {
     inFlight: null,
     eligibility: { paused: false, configured: false },
     control: { controlEpoch: 0, connectionGeneration: 0, activeChain: null },
+    live: { subscribed: false, leaseUntil: 0 },
     fairness: { outbox: null },
     retries: {},
     checkpoints: {},

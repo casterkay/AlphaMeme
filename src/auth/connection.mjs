@@ -54,7 +54,7 @@ export async function prepareCredentialVerification({ storage, masterKey, tenant
   const expectedConnectionGeneration = new SqliteControlStateStore(storage, tenantId).snapshot().connectionGeneration;
   // Encrypt before the local transaction. The candidate envelope is already bound
   // to the destination credential field, so activation is a synchronous row move.
-  const valueEnc = await encryptGmgnApiKey(masterKey, tenantId, apiKey);
+  const valueEnc = await encryptGmgnApiKey(masterKey, tenantId, apiKey, { field: PENDING_KEY_NAME });
   return storage.transactionSync(() => {
     let state;
     try {
@@ -92,9 +92,19 @@ export async function verifyAndActivatePendingCredential({
   if (!pending || generation(pending.generation) !== expectedGeneration) {
     throw new ConnectionError('CONNECTION_GENERATION_STALE', 'credential verification was superseded before it started');
   }
-  const apiKey = await decryptGmgnApiKey(masterKey, tenantId, pending.value_enc);
+  const apiKey = await decryptGmgnApiKey(masterKey, tenantId, pending.value_enc, { field: PENDING_KEY_NAME });
+  const afterDecrypt = pendingRow(storage, tenantId);
+  if (!afterDecrypt || generation(afterDecrypt.generation) !== expectedGeneration) {
+    throw new ConnectionError('CONNECTION_GENERATION_STALE', 'credential verification was superseded during decryption');
+  }
   const result = await request(({ signal, timeoutMs }) => verify(apiKey, { signal, timeoutMs }));
   if (result?.verified !== true) throw new ConnectionError('GMGN_REQUEST_FAILED', 'credential verification did not complete');
+
+  const afterVerification = pendingRow(storage, tenantId);
+  if (!afterVerification || generation(afterVerification.generation) !== expectedGeneration) {
+    throw new ConnectionError('CONNECTION_GENERATION_STALE', 'credential verification was superseded while waiting');
+  }
+  const activeValueEnc = await encryptGmgnApiKey(masterKey, tenantId, apiKey, { field: ACTIVE_KEY_NAME });
 
   return storage.transactionSync(() => {
     const current = pendingRow(storage, tenantId);
@@ -110,7 +120,7 @@ export async function verifyAndActivatePendingCredential({
     }
     storage.sql.exec(
       'INSERT INTO keys (tenant_id, name, value_enc, generation, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(tenant_id, name) DO UPDATE SET value_enc = excluded.value_enc, generation = excluded.generation, created_at = excluded.created_at',
-      tenantId, ACTIVE_KEY_NAME, current.value_enc, state.connectionGeneration, nowTimestamp(now)
+      tenantId, ACTIVE_KEY_NAME, activeValueEnc, state.connectionGeneration, nowTimestamp(now)
     );
     storage.sql.exec('DELETE FROM keys WHERE tenant_id = ? AND name = ?', tenantId, PENDING_KEY_NAME);
     return Object.freeze({ configured: true, keyEpoch: state.keyEpoch, connectionGeneration: state.connectionGeneration });
