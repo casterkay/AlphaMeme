@@ -68,15 +68,37 @@ export function readGmgnAdmissionState(storage, value) {
 
 export function writeGmgnAdmissionState(storage, value, nextState) {
   const tenantId = normalizeTenantId(value);
+  let state;
   storage.transactionSync(() => {
-    writeGmgnAdmissionStateInTransaction(storage, tenantId, nextState);
+    state = writeGmgnAdmissionStateInTransaction(storage, tenantId, nextState);
   });
-  return { ...validateState(nextState, 'GMGN_ADMISSION_STATE_INVALID') };
+  return state;
+}
+
+export function mergeGmgnAdmissionState(currentState, nextState) {
+  const current = validateState(currentState, 'GMGN_ADMISSION_STATE_INVALID');
+  const next = validateState(nextState, 'GMGN_ADMISSION_STATE_INVALID');
+  const nextAdvancesCooldown = next.nextAllowedAt > current.nextAllowedAt || next.spacingReadyAt > current.spacingReadyAt;
+  const nextCanRecoverBackoff = next.keyEpoch === current.keyEpoch
+    && next.lastRequestAt >= current.lastRequestAt
+    && next.nextAllowedAt >= current.nextAllowedAt
+    && next.spacingReadyAt >= current.spacingReadyAt;
+  const nextIsStale = !nextCanRecoverBackoff;
+  const lastRequestFromNext = next.lastRequestAt >= current.lastRequestAt;
+  return validateState({
+    nextAllowedAt: Math.max(current.nextAllowedAt, next.nextAllowedAt),
+    backoffFactor: nextCanRecoverBackoff ? next.backoffFactor : Math.max(current.backoffFactor, next.backoffFactor),
+    lastRequestAt: Math.max(current.lastRequestAt, next.lastRequestAt),
+    lastWeight: lastRequestFromNext ? next.lastWeight : current.lastWeight,
+    successStreak: nextAdvancesCooldown ? next.successStreak : nextIsStale ? current.successStreak : next.successStreak,
+    spacingReadyAt: Math.max(current.spacingReadyAt, next.spacingReadyAt),
+    keyEpoch: Math.max(current.keyEpoch, next.keyEpoch)
+  }, 'GMGN_ADMISSION_STATE_INVALID');
 }
 
 export function writeGmgnAdmissionStateInTransaction(storage, value, nextState) {
   const tenantId = normalizeTenantId(value);
-  const state = validateState(nextState, 'GMGN_ADMISSION_STATE_INVALID');
+  const state = mergeGmgnAdmissionState(readGmgnAdmissionState(storage, tenantId), nextState);
   storage.sql.exec(
     'INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json',
     tenantId,
@@ -86,8 +108,6 @@ export function writeGmgnAdmissionStateInTransaction(storage, value, nextState) 
   return { ...state };
 }
 
-// This satisfies GmgnClient's existing durable admission-state boundary. Wiring
-// it into the provider lifecycle belongs to the later scheduler work.
 export class SqliteGmgnAdmissionStateStore {
   constructor(storage, tenantId) {
     this.storage = storage;
@@ -99,6 +119,6 @@ export class SqliteGmgnAdmissionStateStore {
   }
 
   async write(nextState) {
-    writeGmgnAdmissionState(this.storage, this.tenantId, nextState);
+    return writeGmgnAdmissionState(this.storage, this.tenantId, nextState);
   }
 }
