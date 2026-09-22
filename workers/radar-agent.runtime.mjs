@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { stableEffectId } from '../src/storage/recoverable-scanner.mjs';
 import { SqliteRecoverableScannerStore } from '../src/storage/recoverable-scanner.mjs';
 import { RecoverableScanner } from '../src/recoverable-scanner.mjs';
+import { seedGmgnCredential } from './fixtures/gmgn-credential.mjs';
 
 const settings = Object.freeze({
   scanIntervalMs: 120_000,
@@ -108,7 +109,7 @@ describe('recoverable Radar scanner', () => {
     const tenantId = '19000';
     const cycleId = 'cycle-scheduled';
     const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    await radar.setRecoverableGmgnCredential({ tenantId, apiKey: `gmgn_${'a'.repeat(32)}` });
+    await seedGmgnCredential(radar, tenantId);
     const checkpoint = await radar.beginRecoverableCycle({
       tenantId,
       cycleId,

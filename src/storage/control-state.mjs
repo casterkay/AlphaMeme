@@ -180,15 +180,42 @@ export class SqliteControlStateStore {
     }));
   }
 
-  setScanChains(value) {
+  setScanChains(value, rebindCheckpoints) {
     const enabledChains = new Set(scanChains(value));
-    return this.#update(state => nextControl(state, {
-      eligibility: {},
-      control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
-      gmgn: {},
-      live: {},
-      tasks: state.tasks
-    }), { enabledScanChains: enabledChains });
+    if (typeof rebindCheckpoints !== 'function') {
+      throw new ControlStateError('CONTROL_SCAN_CHAINS_INVALID', 'scan chains require a checkpoint revalidation callback');
+    }
+    return this.storage.transactionSync(() => {
+      const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
+      const checkpointChains = new Map(this.storage.sql.exec(
+        'SELECT cycle_id, chain FROM cycle_checkpoint WHERE tenant_id = ?', this.tenantId
+      ).toArray().map(row => [row.cycle_id, row.chain]));
+      const scheduledScans = state.tasks.filter(task => task.kind === 'scan').map(task => {
+        const cycleId = task.id.startsWith('scan:') ? task.id.slice('scan:'.length) : null;
+        const chainName = checkpointChains.get(cycleId);
+        if (!chainName) throw new ControlStateError('CYCLE_CHECKPOINT_MISSING', 'scheduled scan has no checkpoint');
+        return { task, cycleId, chainName };
+      });
+      const scheduledChains = new Set(scheduledScans.map(scan => scan.chainName));
+      if ([...enabledChains].some(chainName => !scheduledChains.has(chainName))) {
+        throw new ControlStateError('CONTROL_SCAN_CHAIN_UNSCHEDULED', 'selected scan chain has no scheduled checkpoint');
+      }
+      const currentEnabledChains = new Set(scheduledScans.filter(scan => scan.task.enabled).map(scan => scan.chainName));
+      if (currentEnabledChains.size === enabledChains.size
+        && [...currentEnabledChains].every(chainName => enabledChains.has(chainName))) return snapshot(state);
+      const next = nextControl(state, {
+        control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
+        tasks: state.tasks.map(task => task.kind === 'scan'
+          ? { ...task, enabled: enabledChains.has(checkpointChains.get(task.id.slice('scan:'.length))) }
+          : task)
+      });
+      rebindCheckpoints({
+        control: snapshot(next),
+        cycleIds: scheduledScans.filter(scan => enabledChains.has(scan.chainName)).map(scan => scan.cycleId)
+      });
+      write(this.storage, this.tenantId, next);
+      return snapshot(next);
+    });
   }
 
   ensureActiveChain(value) {
@@ -214,7 +241,7 @@ export class SqliteControlStateStore {
   #update(mutator, effects = {}) {
     return this.storage.transactionSync(() => {
       const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
-      let next = mutator(state);
+      const next = mutator(state);
       if (effects.deleteKeys) {
         this.storage.sql.exec('DELETE FROM keys WHERE tenant_id = ?', this.tenantId);
       }
@@ -226,26 +253,6 @@ export class SqliteControlStateStore {
           "UPDATE inbox SET status = 'CANCELLED', payload_enc = NULL, payload_json = NULL, next_at = NULL WHERE tenant_id = ? AND status IN ('RECEIVED', 'RUNNING') AND LOWER(command_type) IN ('setkey', 'credential_verify')",
           this.tenantId
         );
-      }
-      if (effects.enabledScanChains) {
-        const checkpointChains = new Map(this.storage.sql.exec(
-          'SELECT cycle_id, chain FROM cycle_checkpoint WHERE tenant_id = ?', this.tenantId
-        ).toArray().map(row => [row.cycle_id, row.chain]));
-        const enabledCycleIds = [...checkpointChains]
-          .filter(([, chainName]) => effects.enabledScanChains.has(chainName))
-          .map(([cycleId]) => cycleId);
-        if (enabledCycleIds.length) {
-          this.storage.sql.exec(
-            `UPDATE cycle_checkpoint SET control_epoch = ? WHERE tenant_id = ? AND cycle_id IN (${enabledCycleIds.map(() => '?').join(', ')})`,
-            next.runtime.control.controlEpoch, this.tenantId, ...enabledCycleIds
-          );
-        }
-        next = {
-          ...next,
-          tasks: next.tasks.map(task => task.kind === 'scan'
-            ? { ...task, enabled: effects.enabledScanChains.has(checkpointChains.get(task.id.slice('scan:'.length))) }
-            : task)
-        };
       }
       write(this.storage, this.tenantId, next);
       return snapshot(next);

@@ -123,15 +123,6 @@ export function readSchedulerTenant(storage) {
   return normalizeTenantId(rows[0].tenant_id);
 }
 
-export function enableSchedulerEligibilityInTransaction(storage, tenant) {
-  const tenantId = normalizeTenantId(tenant);
-  const runtime = runtimeRecord(readRecord(storage, tenantId, RUNTIME_KEY, defaultSchedulerRuntime()));
-  if (runtime.eligibility.configured) return runtime.eligibility;
-  const eligibility = { ...runtime.eligibility, configured: true };
-  writeRecord(storage, tenantId, RUNTIME_KEY, { ...runtime, eligibility });
-  return eligibility;
-}
-
 export class SqliteSchedulerStore {
   constructor(storage, value) {
     this.storage = storage;

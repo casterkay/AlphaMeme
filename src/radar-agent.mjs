@@ -3,15 +3,14 @@ import {
   normalizeTenantId,
   readGmgnAdmissionState,
   SqliteGmgnAdmissionStateStore,
-  writeGmgnAdmissionState,
-  writeGmgnAdmissionStateInTransaction
+  writeGmgnAdmissionState
 } from './storage/gmgn-admission-state.mjs';
 import { initializeRadarSchema } from './storage/schema.mjs';
 import { GmgnClient } from './providers/gmgn.mjs';
 import { RecoverableScanner } from './recoverable-scanner.mjs';
 import { executeRecoverableScanStep, recoverableRequestAdmission } from './recoverable-scan-executor.mjs';
 import { externalRequestHandler, localTransactionHandler, OneAlarmScheduler, SchedulerStepError } from './scheduler.mjs';
-import { readGmgnApiKey, saveGmgnApiKey } from './storage/gmgn-credential.mjs';
+import { readGmgnApiKey } from './storage/gmgn-credential.mjs';
 import { SqliteControlStateStore, assertCheckpointGeneration } from './storage/control-state.mjs';
 import { prepareCredentialVerification, verifyAndActivatePendingCredential } from './auth/connection.mjs';
 import {
@@ -20,7 +19,6 @@ import {
   SqliteRecoverableScannerStore
 } from './storage/recoverable-scanner.mjs';
 import {
-  enableSchedulerEligibilityInTransaction,
   ensureSchedulerTenant,
   readSchedulerTenant,
   scheduleRecoverableScanTaskInTransaction,
@@ -79,17 +77,6 @@ export class RadarAgent extends DurableObject {
     return this.#schedulerForTenant(value).snapshot();
   }
 
-  async setRecoverableGmgnCredential(value) {
-    const tenantId = this.#boundTenantId(value?.tenantId);
-    return saveGmgnApiKey(this.ctx.storage, this.env.MASTER_ENC_KEY, tenantId, value?.apiKey, {
-      afterWrite: () => {
-        enableSchedulerEligibilityInTransaction(this.ctx.storage, tenantId);
-        const current = readGmgnAdmissionState(this.ctx.storage, tenantId);
-        writeGmgnAdmissionStateInTransaction(this.ctx.storage, tenantId, { ...current, keyEpoch: current.keyEpoch + 1 });
-      }
-    });
-  }
-
   async prepareGmgnCredentialVerification(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
     const prepared = await prepareCredentialVerification({
@@ -111,20 +98,14 @@ export class RadarAgent extends DurableObject {
 
   async resume(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
-    const checkpointIds = value?.cycleId
-      ? [value.cycleId]
-      : (() => {
-          const activeCycleIds = new Set(new SqliteSchedulerStore(this.ctx.storage, tenantId).read().tasks
-            .filter(task => task.kind === 'scan' && task.enabled && task.id.startsWith('scan:'))
-            .map(task => task.id.slice('scan:'.length)));
-          return new SqliteRecoverableScannerStore(this.ctx.storage, tenantId).list()
-            .filter(checkpoint => activeCycleIds.has(checkpoint.cycleId))
-            .map(checkpoint => checkpoint.cycleId);
-        })();
+    const scheduledCycleIds = new SqliteSchedulerStore(this.ctx.storage, tenantId).read().tasks
+      .filter(task => task.kind === 'scan' && task.enabled && task.id.startsWith('scan:'))
+      .map(task => task.id.slice('scan:'.length));
+    const checkpointIds = [...new Set(value?.cycleId ? [value.cycleId, ...scheduledCycleIds] : scheduledCycleIds)];
     const now = Date.now();
-    const resumed = new SqliteControlStateStore(this.ctx.storage, tenantId).resumeWith(control =>
-      resumeRecoverableCheckpointsInTransaction(this.ctx.storage, tenantId, { cycleIds: checkpointIds, control, now }),
-    () => checkpointIds.map(cycleId => this.#recoverableScannerForCycle({ tenantId, cycleId }).checkpoint(cycleId))
+    const resumed = new SqliteControlStateStore(this.ctx.storage, tenantId).resumeWith(
+      control => resumeRecoverableCheckpointsInTransaction(this.ctx.storage, tenantId, { cycleIds: checkpointIds, control, now }),
+      () => checkpointIds.map(cycleId => this.#recoverableScannerForCycle({ tenantId, cycleId }).checkpoint(cycleId))
     );
     const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
     return { ...resumed.control, checkpoint: value?.cycleId ? resumed.value[0] : null, checkpoints: resumed.value, dueAt };
@@ -139,7 +120,10 @@ export class RadarAgent extends DurableObject {
 
   async setScanChains(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
-    const control = new SqliteControlStateStore(this.ctx.storage, tenantId).setScanChains(value?.chains);
+    const now = Date.now();
+    const control = new SqliteControlStateStore(this.ctx.storage, tenantId).setScanChains(value?.chains, ({ control, cycleIds }) =>
+      resumeRecoverableCheckpointsInTransaction(this.ctx.storage, tenantId, { cycleIds, control, now, allowPaused: true })
+    );
     const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
     return { ...control, dueAt };
   }

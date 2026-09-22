@@ -264,13 +264,13 @@ function checkpointEvidenceFresh(value, now, maximumAgeMs) {
   return Object.values(value).every(item => checkpointEvidenceFresh(item, now, maximumAgeMs));
 }
 
-export function resumeRecoverableCheckpointsInTransaction(storage, tenant, { cycleIds, control, now } = {}) {
+export function resumeRecoverableCheckpointsInTransaction(storage, tenant, { cycleIds, control, now, allowPaused = false } = {}) {
   const tenantId = normalizeTenantId(tenant);
   if (!Array.isArray(cycleIds)) {
     throw new RecoverableScannerError('CYCLE_CHECKPOINT_INVALID', 'resume cycle ids are invalid');
   }
   timestamp(now, 'resume time');
-  if (!control || control.paused || !control.configured) {
+  if (!control || (!allowPaused && control.paused) || !control.configured) {
     throw new RecoverableScannerError('CYCLE_RESUME_NOT_ELIGIBLE', 'cycle cannot resume while scanning is disabled');
   }
   const checkpoints = cycleIds.map(value => existingCheckpoint(storage, tenantId, cycleId(value)));
