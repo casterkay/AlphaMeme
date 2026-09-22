@@ -121,29 +121,6 @@ export async function decryptGmgnApiKey(masterKey, tenant, valueEnc, { field = C
   return apiKey;
 }
 
-export async function saveGmgnApiKey(storage, masterKey, tenant, value, { now = Date.now, afterWrite } = {}) {
-  if (!storage?.sql || typeof storage.transactionSync !== 'function' || typeof now !== 'function') {
-    throw new GmgnCredentialError('GMGN_CREDENTIAL_STORAGE_INVALID', 'GMGN credential storage is unavailable');
-  }
-  const tenantId = normalizeTenantId(tenant);
-  const createdAt = now();
-  if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
-    throw new GmgnCredentialError('GMGN_CREDENTIAL_CLOCK_INVALID', 'GMGN credential clock is invalid');
-  }
-  const encrypted = await encryptGmgnApiKey(masterKey, tenantId, value);
-  storage.transactionSync(() => {
-    storage.sql.exec(
-      'INSERT INTO keys (tenant_id, name, value_enc, generation, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(tenant_id, name) DO UPDATE SET value_enc = excluded.value_enc, generation = keys.generation + 1, created_at = excluded.created_at',
-      tenantId, CREDENTIAL_NAME, encrypted, 1, createdAt
-    );
-    if (afterWrite !== undefined) {
-      if (typeof afterWrite !== 'function') throw new GmgnCredentialError('GMGN_CREDENTIAL_STORAGE_INVALID', 'GMGN credential write hook is invalid');
-      afterWrite();
-    }
-  });
-  return { configured: true };
-}
-
 export async function readGmgnApiKey(storage, masterKey, tenant) {
   if (!storage?.sql) throw new GmgnCredentialError('GMGN_CREDENTIAL_STORAGE_INVALID', 'GMGN credential storage is unavailable');
   const tenantId = normalizeTenantId(tenant);
