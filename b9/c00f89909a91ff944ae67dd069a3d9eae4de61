@@ -1,0 +1,23 @@
+src/worker.mjs
+  s_5cda0c8df10d0c::t_353a38d1e588ad 124-125,130-132
+test/telegram-intake.test.mjs
+  s_5cda0c8df10d0c::t_ad99064b5a7e76 18,28,34,37-43,45,75,88-114
+workers/telegram-intake.runtime.mjs
+  s_5cda0c8df10d0c::t_f92a307c909062 12,42,121,134-139,161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b9c00f89909a91ff944ae67dd069a3d9eae4de61",
+  "prompts": {},
+  "sessions": {
+    "s_5cda0c8df10d0c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-5b42-7f12-8cab-3a3ea0ea6bd0",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+test/secret-envelope.test.mjs
+  s_428ea927e420c8::t_3de520b5aa2c87 1-33
+src/storage/gmgn-credential.mjs
+  s_428ea927e420c8::t_c4f7206cd21846 1,96-98,111-126,132
+src/util/crypto.mjs
+  s_428ea927e420c8::t_08056f4c80801f 11-75
+workers/onboarding.runtime.mjs
+  s_428ea927e420c8::t_d2242c51f0ae50 1-122
+docs/development/ONBOARDING-CRYPTO.md
+  s_428ea927e420c8::t_6c62ec40ec0211 1-43
+src/auth/connection.mjs
+  s_428ea927e420c8::t_27fc1b75c1a974 1-3,135-249
+src/auth/key-store.mjs
+  s_428ea927e420c8::t_2df7d8fd34a865 1-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "40abec575191029fcbda6ada9574a026a1dd57e0",
+  "prompts": {},
+  "sessions": {
+    "s_428ea927e420c8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-32c0-7c12-a10f-c5b52f0221e4",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}

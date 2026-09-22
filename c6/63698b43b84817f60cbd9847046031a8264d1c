@@ -1,0 +1,19 @@
+src/bot/telegram-transport.mjs
+  s_0df94942fd1199::t_91a2e7edf5c9db 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c663698b43b84817f60cbd9847046031a8264d1c",
+  "prompts": {},
+  "sessions": {
+    "s_0df94942fd1199": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c95e-9604-76b0-93ae-75ee505fa7d2",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
