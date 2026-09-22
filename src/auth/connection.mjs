@@ -52,8 +52,8 @@ export async function prepareCredentialVerification({ storage, masterKey, tenant
   const tenantId = normalizeTenantId(tenant);
   const preparedAt = nowTimestamp(now);
   const expectedConnectionGeneration = new SqliteControlStateStore(storage, tenantId).snapshot().connectionGeneration;
-  // Encrypt before the local transaction. The candidate envelope is already bound
-  // to the destination credential field, so activation is a synchronous row move.
+  // Encrypt before the local transaction. Activation later decrypts this pending
+  // envelope and re-encrypts the verified credential for the active field.
   const valueEnc = await encryptGmgnApiKey(masterKey, tenantId, apiKey, { field: PENDING_KEY_NAME });
   return storage.transactionSync(() => {
     let state;

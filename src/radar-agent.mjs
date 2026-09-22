@@ -115,7 +115,7 @@ export class RadarAgent extends DurableObject {
       ? [value.cycleId]
       : (() => {
           const activeCycleIds = new Set(new SqliteSchedulerStore(this.ctx.storage, tenantId).read().tasks
-            .filter(task => task.kind === 'scan' && task.id.startsWith('scan:'))
+            .filter(task => task.kind === 'scan' && task.enabled && task.id.startsWith('scan:'))
             .map(task => task.id.slice('scan:'.length)));
           return new SqliteRecoverableScannerStore(this.ctx.storage, tenantId).list()
             .filter(checkpoint => activeCycleIds.has(checkpoint.cycleId))
@@ -123,7 +123,8 @@ export class RadarAgent extends DurableObject {
         })();
     const now = Date.now();
     const resumed = new SqliteControlStateStore(this.ctx.storage, tenantId).resumeWith(control =>
-      resumeRecoverableCheckpointsInTransaction(this.ctx.storage, tenantId, { cycleIds: checkpointIds, control, now })
+      resumeRecoverableCheckpointsInTransaction(this.ctx.storage, tenantId, { cycleIds: checkpointIds, control, now }),
+    () => checkpointIds.map(cycleId => this.#recoverableScannerForCycle({ tenantId, cycleId }).checkpoint(cycleId))
     );
     const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
     return { ...resumed.control, checkpoint: value?.cycleId ? resumed.value[0] : null, checkpoints: resumed.value, dueAt };

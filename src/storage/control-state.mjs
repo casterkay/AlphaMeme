@@ -136,21 +136,15 @@ export class SqliteControlStateStore {
     }));
   }
 
-  resume() {
-    return this.#update(state => nextControl(state, {
-      eligibility: { paused: false },
-      control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
-      gmgn: {},
-      live: {}
-    }));
-  }
-
-  resumeWith(afterResume) {
-    if (typeof afterResume !== 'function') {
-      throw new ControlStateError('CONTROL_RESUME_INVALID', 'resume transition requires a checkpoint revalidation callback');
+  resumeWith(afterResume, whenActive) {
+    if (typeof afterResume !== 'function' || typeof whenActive !== 'function') {
+      throw new ControlStateError('CONTROL_RESUME_INVALID', 'resume transition requires checkpoint callbacks');
     }
     return this.storage.transactionSync(() => {
       const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
+      if (!state.runtime.eligibility.paused) {
+        return Object.freeze({ control: snapshot(state), value: whenActive() });
+      }
       const next = nextControl(state, {
         eligibility: { paused: false },
         control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
@@ -167,18 +161,12 @@ export class SqliteControlStateStore {
   switchChain(value) {
     const activeChain = chain(value);
     return this.#update(state => state.runtime.control.activeChain === activeChain ? state : nextControl(state, {
-        eligibility: {},
-        control: {
-          controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch'),
-          activeChain
-        },
-        gmgn: {},
-        live: {},
-        tasks: state.tasks
-    }), {
-      rebindCheckpointChainsExcept: state => state.runtime.control.activeChain,
-      enableScanChain: activeChain
-    });
+      eligibility: {},
+      control: { activeChain },
+      gmgn: {},
+      live: {},
+      tasks: state.tasks
+    }));
   }
 
   ensureActiveChain(value) {
@@ -201,14 +189,10 @@ export class SqliteControlStateStore {
     }), { discardCheckpoints: true, deleteKeys: true, cancelCredentialInbox: true });
   }
 
-  activateCredential(expected) {
-    return this.storage.transactionSync(() => activateCredentialInTransaction(this.storage, this.tenantId, expected));
-  }
-
   #update(mutator, effects = {}) {
     return this.storage.transactionSync(() => {
       const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
-      let next = mutator(state);
+      const next = mutator(state);
       if (effects.deleteKeys) {
         this.storage.sql.exec('DELETE FROM keys WHERE tenant_id = ?', this.tenantId);
       }
@@ -220,27 +204,6 @@ export class SqliteControlStateStore {
           "UPDATE inbox SET status = 'CANCELLED', payload_enc = NULL, payload_json = NULL, next_at = NULL WHERE tenant_id = ? AND status IN ('RECEIVED', 'RUNNING') AND LOWER(command_type) IN ('setkey', 'credential_verify')",
           this.tenantId
         );
-      }
-      const chainChanged = state.runtime.control.activeChain !== next.runtime.control.activeChain;
-      if (effects.rebindCheckpointChainsExcept && chainChanged) {
-        const outgoingChain = effects.rebindCheckpointChainsExcept(state);
-        if (outgoingChain !== null) {
-          this.storage.sql.exec(
-            'UPDATE cycle_checkpoint SET control_epoch = ? WHERE tenant_id = ? AND chain <> ?',
-            next.runtime.control.controlEpoch, this.tenantId, outgoingChain
-          );
-        }
-      }
-      if (effects.enableScanChain && chainChanged) {
-        const checkpointChains = new Map(this.storage.sql.exec(
-          'SELECT cycle_id, chain FROM cycle_checkpoint WHERE tenant_id = ?', this.tenantId
-        ).toArray().map(row => [row.cycle_id, row.chain]));
-        next = {
-          ...next,
-          tasks: next.tasks.map(task => task.kind === 'scan'
-            ? { ...task, enabled: checkpointChains.get(task.id.slice('scan:'.length)) === effects.enableScanChain }
-            : task)
-        };
       }
       write(this.storage, this.tenantId, next);
       return snapshot(next);

@@ -90,6 +90,11 @@ describe('Radar control generations', () => {
     expect(resumed.checkpoint.controlEpoch).toBe(2);
     await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { completed: [] }, collectedAt: Date.now() });
     expect((await radar.getRecoverableCycle({ tenantId, cycleId })).endpointIndex).toBe(1);
+    const checkpoint = await radar.getRecoverableCycle({ tenantId, cycleId });
+
+    const repeated = await radar.resume({ tenantId, cycleId });
+    expect(repeated.controlEpoch).toBe(2);
+    expect(repeated.checkpoint).toEqual(checkpoint);
   });
 
   it('keeps scanning paused when an explicit resume cannot revalidate its checkpoint', async () => {
@@ -131,6 +136,23 @@ describe('Radar control generations', () => {
     const resumed = await radar.resume({ tenantId });
     expect(resumed.checkpoints).toHaveLength(1);
     expect(resumed.checkpoints[0].cycleId).toBe('current-cycle');
+  });
+
+  it('does not revalidate an expired disabled checkpoint on generic resume', async () => {
+    const tenantId = '19114';
+    const radar = await configuredRadar(tenantId);
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'active-sol', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'disabled-base', chain: 'base', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 1, settings });
+    const scheduled = await radar.getSchedulerSnapshot(tenantId);
+    await radar.replaceSchedulerTasks({ tenantId, tasks: scheduled.tasks.map(task =>
+      task.id === 'scan:disabled-base' ? { ...task, enabled: false } : task
+    ) });
+    await new Promise(resolve => setTimeout(resolve, 2));
+    await radar.pause({ tenantId });
+
+    const resumed = await radar.resume({ tenantId });
+    expect(resumed.checkpoints).toHaveLength(1);
+    expect(resumed.checkpoints[0].cycleId).toBe('active-sol');
   });
 
   it('disconnect invalidates every generation while retaining the durable provider cooldown', async () => {
@@ -186,21 +208,20 @@ describe('Radar control generations', () => {
     });
   });
 
-  it('switching chains fences old partial work without deleting other scheduled chains', async () => {
+  it('switching the view chain preserves every scheduled scan', async () => {
     const tenantId = '19103';
-    const cycleId = 'switch-generation';
     const radar = await configuredRadar(tenantId);
-    await radar.beginRecoverableCycle({ tenantId, cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'switch-sol', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
+    await radar.beginRecoverableCycle({ tenantId, cycleId: 'switch-base', chain: 'base', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
     const switched = await radar.switchChain({ tenantId, chain: 'base' });
-    expect(switched).toMatchObject({ activeChain: 'base', controlEpoch: 1 });
-    expect(await radar.getRecoverableCycle({ tenantId, cycleId })).toMatchObject({ chain: 'sol', controlEpoch: 0 });
-    await runInDurableObject(radar, async instance => {
-      await expect(instance.recordRecoverableScanRequest({ tenantId, cycleId, response: { completed: [] }, collectedAt: Date.now() }))
-        .rejects.toMatchObject({ code: 'CYCLE_CONTROL_EPOCH_STALE' });
-    });
+    expect(switched).toMatchObject({ activeChain: 'base', controlEpoch: 0 });
+    expect((await radar.getSchedulerSnapshot(tenantId)).tasks.filter(task => task.kind === 'scan')).toEqual([
+      { id: 'scan:switch-sol', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 },
+      { id: 'scan:switch-base', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 }
+    ]);
   });
 
-  it('switching chains retains unrelated checkpoints under the new control epoch', async () => {
+  it('switching views leaves every checkpoint generation unchanged', async () => {
     const tenantId = '19109';
     const radar = await configuredRadar(tenantId);
     await radar.beginRecoverableCycle({ tenantId, cycleId: 'sol-cycle', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
@@ -208,13 +229,13 @@ describe('Radar control generations', () => {
 
     await radar.switchChain({ tenantId, chain: 'base' });
     expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'sol-cycle' })).toMatchObject({ controlEpoch: 0 });
-    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'base-cycle' })).toMatchObject({ controlEpoch: 1 });
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'base-cycle' })).toMatchObject({ controlEpoch: 0 });
     expect((await radar.getSchedulerSnapshot(tenantId)).tasks.filter(task => task.kind === 'scan')).toEqual([
-      { id: 'scan:sol-cycle', kind: 'scan', dueAt: expect.any(Number), enabled: false, needsGmgn: true, gmgnWeight: 3 },
+      { id: 'scan:sol-cycle', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 },
       { id: 'scan:base-cycle', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 }
     ]);
     await radar.switchChain({ tenantId, chain: 'sol' });
-    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'sol-cycle' })).toMatchObject({ controlEpoch: 2 });
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'sol-cycle' })).toMatchObject({ controlEpoch: 0 });
   });
 
   it('treats switching to the active chain as a no-op', async () => {
@@ -236,9 +257,9 @@ describe('Radar control generations', () => {
     await radar.beginRecoverableCycle({ tenantId, cycleId: 'base-rotation', chain: 'base', keyEpoch: 0, controlEpoch: 0, deadlineAt: Date.now() + 60_000, settings });
     await radar.switchChain({ tenantId, chain: 'base' });
     const beforeRotation = await radar.getSchedulerSnapshot(tenantId);
-    await radar.replaceSchedulerTasks({ tenantId, tasks: beforeRotation.tasks.filter(task =>
-      task.id === 'scan:sol-rotation' || task.id === 'scan:base-rotation'
-    ) });
+    await radar.replaceSchedulerTasks({ tenantId, tasks: beforeRotation.tasks
+      .filter(task => task.id === 'scan:sol-rotation' || task.id === 'scan:base-rotation')
+      .map(task => task.id === 'scan:sol-rotation' ? { ...task, enabled: false } : task) });
 
     await runInDurableObject(radar, async (_instance, state) => {
       const restarted = restartRecoverableScanInTransaction(state.storage, tenantId, {
