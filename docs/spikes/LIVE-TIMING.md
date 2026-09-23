@@ -1,88 +1,92 @@
-# Request-level live timing probe — issue #29 (partial evidence)
+# Request-level live timing probe — issue #29
 
-**Issue #29 remains open.** This probe demonstrates scheduling between individual
-HTTP requests in local workerd. It does not establish deployed GMGN latency,
-Durable Object alarm delivery latency, or invocation CPU time.
+**Issue #29 remains open.** A deployed Durable Object probe demonstrates that
+request-level scheduling keeps live lag below 20 seconds for a provider timeout
+and missing sources. The production 30-second rate-limit floor produces 29.023
+seconds of live lag, and the authorized GMGN credential returned
+`GMGN_RATE_LIMITED` throughout the nominal run. A policy decision and a usable
+steady-state credential are therefore still required.
 
-## Reproduction and scope
+## Deployed probe
 
-```sh
-npm ci
-node scripts/spikes/live-timing.mjs
-```
+The probe ran on Cloudflare Workers on 2026-09-23. It used Worker version
+`fdcb64a3-4f88-448e-acfc-b053c0ac8625`, compatibility date `2026-09-20`, no
+compatibility flags, a 30,000 ms scheduler request ceiling, the production
+`GmgnClient` 15,000 ms timeout, and the production 1,100 ms admission gap.
+Every scheduler step ran in a separate Durable Object alarm invocation.
 
-The runner emits one JSON record per scenario. It uses the real `OneAlarmScheduler`
-module inside workerd, a loopback HTTP server with controlled responses, actual
-clock time, and actual fetch cancellation. There are no credentials or external
-provider calls. Three scan reads represent three request-level checkpoints, not
-one token-sized batch. The runner asserts that live runs between scan reads and
-that all tasks terminate within 12 scheduler steps.
+The normal scenario used `GmgnClient.marketRank()` against the real GMGN API.
+The other scenarios passed controlled responses through the same client:
 
-The local alarm adapter waits until the scheduler's requested alarm timestamp;
-it is not Durable Object alarm delivery. The backing scheduler store is disposable
-memory. These deliberate simplifications isolate request fairness, timeout, and
-admission behavior; they do not prove crash recovery or real alarm performance.
+- Slow read withheld the first response until the client's 15-second timeout.
+- Rate limit returned one 429 envelope, then valid empty envelopes.
+- All-source miss returned three 404 envelopes; live received a valid empty envelope.
 
-Settings: compatibility date `2026-09-20`, no compatibility flags; default
-scheduler request timeout 30,000 ms; default admission gap 1,100 ms; unit request
-weight. A synthetic 429 uses a 2-second cooldown and doubles the admission
-backoff, producing a 2,200 ms interval on following unit-weight requests. This
-explicitly tests scheduler admission state, not the GMGN client's 429 parser.
-The next live deadline is 10 ms after scenario start, placing it inside the first
-scan read. The comparison target is 20,000 ms.
+The controlled cases prevent intentional provider errors while exercising the
+deployed scheduler, Durable Object alarms, client timeout/error translation,
+admission state, and cooldown policy. The temporary Worker was deleted after
+capture. The credential and generated probe token were supplied as secrets,
+never logged, and removed from local temporary storage.
 
-## Observed local measurements
+| Scenario | First scan | Live lag | Scenario wall | Alarm lag max | CPU total / max | Result |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 15-second client timeout | 15,000 ms | 14,043 ms | 17,243 ms | 27 ms | 10 / 3 ms | Within target |
+| Controlled 429 | 0 ms | 29,023 ms | 34,423 ms | 21 ms | 17 / 7 ms | Exceeds target |
+| Three missing sources | 0 ms | 120 ms | 3,320 ms | 20 ms | 20 / 9 ms | Within target |
+| Real GMGN nominal path | 128 ms observed | Unavailable | >180,000 ms | 25 ms observed | 8 ms max observed | Credential remained rate-limited |
 
-Executed 2026-09-22 with Node 24.8.0, Miniflare 5.20260918.0-alpha,
-workerd 1.20260918.1. Values below are measured milliseconds, not estimates.
-CPU is unavailable because this local probe exposes no per-invocation CPU metric;
-wall time must not be reported as CPU.
+CPU values are Cloudflare Tail `cpuTime` values summed across the four alarm
+invocations in each completed scenario. Cloudflare reported only 940 ms
+`wallTime` for the alarm that awaited the 15,000 ms timeout, so tail `wallTime`
+does not represent end-to-end latency while an invocation is suspended. The
+scenario clock and request timestamps are the latency evidence; tail telemetry
+is the CPU evidence.
 
-| Scenario | First scan request | Live request | Live lag | Scenario wall | CPU |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Normal, 25 ms endpoint delay | 35 | 27 | 1,095 | 3,337 | Unavailable |
-| Slow first read, scheduler timeout | 30,006 | 32 | 29,997 | 33,347 | Unavailable |
-| First scan returns 429 | 30 | 30 | 2,024 | 8,672 | Unavailable |
-| All three scan endpoints return 404 | 30 | 29 | 1,095 | 3,339 | Unavailable |
+Exact completed-scenario timestamps (Unix milliseconds):
 
-Exact live clock readings from that run (Unix milliseconds):
+| Scenario | scheduledAt | startedAt | pollLagMs | completedAt |
+| --- | ---: | ---: | ---: | ---: |
+| Slow | 1790170027692 | 1790170041735 | 14043 | 1790170043935 |
+| 429 | 1790170051064 | 1790170080087 | 29023 | 1790170084487 |
+| Miss | 1790170023439 | 1790170023559 | 120 | 1790170025759 |
 
-| Scenario | scheduledAt | startedAt | pollLagMs |
-| --- | ---: | ---: | ---: |
-| Normal | 1790087398295 | 1790087399390 | 1095 |
-| Slow | 1790087401657 | 1790087431654 | 29997 |
-| 429 | 1790087435012 | 1790087437036 | 2024 |
-| Miss | 1790087443693 | 1790087444788 | 1095 |
+The deployed probe is reproducible with
+`workers/fixtures/deployed-live-timing-spike.mjs` and its dedicated Wrangler
+configuration. That configuration contains only the probe Durable Object: it
+has no application Durable Object bindings, cron trigger, Telegram token, or
+production route.
 
-Every scenario admitted live after the first scan attempt and before remaining
-scan reads. The slow read emitted `SCHEDULER_REQUEST_TIMEOUT`; cancellation freed
-the scheduler, and its retry ran after live. The 429 scenario respected the
-cooldown and doubled admission interval instead of bypassing it for live. The
-miss scenario yielded between all failed-source reads rather than combining
-them into a token-sized step. Measured normal request-start gaps were
-1,103 / 1,100 / 1,102 ms; post-cooldown gaps were 2,201 / 2,204 / 2,202 ms.
+## Root cause and decision
 
-## Interpretation and remaining acceptance
+The 429 result is deterministic policy behavior rather than alarm delay. GMGN
+error translation floors rate-limit recovery at 30 seconds, the shared admission
+state sets `nextAllowedAt`, and the scheduler correctly prevents every GMGN task,
+including live, from bypassing that cooldown. With live scheduled one second
+after the first scan, its measured lag is therefore about 29 seconds.
 
-The scheduler's outer 30-second ceiling can produce nearly 30 seconds of live
-lag, exceeding the 20-second target. **This is not a production GMGN latency
-measurement:** the current `GmgnClient` normally imposes its tighter 15-second
-request timeout. This probe deliberately calls fetch directly to exercise the
-scheduler's outer limit. It neither changes those timeouts nor concludes that
-production's effective deadline is 30 seconds. Await time is visible in wall
-latency even when CPU is not measured.
+Reducing that lag requires an explicit policy choice. Allowing live to bypass a
+provider cooldown would violate the single shared admission boundary and could
+extend or renew the upstream rate limit. Reducing the cooldown floor would make
+live faster only when GMGN permits an earlier retry. The current implementation
+keeps the conservative shared cooldown and reports the missed 20-second target.
 
-Before closing #29, choose an isolated deployed Worker and tenant, use an
-explicitly supplied read-only GMGN test credential, and measure the actual
-scheduler + provider + Durable Object alarm path. Capture the deployed revision,
-effective timeout/weight/cooldown settings, all four scenarios, per-request
-scheduled/start/end timestamps, and Cloudflare CPU/wall telemetry. Do not use this
-probe's synthetic cooldown or host-process CPU as substitutes. If deployed live
-lag violates the accepted 20-second boundary, return to design decision 4 with
-the user before changing policy.
+The real nominal path supplied no steady-state sample: every observed GMGN call
+returned `GMGN_RATE_LIMITED`, and the run did not complete within 180 seconds.
+That is provider/credential evidence, not a scheduler latency measurement. A
+usable read-only test credential is required before closing #29.
 
-Read-only access check: the installed `wrangler whoami --json` reports one
-standard Cloudflare account and OAuth permissions including Workers write and
-tail read. No deployment, secret creation/read, account mutation, or provider
-request was performed. Account access alone does not identify an approved
-isolated target or supply a test credential.
+## Local comparison
+
+The earlier local workerd probe remains available through
+`node scripts/spikes/live-timing.mjs`. It uses a loopback server and an in-memory
+alarm adapter, so its values are comparison data only:
+
+| Scenario | Live lag | Scenario wall |
+| --- | ---: | ---: |
+| Normal | 1,095 ms | 3,337 ms |
+| 30-second scheduler timeout | 29,997 ms | 33,347 ms |
+| Synthetic two-second 429 | 2,024 ms | 8,672 ms |
+| All-source miss | 1,095 ms | 3,339 ms |
+
+The deployed results supersede these local values for Durable Object alarm and
+CPU conclusions.
