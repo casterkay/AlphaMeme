@@ -1,0 +1,27 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "meme-radar-m3-live-timing-20260923",
+  "main": "deployed-live-timing-spike.mjs",
+  "compatibility_date": "2026-09-20",
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "LIVE_TIMING_PROBE",
+        "class_name": "LiveTimingProbe"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["LiveTimingProbe"]
+    }
+  ]
+}
