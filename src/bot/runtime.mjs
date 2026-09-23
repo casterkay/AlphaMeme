@@ -189,12 +189,12 @@ export class TelegramRuntime {
 
   resetNotificationBaseline(force = true) {
     this.notifications.baselineInTransaction(force);
-    if (force) this.storage.sql.exec("UPDATE outbox SET status='CANCELLED',next_at=NULL WHERE tenant_id=? AND delivery_class='ACTION_REQUIRED' AND status='PENDING'", this.tenantId);
+    if (force) this.outbox.cancelPendingActionRequiredInTransaction();
   }
 
   actionableIssues() {
     const issues = [];
-    if (this.outbox.rows().some(row => row.status === 'UNKNOWN' && row.ambiguous_retries >= 1 && row.delivery_class !== 'ACTION_REQUIRED')) issues.push({ key: 'delivery-uncertain', reason: 'DELIVERY_UNCERTAIN', nextAction: '/status' });
+    if (this.outbox.issueRows().some(row => row.status === 'UNKNOWN' && row.ambiguous_retries >= 1 && row.delivery_class !== 'ACTION_REQUIRED')) issues.push({ key: 'delivery-uncertain', reason: 'DELIVERY_UNCERTAIN', nextAction: '/status' });
     const control = this.control.snapshot();
     const live = this.live.snapshot(control.live.focusChain ?? control.activeChain ?? 'robinhood');
     const auth = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, 'telegram.providerAuth').toArray()[0];
@@ -210,7 +210,7 @@ export class TelegramRuntime {
   reconcileNotificationsInTransaction() {
     const { notifications } = this.notifications.reconcileInTransaction({ issues: this.actionableIssues() });
     for (const notification of notifications) {
-      if (this.outbox.rows().some(row => row.id === notification.id)) continue;
+      if (this.outbox.has(notification.id)) continue;
       const session = this.commands.sessions.createInTransaction('audits', this.control.snapshot().activeChain ?? 'robinhood');
       const en = this.commands.language === 'en';
       const title = en ? 'Action required' : '需要人工查看';
@@ -239,8 +239,7 @@ export class TelegramRuntime {
   }
 
   reconcileRequestedPanelsInTransaction() {
-    for (const row of this.outbox.rows()) {
-      if (row.delivery_class !== 'USER_RESPONSE' || !['PENDING','CANCELLED'].includes(row.status)) continue;
+    for (const row of this.outbox.requestedRows()) {
       const payload = this.outbox.payload(row);
       if (!payload?.token || !row.ui_session_id) continue;
       const session = this.commands.sessions.get(row.ui_session_id);
@@ -260,7 +259,7 @@ export class TelegramRuntime {
       const session = map.ui_session_id ? this.commands.sessions.get(map.ui_session_id) : null;
       if (!session || !['detail','evidence'].includes(session.panel) || session.query.selectedToken?.address !== map.address || session.query.selectedToken?.chain !== map.chain) continue;
       if (!rendered || JSON.parse(rendered.value_json) !== fingerprint) {
-        const pending = this.outbox.rows().some(row => row.ui_session_id === session.id && ['PENDING','SENDING','UNKNOWN','FAILED'].includes(row.status) && this.outbox.payload(row)?.projectionRevision === fingerprint);
+        const pending = this.outbox.correctionRows(session.id).some(row => this.outbox.payload(row)?.projectionRevision === fingerprint);
         if (!pending) {
           const next = { ...session, version: session.version + 1, snapshotAt: this.now() };
           this.commands.sessions.saveInTransaction(next);
@@ -268,7 +267,7 @@ export class TelegramRuntime {
         }
       }
       const expiry = nextReviewExpiry(this.storage, this.tenantId, token, this.now());
-      nextAt = Math.min(nextAt ?? Infinity, expiry ?? this.now() + 30_000);
+      if (expiry !== null && expiry > this.now()) nextAt = Math.min(nextAt ?? Infinity, expiry);
     }
     return nextAt;
   }
@@ -282,7 +281,7 @@ export class TelegramRuntime {
     const correctionsAt = this.reconcileCardsInTransaction();
     this.reconcileNotificationsInTransaction();
     const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
-    const ownedOutbox = new Set(this.outbox.rows().map(row => `outbox:${row.id}`));
+    const ownedOutbox = new Set(this.outbox.ids().map(row => `outbox:${row.id}`));
     const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'live:subscription' && task.id !== 'telegram:corrections' && task.id !== 'telegram:expiry' && !task.id.startsWith('inbox:'));
     tasks.push(...state.tasks.filter(task => task.id.startsWith('inbox:')));
     const expiry = this.storage.sql.exec("SELECT MIN(expires_at) AS at FROM inbox WHERE tenant_id=? AND status IN ('RECEIVED','RUNNING')", this.tenantId).toArray()[0]?.at;

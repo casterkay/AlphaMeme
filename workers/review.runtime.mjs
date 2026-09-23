@@ -37,3 +37,19 @@ it('field-specific annotation writes preserve concurrent other-field edits and d
     expect(() => write('note', 'gmgn_secret', 2)).toThrow('sensitive_input');
   });
 });
+
+it('allows ignore without candidate evidence and rejects it if evidence appears after binding', async () => {
+  await runInDurableObject(env.RADAR.getByName('radar:19303'), async (_instance, state) => {
+    const storage = state.storage, tenant = '19303', now = 2_000_000;
+    const ignored = storage.transactionSync(() => setManualMarkInTransaction(storage, tenant, {
+      token, decision: 'ignored', expectedMarkVersion: 0, reviewRevision: null
+    }, now));
+    expect(ignored).toMatchObject({ decision: 'ignored', reviewRevision: null, version: 1 });
+
+    const changed = { chain: 'base', address: '0x' + 'b'.repeat(40) };
+    storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,status,audited_at,review_revision) VALUES (?,?,?,?,?,?)', tenant, changed.chain, changed.address, 'WAIT_RECHECK', now, 'new-evidence');
+    expect(() => storage.transactionSync(() => setManualMarkInTransaction(storage, tenant, {
+      token: changed, decision: 'ignored', expectedMarkVersion: 0, reviewRevision: null
+    }, now))).toThrow('evidence_changed');
+  });
+});

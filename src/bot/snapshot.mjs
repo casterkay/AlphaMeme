@@ -135,7 +135,7 @@ export function readTelegramSnapshot(storage, tenant, now = Date.now()) {
     const marks = read('manual_marks').map(row => ({ chain: row.chain, address: row.address, decision: row.decision, at: row.marked_at, reviewRevision: row.review_revision, version: row.mark_version }));
     const events = read('events').map(row => ({ at: row.at, chain: row.chain, address: row.address, type: safeTelegramText(row.type, 32), message: safeTelegramText(row.message, 500) }));
     const queue = read('audit_queue').map(row => ({ chain: row.chain, address: row.address, nextAuditAt: row.next_audit_at, status: row.status }));
-    const delivery = read('outbox').filter(row => ['UNKNOWN', 'FAILED'].includes(row.status)).map(row => ({ status: row.status, purpose: safeTelegramText(row.delivery_class, 32), reason: safeTelegramText(row.action_reason, 80), nextAt: row.next_at }));
+    const delivery = storage.sql.exec("SELECT status,delivery_class,action_reason,next_at FROM outbox WHERE tenant_id = ? AND status IN ('UNKNOWN','FAILED') ORDER BY rowid", tenantId).toArray().map(row => ({ status: row.status, purpose: safeTelegramText(row.delivery_class, 32), reason: safeTelegramText(row.action_reason, 80), nextAt: row.next_at }));
     const global = state['runtime.global'] || {};
     const metrics = Object.fromEntries(['scanCount', 'discoveredCount', 'prequalifiedCount', 'lastAttemptAt', 'lastSuccessAt', 'nextCycleAt'].map(key => [key, typeof global[key] === 'number' ? global[key] : null]));
     const control = { ...scheduler.runtime.eligibility, ...scheduler.runtime.control, enabledChains: enabledChains.length ? enabledChains : (preferences['telegram.scanChains'] ?? [scannerSettings.chain]), notifications: preferences['telegram.notifications'] === true };

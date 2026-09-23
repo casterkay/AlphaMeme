@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { expect, it } from 'vitest';
-import { ensurePendingSigningKey, regeneratePendingSigningKey, signingSetupSnapshot, signingRow, SIGNING_KEY_NAMES, readActiveSigningKey } from '../src/auth/key-store.mjs';
+import { ensurePendingSigningKey, regeneratePendingSigningKey, signingSetupSnapshot, signingRow, SIGNING_KEY_NAMES } from '../src/auth/key-store.mjs';
 import { prepareOnboardingVerification, verifyAndActivateOnboardingCredential, failOnboardingVerification } from '../src/auth/connection.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
 import { readGmgnApiKey } from '../src/storage/gmgn-credential.mjs';
@@ -27,7 +27,7 @@ async function submission(options, updateId = '1') {
 function activate(options, overrides = {}) {
   return verifyAndActivateOnboardingCredential({ ...options,
     request: action => action({ signal: new AbortController().signal, timeoutMs: 1000 }),
-    verify: async (_key, { privateKey }) => ({ verified: (await crypto.subtle.sign('Ed25519', privateKey, new Uint8Array([1]))).byteLength === 64 }),
+    verify: async (_key, requestOptions) => ({ verified: requestOptions.privateKey === undefined }),
     afterActivate: ({ updateId }) => options.storage.sql.exec("UPDATE inbox SET status = 'DONE', payload_enc = NULL WHERE tenant_id = ? AND update_id = ?", options.tenantId, updateId),
     ...overrides });
 }
@@ -44,7 +44,7 @@ it('reuses pending onboarding keys and binds explicit regeneration to both gener
   });
 });
 
-it('activates signing and API keys atomically while preserving a pause during verification', async () => {
+it('activates registration and API keys atomically while preserving a pause during verification', async () => {
   await inTenant('21902', async options => {
     const pending = await submission(options);
     await activate(pending, { verify: async () => {
@@ -53,9 +53,7 @@ it('activates signing and API keys atomically while preserving a pause during ve
     } });
     expect(await readGmgnApiKey(options.storage, masterKey, options.tenantId)).toBe(apiKey);
     expect((await signingSetupSnapshot(options)).pending).toBe(false);
-    const activePrivateKey = await readActiveSigningKey(options);
-    expect(activePrivateKey.extractable).toBe(false);
-    expect((await crypto.subtle.sign('Ed25519', activePrivateKey, new Uint8Array([1]))).byteLength).toBe(64);
+    expect(signingRow(options.storage, options.tenantId, SIGNING_KEY_NAMES.active)).not.toBeNull();
     expect(new SqliteControlStateStore(options.storage, options.tenantId).snapshot().paused).toBe(true);
     expect(options.storage.sql.exec('SELECT status, payload_enc FROM inbox WHERE tenant_id = ?', options.tenantId).one()).toEqual({ status: 'DONE', payload_enc: null });
   });

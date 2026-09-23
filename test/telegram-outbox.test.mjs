@@ -154,3 +154,48 @@ test('prompt confirmation callback cannot bind after a newer session navigation'
   await f.deliver('prompt');
   assert.equal(f.outbox.rows()[0].status, 'SENT');
 });
+
+test('reconciliation parses active payloads linearly and prunes resolved replay tombstones', async () => {
+  const f = fixture();
+  for (let index = 0; index < 100; index++) f.enqueue(`edit-${index}`, { method: 'editMessageText', params: { message_id: index, text: 'next' } });
+  let parses = 0;
+  const payload = f.outbox.payload.bind(f.outbox);
+  f.outbox.payload = row => { parses += 1; return payload(row); };
+  assert.equal(f.outbox.reconcileInTransaction().length, 100);
+  assert.ok(parses <= 200, `expected at most two parses per active row, received ${parses}`);
+
+  const sent = fixture();
+  sent.enqueue('large-export', { method: 'sendDocument', params: { document: { filename: 'records.json', content: 'x'.repeat(100_000) } }, expiresAt: 200 });
+  await sent.deliver('large-export');
+  sent.advance(7 * 24 * 60 * 60_000 + 201);
+  sent.outbox.reconcileInTransaction();
+  assert.equal(sent.outbox.rows().length, 0);
+});
+
+test('acknowledging uncertain delivery clears its issue and mapped-message lock', async () => {
+  const f = fixture();
+  f.enqueue('panel', { token: { chain: 'sol', address: 'token' } });
+  await f.deliver('panel');
+  f.outbox.transport = async () => ({ ok: false, kind: 'unknown' });
+  f.enqueue('uncertain', { method: 'editMessageText', params: { message_id: 42, text: 'changed' } });
+  await f.deliver('uncertain');
+  f.advance(2_000);
+  await f.deliver('uncertain');
+  assert.equal(f.outbox.issues()[0].suspended, true);
+
+  assert.equal(f.outbox.acknowledgeIssuesInTransaction(), 1);
+  assert.deepEqual(f.outbox.issues(), []);
+  assert.equal(f.storage.sql.exec('SELECT * FROM message_map').toArray().length, 0);
+  assert.equal(f.outbox.rows().find(row => row.id === 'uncertain').status, 'CANCELLED');
+});
+
+test('acknowledging a malformed failed row bounds its retention', () => {
+  const f = fixture();
+  f.enqueue('malformed');
+  f.storage.sql.exec("UPDATE outbox SET status='FAILED',payload_json='{}' WHERE id='malformed'");
+  assert.equal(f.outbox.acknowledgeIssuesInTransaction(), 1);
+  assert.equal(f.outbox.rows()[0].status, 'CANCELLED');
+  f.advance(7 * 24 * 60 * 60_000 + 1);
+  f.outbox.reconcileInTransaction();
+  assert.equal(f.outbox.rows().length, 0);
+});

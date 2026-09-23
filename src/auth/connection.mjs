@@ -1,6 +1,6 @@
 import { normalizeGmgnApiKey } from '../gmgn-api-key.mjs';
 import { encryptSecret, decryptSecret } from '../util/crypto.mjs';
-import { SIGNING_KEY_NAMES, signingRow, saveKey, decryptSigningKey, importSigningKey } from './key-store.mjs';
+import { SIGNING_KEY_NAMES, signingRow, saveKey, decryptSigningKey } from './key-store.mjs';
 import { normalizeTenantId } from '../storage/gmgn-admission-state.mjs';
 import {
   activateCredentialInTransaction,
@@ -217,11 +217,10 @@ export async function verifyAndActivateOnboardingCredential({ storage, masterKey
   }
   fence();
   const signingValue = await decryptSigningKey(masterKey, tenantId, signing, candidate.signingField);
-  const privateKey = await importSigningKey(signingValue.privateKey);
   fence();
   const result = await request(({ signal, timeoutMs }) => {
     fence();
-    return verify(candidate.apiKey, { privateKey, signal, timeoutMs });
+    return verify(candidate.apiKey, { signal, timeoutMs });
   });
   if (result?.verified !== true) throw new ConnectionError('GMGN_REQUEST_FAILED', 'credential verification failed');
   fence();

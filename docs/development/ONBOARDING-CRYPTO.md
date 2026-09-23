@@ -3,7 +3,7 @@
 The production entry points in `auth/connection.mjs` are
 `prepareOnboardingVerification` and `verifyAndActivateOnboardingCredential`.
 The earlier API-only functions remain the M2 internal migration interface;
-Telegram must use the signing-aware entry points.
+Telegram must use the registration-key-aware entry points.
 
 1. `ensurePendingSigningKey` creates or reuses a public key.
    `signingSetupSnapshot` exposes only public material and generations.
@@ -16,9 +16,10 @@ Telegram must use the signing-aware entry points.
    generation, and API key obtained from that encrypted receipt. It schedules
    verification in the existing admission queue. Duplicate preparation reuses
    the current verification generation.
-4. Verification invokes `verify(apiKey, { privateKey, signal, timeoutMs })` only
-   through the supplied admission `request` capability. `privateKey` is a
-   nonextractable Ed25519 CryptoKey. After remote success, command expiry/status,
+4. Verification invokes `verify(apiKey, { signal, timeoutMs })` only through the
+   supplied admission `request` capability. The pinned GMGN read contract uses
+   exist-auth (`X-APIKEY`, `client_id`, and `timestamp`) and does not define a
+   request-signature header. After remote success, command expiry/status,
    connection and signing generations are checked again. `afterActivate` must
    synchronously finish the inbox and write its response intent in the same
    SQLite transaction. A thrown exception rolls back all key and epoch changes.
@@ -26,8 +27,9 @@ Telegram must use the signing-aware entry points.
    command's own connection generation; this scrubs only its candidate. Admission
    deferrals are not permanent failures. Failed replacement keeps the old active
    connection. Activation preserves pause state and does not enable live or alerts.
-6. Regular signed provider calls can load a nonextractable active key with
-   `readActiveSigningKey`. Provider/checkpoint admission still enforces key epochs.
+6. Activation retains the encrypted registration key pair together with its
+   generation so disconnect and replacement remain atomic. Regular provider reads
+   use the verified API key; provider/checkpoint admission still enforces key epochs.
 
 Secret envelopes bind tenant, field, format version and master-key version using
 AES-GCM AAD with a random 96-bit nonce. The helper accepts a legacy master string

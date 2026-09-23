@@ -73,7 +73,8 @@ Test Files  1 passed (1)
   external-input parser or a production credential service.
 
 This is local Workers runtime evidence, not a deployed Worker or GMGN integration
-check. Credential encryption, secret-message handling, remote API-key binding,
-request canonicalization, and GMGN signature acceptance belong to onboarding
-implementation and its tests. No bundle fallback or configuration change was
-necessary, so no fallback bundle-size comparison is applicable.
+check. Credential encryption, secret-message handling, and remote public-key
+registration belong to onboarding implementation and its tests. The pinned GMGN
+read contract uses exist-auth and does not define request signing. No bundle
+fallback or configuration change was necessary, so no fallback bundle-size
+comparison is applicable.

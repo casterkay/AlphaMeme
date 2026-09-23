@@ -4,7 +4,7 @@ import { describe,it,expect,vi } from 'vitest';
 import { TelegramRuntime } from '../src/bot/runtime.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { readGmgnApiKey } from '../src/storage/gmgn-credential.mjs';
-import { readActiveSigningKey, signingSetupSnapshot } from '../src/auth/key-store.mjs';
+import { signingSetupSnapshot } from '../src/auth/key-store.mjs';
 
 const at=1_800_000_000_000;
 const masterKey={activeVersion:'1',keys:{'1':'e2e-only-master-key'}};
@@ -176,6 +176,55 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
+  it('normalizes all-chain navigation before collection and preserves pending alerts',async()=>{
+    await withRuntime('22915',async({runtime,storage,tenantId,sent,command,sessions,link,click,seed,drain})=>{
+      seed();
+      storage.sql.exec('INSERT INTO annotations (tenant_id,chain,address,favorite,note,updated_at) VALUES (?,?,?,?,?,?)',tenantId,'robinhood','0x'+'c'.repeat(40),1,'saved',at);
+      await command('saved');
+      const saved=sessions()[0];expect(saved.viewChain).toBe('all');
+      await click(link(saved,'panel.open',params=>params.panel==='radar'));
+      const home=runtime.commands.sessions.get(saved.id);expect(home.viewChain).toBe('robinhood');
+      await click(link(home,'panel.open',params=>params.panel==='feed'));
+      const feed=runtime.commands.sessions.get(saved.id);expect(feed.viewChain).toBe('robinhood');
+      await click(link(feed,'live.set',params=>params.value===true));
+      expect(runtime.control.snapshot().live.focusChain).toBe('robinhood');
+
+      await command('unmute');
+      storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,stale_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?,?)',tenantId,'robinhood','0x'+'d'.repeat(40),'ALERT','X_REVIEW',at,at+600_000,'alert-revision',JSON.stringify({chainPass:true,chartRisk:{pass:true,version:CHART_RISK_VERSION},checks:{openSource:true},failed:[],unknownFields:[]}));
+      expect(runtime.notifications.controls()).toEqual({enabled:true,chains:['robinhood']});
+      expect(runtime.notifications.candidates().find(row=>row.symbol==='ALERT')?.qualified).toBe(true);
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
+      expect(runtime.outbox.rows().some(row=>row.delivery_class==='ACTION_REQUIRED'&&row.status==='PENDING')).toBe(true);
+      await command('feed','sol');await drain();
+      expect(runtime.outbox.rows().some(row=>row.delivery_class==='ACTION_REQUIRED'&&row.status==='CANCELLED')).toBe(false);
+      expect(sent.some(row=>row.params.text?.includes('ALERT'))).toBe(true);
+    });
+  });
+
+  it('schedules card correction only for an actual future review expiry',async()=>{
+    await withRuntime('22916',async({runtime,storage,tenantId,command,sessions,link,click,seed})=>{
+      seed();await command('audits');const audits=sessions()[0];
+      await click(link(audits,'panel.open',params=>params.panel==='detail'));
+      expect(storage.transactionSync(()=>runtime.reconcileCardsInTransaction())).toBeNull();
+      const detail=runtime.commands.sessions.get(audits.id);
+      await click(link(detail,'mark.set_passed'));
+      expect(storage.transactionSync(()=>runtime.reconcileCardsInTransaction())).toBe(at-1000+600_001);
+    });
+  });
+
+  it('acknowledges a delivery issue from the status panel',async()=>{
+    await withRuntime('22917',async({runtime,storage,command,sessions,link,click})=>{
+      storage.transactionSync(()=>runtime.outbox.enqueueInTransaction({id:'failed-panel',chatId:'22917',method:'sendMessage',params:{text:'failed'},expiresAt:at+60_000}));
+      storage.sql.exec("UPDATE outbox SET status='FAILED' WHERE tenant_id=? AND id=?",'22917','failed-panel');
+      await command('status');const status=sessions()[0];
+      await click(link(status,'panel.open',params=>params.panel==='delivery'));
+      const delivery=runtime.commands.sessions.get(status.id);
+      await click(link(delivery,'delivery.acknowledge'));
+      expect(runtime.outbox.issues()).toEqual([]);
+      expect(runtime.commands.sessions.get(status.id).panel).toBe('delivery');
+    });
+  });
+
   it('regenerates only after the bound confirmation and returns the new public key without rejecting its own generation change',async()=>{
     await withRuntime('22909',async({runtime,command,sessions,link,click,sent})=>{
       await command('onboard');const guide=sessions()[0],original=await signingSetupSnapshot(runtime.keyOptions());
@@ -208,16 +257,16 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it('encrypts a key submission, verifies with the bound signing key, and atomically completes the receipt and connection',async()=>{
+  it('encrypts a key submission, verifies read access, and atomically completes the receipt and connection',async()=>{
     await withRuntime('22903',async({runtime,storage,tenantId,sent,command,receipt,drain})=>{
       await command('onboard');expect(sent.some(row=>row.params.text?.includes('BEGIN PUBLIC KEY'))).toBe(true);
       const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);
       const pending=runtime.inbox.get(input.updateId);expect(pending.payload_enc).toBeTruthy();expect(pending.payload_enc).not.toContain(apiKey);expect(pending.payload_json).not.toContain(apiKey);
       await runtime.runCommand(input.updateId);const generation=runtime.inbox.get(input.updateId).generation;
       let verified=0;
-      await runtime.verifyCredential(generation,{request,gmgn:{verifyApiKey:async(key,{privateKey})=>{verified++;expect(key).toBe(apiKey);expect(privateKey.extractable).toBe(false);expect((await crypto.subtle.sign('Ed25519',privateKey,new Uint8Array([1]))).byteLength).toBe(64);return {verified:true};}}});
+      await runtime.verifyCredential(generation,{request,gmgn:{verifyApiKey:async(key,options)=>{verified++;expect(key).toBe(apiKey);expect(options.privateKey).toBeUndefined();expect(options.signal).toBeInstanceOf(AbortSignal);expect(options.timeoutMs).toBe(1000);return {verified:true};}}});
       await drain();expect(verified).toBe(1);expect(runtime.inbox.get(input.updateId).status).toBe('DONE');expect(runtime.inbox.get(input.updateId).payload_enc).toBeNull();expect(runtime.control.snapshot().configured).toBe(true);
-      expect(await readGmgnApiKey(storage,masterKey,tenantId)).toBe(apiKey);expect((await readActiveSigningKey(runtime.keyOptions())).extractable).toBe(false);
+      expect(await readGmgnApiKey(storage,masterKey,tenantId)).toBe(apiKey);expect((await signingSetupSnapshot(runtime.keyOptions())).pending).toBe(false);
       expect(storage.sql.exec('SELECT value_enc FROM keys WHERE tenant_id=?',tenantId).toArray().every(row=>!row.value_enc.includes(apiKey))).toBe(true);
       expect(sent.some(row=>row.method==='deleteMessage' && row.params.message_id===input.sourceMessageId)).toBe(true);expect(JSON.stringify(sent)).not.toContain(apiKey);
       expect(runtime.commands.preference('notifications',false)).toBe(false);expect(runtime.control.snapshot().live.subscribed).toBe(false);
