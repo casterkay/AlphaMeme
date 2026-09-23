@@ -1,0 +1,29 @@
+docs/spikes/LIVE-TIMING.md
+  s_8725b305a478f7::t_492e5fd91dd5b3 1-92
+workers/fixtures/wrangler.deployed-live-timing.jsonc
+  s_af43b1390f962a::t_20586949d50a90 1-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "58534a2229719ebe15713fa31ae4bd7ad72024ca",
+  "prompts": {},
+  "sessions": {
+    "s_8725b305a478f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dea49f09-1e93-40ab-8639-2b09137c82cc",
+        "model": "claude-opus-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_af43b1390f962a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c899-d3ac-7300-9317-ade2482306b8",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
