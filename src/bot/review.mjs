@@ -25,7 +25,7 @@ export function setManualMarkInTransaction(storage, tenantId, { token, decision,
   if (![null, 'passed', 'ignored'].includes(decision) || !Number.isSafeInteger(expectedMarkVersion)) throw new ReviewConflict('invalid_mark');
   const { candidate, mark } = readReview(storage, tenantId, token);
   if (expectedMarkVersion !== mark.version) throw new ReviewConflict('mark_changed');
-  if (decision !== null && candidate?.reviewRevision !== reviewRevision) throw new ReviewConflict('evidence_changed');
+  if (decision !== null && (candidate?.reviewRevision ?? null) !== reviewRevision) throw new ReviewConflict('evidence_changed');
   if (decision === 'passed') {
     if (!candidate || mark.decision === 'ignored' || !reviewRevision || backendDisposition(candidate) !== 'chain'
       || !Number.isSafeInteger(candidate.auditedAt) || candidate.auditedAt > now || now - candidate.auditedAt > 600_000) throw new ReviewConflict('approval_unavailable');

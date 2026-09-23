@@ -2,6 +2,7 @@ import { createTaskDescriptor } from '../scheduler.mjs';
 
 const ACTIVE = new Set(['PENDING', 'SENDING', 'UNKNOWN']);
 const METHODS = new Set(['sendMessage', 'editMessageText', 'editMessageReplyMarkup', 'deleteMessage', 'answerCallbackQuery', 'sendDocument']);
+const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const messageKey = (row, payload) => payload.params.message_id == null ? null : `${row.chat_id}:${payload.params.message_id}`;
 const success = id => ({ status: 'success', checkpoint: `outbox:${id}`, complete: true });
 
@@ -17,6 +18,12 @@ export class TelegramOutbox {
   }
 
   rows() { return this.storage.sql.exec('SELECT rowid AS sequence, * FROM outbox WHERE tenant_id = ? ORDER BY rowid', this.tenantId).toArray(); }
+  ids() { return this.storage.sql.exec('SELECT id FROM outbox WHERE tenant_id = ?', this.tenantId).toArray(); }
+  has(id) { return this.storage.sql.exec('SELECT id FROM outbox WHERE tenant_id = ? AND id = ? LIMIT 1', this.tenantId, id).toArray().length === 1; }
+  activeRows() { return this.storage.sql.exec("SELECT rowid AS sequence, * FROM outbox WHERE tenant_id = ? AND status IN ('PENDING','SENDING','UNKNOWN') ORDER BY rowid", this.tenantId).toArray(); }
+  issueRows() { return this.storage.sql.exec("SELECT rowid AS sequence, * FROM outbox WHERE tenant_id = ? AND status IN ('FAILED','UNKNOWN') ORDER BY rowid", this.tenantId).toArray(); }
+  requestedRows() { return this.storage.sql.exec("SELECT rowid AS sequence, * FROM outbox WHERE tenant_id = ? AND delivery_class = 'USER_RESPONSE' AND status IN ('PENDING','CANCELLED') ORDER BY rowid", this.tenantId).toArray(); }
+  correctionRows(sessionId) { return this.storage.sql.exec("SELECT rowid AS sequence, * FROM outbox WHERE tenant_id = ? AND ui_session_id = ? AND status IN ('PENDING','SENDING','UNKNOWN','FAILED') ORDER BY rowid", this.tenantId, sessionId).toArray(); }
 
   enqueueInTransaction(value) {
     const { id, eventId = null, chatId, method, params, expiresAt, deliveryClass = 'USER_RESPONSE', actionReason = null, sessionId = null, sessionVersion = null, desiredRevision = null, token = null, purpose = 'panel', notification = null, projectionRevision = null, nextAt = this.now() } = value;
@@ -24,7 +31,7 @@ export class TelegramOutbox {
     if (sessionVersion !== null && (!Number.isSafeInteger(sessionVersion) || sessionVersion < 0)) throw new TypeError('Invalid session version');
     const payload = JSON.stringify({ method, params: { ...params, ...(method === 'answerCallbackQuery' ? {} : { chat_id: String(chatId) }) }, expiresAt, sessionVersion, token, purpose, notification, projectionRevision });
     this.storage.sql.exec('INSERT INTO outbox (tenant_id,id,event_id,chat_id,payload_json,desired_revision,delivery_class,action_reason,ui_session_id,status,attempts,next_at,ambiguous_retries) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING', this.tenantId, id, eventId, String(chatId), payload, desiredRevision, deliveryClass, actionReason, sessionId, 'PENDING', 0, nextAt, 0);
-    return this.rows().find(row => row.id === id || (eventId !== null && row.event_id === eventId));
+    return this.storage.sql.exec('SELECT rowid AS sequence, * FROM outbox WHERE tenant_id = ? AND (id = ? OR (? IS NOT NULL AND event_id = ?)) LIMIT 1', this.tenantId, id, eventId, eventId).toArray()[0];
   }
 
   update(row, status, nextAt = null, code = null) {
@@ -37,6 +44,10 @@ export class TelegramOutbox {
     if (!METHODS.has(value?.method) || !value.params || !Number.isSafeInteger(value.expiresAt)) return null;
     return value;
   }
+
+  terminalAt(payload) { return Math.max(this.now(), payload.expiresAt) + TERMINAL_RETENTION_MS; }
+
+  cancel(row, payload) { this.update(row, 'CANCELLED', this.terminalAt(payload)); }
 
   valid(row, payload) {
     if (payload.expiresAt <= this.now()) return false;
@@ -53,28 +64,73 @@ export class TelegramOutbox {
     return allowed;
   }
 
-  blocked(row, payload, rows) {
-    const key = messageKey(row, payload);
-    return key !== null && rows.some(other => {
-      if (other.id === row.id) return false;
-      const otherPayload = this.payload(other);
-      return otherPayload && messageKey(other, otherPayload) === key && (other.status === 'SENDING' || other.status === 'UNKNOWN' || (other.sequence < row.sequence && other.status === 'PENDING'));
-    });
+  entries(rows) { return rows.map(row => ({ row, payload: this.payload(row) })); }
+
+  blockingIndex(entries) {
+    const index = new Map();
+    for (const entry of entries) {
+      if (!entry.payload) continue;
+      const key = messageKey(entry.row, entry.payload);
+      if (key === null) continue;
+      const value = index.get(key) || { hard: new Set(), earliestPending: Infinity };
+      if (entry.row.status === 'SENDING' || entry.row.status === 'UNKNOWN') value.hard.add(entry.row.id);
+      if (entry.row.status === 'PENDING') value.earliestPending = Math.min(value.earliestPending, entry.row.sequence);
+      index.set(key, value);
+    }
+    return index;
+  }
+
+  blocked(entry, index) {
+    const key = entry.payload && messageKey(entry.row, entry.payload);
+    if (key === null) return false;
+    const value = index.get(key);
+    return Boolean(value && (value.hard.size > (value.hard.has(entry.row.id) ? 1 : 0) || value.earliestPending < entry.row.sequence));
+  }
+
+  pruneInTransaction() {
+    this.storage.sql.exec("DELETE FROM outbox WHERE tenant_id = ? AND status IN ('SENT','CANCELLED') AND next_at IS NOT NULL AND next_at <= ?", this.tenantId, this.now());
+  }
+
+  acknowledgeIssuesInTransaction() {
+    let acknowledged = 0;
+    for (const row of this.issueRows()) {
+      const payload = this.payload(row);
+      if (payload?.params.message_id != null) {
+        const messageId = String(payload.params.message_id);
+        this.storage.sql.exec('DELETE FROM message_map WHERE tenant_id = ? AND chat_id = ? AND message_id = ?', this.tenantId, row.chat_id, messageId);
+        this.storage.sql.exec('DELETE FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, `telegram.rendered:${messageId}`);
+      }
+      if (payload) this.cancel(row, payload);
+      else this.update(row, 'CANCELLED', this.now() + TERMINAL_RETENTION_MS);
+      this.storage.sql.exec('DELETE FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, `telegram.delivery:${row.id}`);
+      acknowledged += 1;
+    }
+    return acknowledged;
+  }
+
+  cancelPendingActionRequiredInTransaction() {
+    for (const row of this.activeRows()) {
+      if (row.status !== 'PENDING' || row.delivery_class !== 'ACTION_REQUIRED') continue;
+      const payload = this.payload(row);
+      if (payload) this.cancel(row, payload); else this.update(row, 'FAILED');
+    }
   }
 
   reconcileInTransaction({ recoverSending = false } = {}) {
-    if (recoverSending) for (const row of this.rows()) if (row.status === 'SENDING') this.update(row, 'UNKNOWN', this.now());
-    for (const row of this.rows()) {
+    this.pruneInTransaction();
+    if (recoverSending) for (const row of this.activeRows()) if (row.status === 'SENDING') this.update(row, 'UNKNOWN', this.now());
+    for (const row of this.activeRows()) {
       if (!ACTIVE.has(row.status) || row.status === 'SENDING' || row.status === 'UNKNOWN') continue;
       const payload = this.payload(row);
       if (!payload) this.update(row, 'FAILED');
-      else if (!this.valid(row, payload)) this.update(row, 'CANCELLED');
+      else if (!this.valid(row, payload)) this.cancel(row, payload);
     }
-    const rows = this.rows();
-    return rows.filter(row => {
-      const payload = this.payload(row);
-      return payload && (row.status === 'PENDING' || (row.status === 'UNKNOWN' && row.ambiguous_retries < 1 && this.valid(row, payload))) && !this.blocked(row, payload, rows);
-    }).map(row => createTaskDescriptor({ id: `outbox:${row.id}`, kind: 'outbox', dueAt: row.next_at ?? this.now(), enabled: true, needsGmgn: false, gmgnWeight: 1 }));
+    const entries = this.entries(this.activeRows());
+    const blocking = this.blockingIndex(entries);
+    return entries.filter(entry => entry.payload
+      && (entry.row.status === 'PENDING' || (entry.row.status === 'UNKNOWN' && entry.row.ambiguous_retries < 1 && this.valid(entry.row, entry.payload)))
+      && !this.blocked(entry, blocking))
+      .map(({ row }) => createTaskDescriptor({ id: `outbox:${row.id}`, kind: 'outbox', dueAt: row.next_at ?? this.now(), enabled: true, needsGmgn: false, gmgnWeight: 1 }));
   }
 
   bind(row, payload, result) {
@@ -91,14 +147,15 @@ export class TelegramOutbox {
 
   async deliverOne(id, { request }) {
     const claim = this.storage.transactionSync(() => {
-      const rows = this.rows();
-      const row = rows.find(item => item.id === id);
+      const entries = this.entries(this.activeRows());
+      const entry = entries.find(item => item.row.id === id);
+      const row = entry?.row;
       if (!row || !['PENDING', 'UNKNOWN'].includes(row.status) || (row.next_at ?? 0) > this.now()) return null;
-      const payload = this.payload(row);
+      const payload = entry.payload;
       if (!payload) { this.update(row, 'FAILED'); return null; }
       if (row.status === 'UNKNOWN' && row.ambiguous_retries >= 1) return null;
-      if (!this.valid(row, payload)) { if (row.status !== 'UNKNOWN') this.update(row, 'CANCELLED'); return null; }
-      if (this.blocked(row, payload, rows)) return null;
+      if (!this.valid(row, payload)) { if (row.status !== 'UNKNOWN') this.cancel(row, payload); return null; }
+      if (this.blocked(entry, this.blockingIndex(entries))) return null;
       const ambiguous = row.ambiguous_retries + (row.status === 'UNKNOWN' ? 1 : 0);
       this.storage.sql.exec('UPDATE outbox SET status = ?, attempts = ?, ambiguous_retries = ?, next_at = NULL WHERE tenant_id = ? AND id = ?', 'SENDING', row.attempts + 1, ambiguous, this.tenantId, row.id);
       return { row: { ...row, attempts: row.attempts + 1, ambiguous_retries: ambiguous }, payload };
@@ -113,7 +170,7 @@ export class TelegramOutbox {
     }
     this.storage.transactionSync(() => {
       // A lease recovery can supersede a late network completion; it cannot prove delivery ordering.
-      const current = this.rows().find(item => item.id === id);
+      const current = this.storage.sql.exec('SELECT * FROM outbox WHERE tenant_id = ? AND id = ?', this.tenantId, id).toArray()[0];
       if (current?.status !== 'SENDING' || current.attempts !== row.attempts) return;
       if (result.ok || result.kind === 'not-modified') {
         this.bind(row, payload, result.result);
@@ -121,7 +178,7 @@ export class TelegramOutbox {
           const completion = this.onConfirmedInTransaction({ row: structuredClone(row), payload: structuredClone(payload), result: structuredClone(result.result ?? null) });
           if (completion && typeof completion.then === 'function') throw new TypeError('Outbox confirmation hook must be synchronous');
         }
-        this.update(row, 'SENT');
+        this.update(row, 'SENT', this.terminalAt(payload));
       }
       else if (result.kind === 'unknown') this.update(row, 'UNKNOWN', this.now() + 1000, 'DELIVERY_UNCERTAIN');
       else if (result.kind === 'retryable') {
@@ -135,5 +192,8 @@ export class TelegramOutbox {
     return success(id);
   }
 
-  issues() { return this.rows().filter(row => ['FAILED', 'UNKNOWN'].includes(row.status)).map(row => ({ status: row.status, deliveryClass: row.delivery_class, attempts: row.attempts, suspended: row.status === 'UNKNOWN' && row.ambiguous_retries >= 1, reason: JSON.parse(this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, `telegram.delivery:${row.id}`).toArray()[0]?.value_json || 'null')?.code ?? null })); }
+  issues() {
+    const diagnostics = new Map(this.storage.sql.exec("SELECT key,value_json FROM scheduler_state WHERE tenant_id = ? AND key LIKE 'telegram.delivery:%'", this.tenantId).toArray().map(row => [row.key, JSON.parse(row.value_json)]));
+    return this.issueRows().map(row => ({ status: row.status, deliveryClass: row.delivery_class, attempts: row.attempts, suspended: row.status === 'UNKNOWN' && row.ambiguous_retries >= 1, reason: diagnostics.get(`telegram.delivery:${row.id}`)?.code ?? null }));
+  }
 }

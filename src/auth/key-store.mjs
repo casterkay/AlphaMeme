@@ -26,11 +26,6 @@ export async function decryptSigningKey(masterKey, tenantId, row, name) {
   return value;
 }
 
-export async function importSigningKey(privatePem) {
-  const data = privatePem.replace('-----BEGIN PRIVATE KEY-----', '').replace('-----END PRIVATE KEY-----', '').replace(/\s/g, '');
-  return crypto.subtle.importKey('pkcs8', Uint8Array.from(atob(data), character => character.charCodeAt(0)), { name: 'Ed25519' }, false, ['sign']);
-}
-
 async function prepareSigningKey({ storage, masterKey, tenantId: tenant, now = Date.now, expectedGeneration, expectedConnectionGeneration }, regenerate) {
   const tenantId = normalizeTenantId(tenant);
   const connection = new SqliteControlStateStore(storage, tenantId).snapshot().connectionGeneration;
@@ -73,14 +68,4 @@ export async function signingSetupSnapshot({ storage, masterKey, tenantId: tenan
   if (signingRow(storage, tenantId, name)?.value_enc !== row.value_enc) throw new SigningKeyError('SIGNING_GENERATION_STALE');
   return Object.freeze({ publicKey: value.publicKey, generation: row.generation, pending: Boolean(pending),
     connectionGeneration: new SqliteControlStateStore(storage, tenantId).snapshot().connectionGeneration });
-}
-
-export async function readActiveSigningKey({ storage, masterKey, tenantId: tenant }) {
-  const tenantId = normalizeTenantId(tenant);
-  const row = signingRow(storage, tenantId, SIGNING_KEY_NAMES.active);
-  if (!row) throw new SigningKeyError('SIGNING_SETUP_REQUIRED');
-  const value = await decryptSigningKey(masterKey, tenantId, row, SIGNING_KEY_NAMES.active);
-  const privateKey = await importSigningKey(value.privateKey);
-  if (signingRow(storage, tenantId, SIGNING_KEY_NAMES.active)?.value_enc !== row.value_enc) throw new SigningKeyError('SIGNING_GENERATION_STALE');
-  return privateKey;
 }

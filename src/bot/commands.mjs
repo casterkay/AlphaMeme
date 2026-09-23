@@ -5,6 +5,7 @@ import { annotateInTransaction, ReviewConflict, setManualMarkInTransaction, revi
 
 const ROOTS = new Set(['start','radar','help','status','settings','chains','feed','audits','candidates','saved','events','stats','onboard']);
 const CHAINS = ['sol','bsc','base','eth','robinhood','arc','stable'];
+const CONCRETE_CHAIN_PANELS = new Set(['radar','feed','audits','stats']);
 const CONTROL = new Set(['pause','resume','disconnect','mute','unmute']);
 const text = (lang, zh, en) => lang === 'en' ? en : zh;
 
@@ -123,7 +124,7 @@ export class TelegramCommands {
     if (command === 'feed') {
       if (args && ![...CHAINS, 'off'].includes(args)) return this.noticeInTransaction(row.update_id, `/feed ${CHAINS.join(' | ')} | off`);
       if (args === 'off') this.live.unsubscribeInTransaction();
-      else { this.live.subscribeInTransaction(args || chain); this.controls.resetNotificationBaseline?.(); }
+      else this.live.subscribeInTransaction(args || chain);
     } else if (args) return this.noticeInTransaction(row.update_id, `/${command}`);
     const panel = command === 'start' ? 'radar' : command === 'candidates' ? 'audits' : command;
     if (command === 'start') this.controls.initializeNotificationBaseline?.();
@@ -146,7 +147,10 @@ export class TelegramCommands {
       const returnTo = structuredClone({ panel: session.panel, viewChain: session.viewChain, query: { ...session.query, pendingInput: undefined } });
       let ancestor = returnTo;
       for (let depth = 1; ancestor?.query?.returnTo; depth++) { if (depth >= 4) { delete ancestor.query.returnTo; break; } ancestor = ancestor.query.returnTo; }
-      changes = { panel, query: { ...session.query, schemaVersion: 1, page: 0, pendingInput: undefined, ...(params.query ?? {}), returnTo, ...(token ? { selectedToken: token } : {}) } };
+      const viewChain = CONCRETE_CHAIN_PANELS.has(panel) && !CHAINS.includes(session.viewChain)
+        ? (CHAINS.includes(control.activeChain) ? control.activeChain : 'robinhood')
+        : session.viewChain;
+      changes = { panel, viewChain, query: { ...session.query, schemaVersion: 1, page: 0, pendingInput: undefined, ...(params.query ?? {}), returnTo, ...(token ? { selectedToken: token } : {}) } };
     } else if (action === 'panel.back') {
       const origin = session.query.returnTo;
       changes = origin ? { panel: origin.panel, viewChain: origin.viewChain, query: origin.query } : { panel: 'radar', query: { schemaVersion: 1, page: 0 } };
@@ -169,7 +173,12 @@ export class TelegramCommands {
     else if (action === 'favorite.set' || action === 'note.clear') annotateInTransaction(this.storage, this.tenantId, { token, field: action === 'favorite.set' ? 'favorite' : 'note', value: action === 'favorite.set' ? params.value : '', expectedVersion: params.expectedAnnotationVersion }, this.now());
     else if (action === 'scan.pause' || action === 'scan.resume') this.applyControl(action.split('.')[1]);
     else if (action === 'notifications.set') { if (typeof params.value !== 'boolean') throw new ReviewConflict('invalid_notifications'); this.applyControl(params.value ? 'unmute' : 'mute'); }
-    else if (action === 'live.set') { if (params.value === false) this.live.unsubscribeInTransaction(); else this.live.subscribeInTransaction(params.chain ?? session.viewChain); }
+    else if (action === 'live.set') {
+      const chain = params.chain ?? session.viewChain;
+      if (params.value !== false && !CHAINS.includes(chain)) throw new ReviewConflict('invalid_chain');
+      if (params.value === false) this.live.unsubscribeInTransaction(); else this.live.subscribeInTransaction(chain);
+    }
+    else if (action === 'delivery.acknowledge') this.outbox.acknowledgeIssuesInTransaction();
     else if (action === 'connection.disconnect') { this.applyControl('disconnect'); changes = { panel: 'settings', query: {} }; }
     else if (action === 'language.set') { if (!['zh','en'].includes(params.value)) throw new ReviewConflict('invalid_language'); this.setPreference('language', params.value); changes = { panel: 'settings', query: {} }; }
     else if (action === 'chains.draft_set') {

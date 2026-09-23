@@ -290,7 +290,7 @@ export class RadarAgent extends DurableObject {
         command: externalRequestHandler(({ task }) => this.#telegram(store.tenantId).runCommand(task.id.slice('inbox:'.length))),
         outbox: externalRequestHandler(({ task, request }) => {
           const outbox = this.#telegram(store.tenantId).outbox;
-          if (!outbox.rows().some(row => task.id === `outbox:${row.id}`)) throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', 'Outbox task has no durable intent');
+          if (!outbox.has(task.id.slice('outbox:'.length))) throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', 'Outbox task has no durable intent');
           return outbox.deliverOne(task.id.slice('outbox:'.length), { request });
         }),
         live: this.#liveHandler(store),
