@@ -11,7 +11,9 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const GMGN_TIMEOUT_MS = 15_000;
 
 function authorized(request, env) {
-  return request.headers.get('Authorization') === `Bearer ${env.PROBE_TOKEN}`;
+  return typeof env.PROBE_TOKEN === 'string'
+    && env.PROBE_TOKEN.length > 0
+    && request.headers.get('Authorization') === `Bearer ${env.PROBE_TOKEN}`;
 }
 
 function initialRecord(scenario) {
