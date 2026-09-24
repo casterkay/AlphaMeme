@@ -1,0 +1,27 @@
+# Single self-use tenant on a dedicated IPv4, escaping GMGN's ban on Cloudflare's
+# shared Workers egress. Secrets are set out of band with `fly secrets set`, never here:
+# OPERATOR_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, MASTER_ENC_KEY.
+
+app = "meme-radar"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  STORAGE_DIRECTORY = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[mounts]
+  source = "radar_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  min_machines_running = 1
