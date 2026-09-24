@@ -27,16 +27,16 @@ function fixture() {
 test('persistent subscription polls for 120 seconds without input and retains delta through eviction', async () => {
   const f = fixture();
   f.live.subscribeInTransaction('bsc');
-  for (let i = 0; i <= 6; i++) {
+  for (let i = 0; i <= 24; i++) {
     f.live = f.create();
-    assert.equal(f.live.reconcileInTransaction()[0].dueAt, START + i * 20000);
+    assert.equal(f.live.reconcileInTransaction()[0].dueAt, START + i * 5000);
     await f.live.pollOne({ request: f.request, gmgn: { marketRank: async (chain, window) => { assert.equal(window, '1m'); return { rank: [token({ price: 1 + i })] }; } } });
     const snapshot = f.live.snapshot('bsc');
-    assert.equal(snapshot.leaseUntil, START + i * 20000 + 30000);
-    if (i) assert.equal(snapshot.rows[0].deltaWindowMs, 20000);
-    f.advance(20000);
+    assert.equal(snapshot.leaseUntil, START + i * 5000 + 30000);
+    if (i) assert.equal(snapshot.rows[0].deltaWindowMs, 5000);
+    f.advance(5000);
   }
-  assert.equal(f.live.snapshot('bsc').pollCount, 7);
+  assert.equal(f.live.snapshot('bsc').pollCount, 25);
 });
 
 test('pause retains intent without renewing lease; unsubscribe prevents autonomous renewal', async () => {
@@ -58,7 +58,7 @@ test('slow read coalesces missed slots and prevents concurrent catch-up', async 
   f.advance(55000); resolve({ rank: [] }); await pending;
   assert.equal(f.live.snapshot('bsc').nextPollAt, START + 55000);
   await f.live.pollOne({ request: f.request, gmgn: { marketRank: async () => ({ rank: [] }) } });
-  assert.equal(f.live.snapshot('bsc').nextPollAt, START + 75000);
+  assert.equal(f.live.snapshot('bsc').nextPollAt, START + 60000);
 });
 
 test('rate limit preserves prior snapshot and records safe reason; cooldown start records lag', async () => {

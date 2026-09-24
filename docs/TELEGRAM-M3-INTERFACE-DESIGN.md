@@ -212,7 +212,7 @@ their old data with explicit timestamps.
 下轮计划 14:34:00 UTC
 审计队列 9 · 到期 3 · 本轮成功 4 / 失败 1
 活跃榜：Solana 采集中 · 上次成功 14:32:05 UTC
-目标间隔 20秒 · 最近延迟 5秒（请求等待）
+目标间隔 5秒 · 最近延迟 5秒（请求等待）
 消息投递：1项需核对
 快照 2026-09-22 14:32:10 UTC
 [来源详情 | 投递问题]
@@ -244,11 +244,11 @@ state needed to describe live lag and delivery uncertainty is required in M3.
 1. ORBIT · 未审计
 市值 $32.1K · 流动性 $8.4K · 1m成交 $12.2K
 买/卖 24/18 · 聪明钱/持有人 3/412
-价格变化 +2.4% / 20秒 · 币龄 18分钟
+价格变化 +2.4% / 5秒 · 币龄 18分钟
 
 …同样格式，最多5条…
 第1–5条 / 前15条 · 规范化榜单共42条
-采集目标20秒；本消息仅在操作时刷新。
+采集目标5秒；本消息仅在操作时刷新。
 [1 ORBIT | 2 LUMA]
 [3 PICO | 4 NOVA]
 [5 MOON]
@@ -269,7 +269,7 @@ volume descending), `new` (only `newAt` within 10 minutes, newest then volume).
 The “新 / New” badge lasts two minutes; it is not the ten-minute filter. Ties
 retain source order. Missing numeric values display “未知 / Unknown”; a delta
 without a comparable previous snapshot reads “暂无可比窗口 / No comparable window”.
-Show its actual `deltaWindowMs`, not an assumed 20-second window.
+Show its actual `deltaWindowMs`, not an assumed 5-second window.
 
 Opening `/feed [chain]` establishes subscription intent even while paused or
 unconfigured, but no polling starts until eligible. It never resumes a paused
@@ -288,7 +288,7 @@ Queued; awaiting capacity”, never “audit passed”. Duplicate requests repor
 existing queue state. Other details never expose this audit action.
 
 Polling maintains a 30-second lease, advances `nextPollAt` from actual start +
-20 seconds and coalesces missed slots. Cooldown and slow reads remain visible;
+5 seconds and coalesces missed slots. Cooldown and slow reads remain visible;
 Refresh reads cache and cannot bypass the GMGN queue. A snapshot over 60 seconds
 old retains its data with “数据已陈旧 / Data stale”; no cached snapshot means
 “等待首次采集 / Waiting for first collection”. Restarts preserve delta baselines.

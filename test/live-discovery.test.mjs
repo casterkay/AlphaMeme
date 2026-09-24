@@ -57,8 +57,8 @@ test('visible-client leases share one in-flight request and one global cadence a
   live.touch('bsc');live.touch('sol');await live.poll();assert.equal(calls,1);
   finish({rank:[token()]});await pending;
   assert.equal(live.snapshot('sol').rows.length,0);assert.equal(live.snapshot('bsc').rows.length,1);
-  clock+=10000;await live.poll();assert.equal(calls,1);
-  clock+=21000;await live.poll();assert.equal(calls,1,'expired hidden-page lease must not fetch');
+  clock+=3000;await live.poll();assert.equal(calls,1);
+  clock+=28000;await live.poll();assert.equal(calls,1,'expired hidden-page lease must not fetch');
 });
 
 test('global rate-limit cooldown is honored; failed responses preserve old timestamps and stale flags', async () => {

@@ -13,6 +13,12 @@ and a nominal sample therefore cannot be captured from Cloudflare Workers while
 that address carries the ban. Whether the M4 live target is reachable from this
 platform at all is the open question.
 
+**Resolved by #50:** the runtime moves to Fly.io with a dedicated IPv4 to escape
+the shared egress, and the live target becomes 5 seconds (0.2 calls/sec, still
+well under the ~1.67 calls/sec free allowance). The internal weight table is also
+aligned to the published one. The measurements below were captured against the
+prior 20-second target and remain evidence for it.
+
 ## Deployed probe
 
 The probe ran on Cloudflare Workers on 2026-09-23. It used Worker version
@@ -145,16 +151,17 @@ arrives; the provider's client reads neither it nor `Retry-After`.
 The published schedule is `calls/sec = plan weight / API weight`. The free plan
 weight is 5 and `Market Trending` — the `/v1/market/rank` route that both the live
 poll and discovery use — is API weight 3, so the allowance is about 1.67 calls/sec.
-The live poll issues one call per 20 seconds (0.05 calls/sec), and the run that was
+The live poll issues one call per 5 seconds (0.2 calls/sec; 0.05 at the 20-second interval when the ban was captured), and the run that was
 banned made exactly **one** request. A ban for "repeated rate limit violations"
 cannot be earned at that volume. The egress is a shared Cloudflare Workers address
 and its previous request from this project was a day earlier, so those violations
 belong to other traffic on the same address.
 
-The repository's internal weight table also disagrees with the published one:
-`trending` is charged 1 here against a published 3, and `trenches` 3 against a
-published 2. That makes internal pacing more permissive on the route every live
-poll uses, but it is not a factor in a ban earned by one request.
+The repository's internal weight table initially disagreed with the published
+one — `trending` was charged 1 here against a published 3, and `trenches` 3
+against a published 2 — which #50 aligns. That disagreement made internal pacing
+more permissive on the route every live poll uses, but it was not a factor in a
+ban earned by one request.
 
 ### What this blocks
 

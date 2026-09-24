@@ -1,3 +1,4 @@
+import { gmgnRequestWeight } from '../providers/gmgn.mjs';
 import { normalizeTenantId } from './gmgn-admission-state.mjs';
 import { assertCheckpointGeneration, SqliteControlStateStore } from './control-state.mjs';
 import {
@@ -252,7 +253,7 @@ export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch,
       tenantId, checkpoint.cycleId, checkpoint.chain, checkpoint.keyEpoch, checkpoint.controlEpoch, checkpoint.deadlineAt,
       checkpoint.phase, checkpoint.tokenIndex, checkpoint.endpointIndex, JSON.stringify(checkpoint.partial), checkpoint.updatedAt
     );
-    scheduleRecoverableScanTaskInTransaction(storage, tenantId, checkpoint.cycleId, now, 3, activeTasks.get(selected.cycleId).enabled);
+    scheduleRecoverableScanTaskInTransaction(storage, tenantId, checkpoint.cycleId, now, gmgnRequestWeight('trenches'), activeTasks.get(selected.cycleId).enabled);
     return Object.freeze({ tenantId, ...checkpoint });
   });
 }

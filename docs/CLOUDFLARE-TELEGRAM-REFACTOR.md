@@ -16,7 +16,7 @@
 | 1 | 租户边界从第一天写进数据模型 | 所有表带 `tenant_id`，DO 按租户命名（`idFromName('radar:'+tenantId)`）；当前只跑一个租户，但模型按多租户隔离设计 |
 | 2 | GMGN key 由用户经 `/onboard` 上传，后台自动 onboard | 生成公钥 → 用户去 `https://gmgn.ai/ai?tab=api_management` 建 Key → 回传 Key → 后台验证并加密存储（**不再走 Worker secret**） |
 | 3 | Ed25519 onboarding 保留 | `/onboard` 在 DO 内生成本租户 Ed25519 密钥对，公钥发给用户；私钥只存本租户 DO |
-| 4 | 保留 20s 后端轮询 | 保留 20 秒目标间隔与 30 秒 lease；Telegram 持久订阅替代浏览器心跳续租，限流或慢请求造成的延迟显式记录（见 §4.1） |
+| 4 | 保留 5s 后端轮询 | 保留 5 秒目标间隔与 30 秒 lease（运行时迁往 Fly.io 后由 20s 改为 5s，见 #50）；Telegram 持久订阅替代浏览器心跳续租，限流或慢请求造成的延迟显式记录（见 §4.1） |
 | 5 | Telegram 原生通知替代语音 | 删除 Web Speech 语音模块与桌面提醒，改用 Telegram 推送 |
 | 6 | 保留 7 条链 | sol / bsc / base / eth / robinhood / arc / stable，扫描与判据逻辑不变 |
 | 7 | 只改 meme-radar | 不动 MemeHarness |
@@ -37,9 +37,9 @@
 - `scanner.mjs` 的循环语义：发现 → 初筛 → 建队 → 择时（紧急位 / 公平位）→ 深审 → 分类 →
   第二源 → 事件 → 影子样本；`reviewRevision`、`riskExclusions` 持久化、`classifyDeepResult` 的
   transient/unknown 分流、`mergeSecondaryClassification`
-- `gmgn.mjs` 的限流模型：`requestWeight`（holders/traders 5、trenches 3、kline 2）、串行队列、
+- `gmgn.mjs` 的限流模型：`requestWeight`（holders/traders 5、trending 3、kline 2、trenches 2）、串行队列、
   `minRequestGapMs × weight × backoffFactor`、`nextAllowedAt` 冷却不绕过、TTL 缓存
-- `live-discovery.mjs`：20s 目标轮询间隔、30s lease、1m trending、`normalizeLiveRows` 的过滤逻辑；
+- `live-discovery.mjs`：5s 目标轮询间隔、30s lease、1m trending、`normalizeLiveRows` 的过滤逻辑；
   lease 的续租责任从浏览器移到租户订阅调度器（§4.1），不依赖用户反复点刷新
 - `public/index.html` 的人工标记：`passed` / `ignored`、撤销、revision 与新鲜度失效条件；
   从浏览器 localStorage 迁至租户持久状态（§5.2），不是仅搬 `RadarControls`
@@ -62,7 +62,7 @@ Telegram  <── webhook(secret token) ──>  Worker fetch 入口 (src/worker
                                     │  ┌────────────────────┐  │
                                     │  │ 统一 alarm 调度器     │  │
                                     │  │  · 扫描循环(可恢复)   │  │
-                                    │  │  · live 20s 轮询     │  │
+                                    │  │  · live 5s 轮询     │  │
                                     │  └─────────┬──────────┘  │
                                     │            ▼              │
                                     │  GMGN 串行队列 + 限流退避  │
@@ -109,7 +109,7 @@ Telegram  <── webhook(secret token) ──>  Worker fetch 入口 (src/worker
 | `src/gmgn.mjs` | `src/providers/gmgn.mjs` | `execFile` → `fetch`；保留 `requestWeight`、串行队列、`nextAllowedAt`、`backoffFactor`、`cachedRead`、`discover`、`audit`、`priceAt`、`verifyApiKey`、错误翻译 `translateGmgnError` |
 | `src/gmgn-readonly-worker.mjs` | 并入 `src/providers/gmgn.mjs` | 子进程桥删除；「只读白名单、无交易路由」这条不变量迁移为：只导出列明的 8 个数据读端点 + 读权限验证，类型/命名层禁止签名与下单 |
 | `src/scanner.mjs` | `src/radar-agent.mjs`（DO 内） | `start()`/`stop()`/`switchChain`/`enqueueReview`/`cycle()` 的**调度部分**改用 alarm + 可恢复状态机；`cycle()` 内部判据调用不变 |
-| `src/live-discovery.mjs` | `src/radar-agent.mjs`（DO 内） | `setTimeout` → alarm；20s 间隔、30s lease 与过滤保留；续租与请求级调度见 §4.1 |
+| `src/live-discovery.mjs` | `src/radar-agent.mjs`（DO 内） | `setTimeout` → alarm；5s 间隔、30s lease 与过滤保留；续租与请求级调度见 §4.1 |
 | `src/gmgn-key-store.mjs` | `src/auth/key-store.mjs` | 文件系统 → DO SQLite 表 `keys`；Ed25519 生成走 WebCrypto（`crypto.subtle`），不支持则 `nodejs_compat` 的 `node:crypto`（见 §6） |
 | `src/gmgn-connection.mjs` | `src/auth/connection.mjs` | `apply`/`disconnect`/`snapshot` 语义保留；`requestCycle` → `radarAgent.requestCycle()` RPC |
 | `src/state.mjs` | `src/storage/radar-state.mjs` | `radar.json` → SQLite 表；`migrateState` 的「状态损坏即 fail-loud、不静默清零」语义保留 |
@@ -160,7 +160,7 @@ Telegram  <── webhook(secret token) ──>  Worker fetch 入口 (src/worker
 ### 4.1 调度器：setTimeout → 统一 alarm 调度
 
 原实现有两把钟：`scanner.start()` 的 `setTimeout`（`scanIntervalMs / 链数`）和
-`live-discovery.arm()` 的 `setTimeout`（20s），共享同一个 `gmgn.nextAllowedAt` 冷却。
+`live-discovery.arm()` 的 `setTimeout`（5s），共享同一个 `gmgn.nextAllowedAt` 冷却。
 
 Worker 版合并为**一个调度器**（DO 内）。冷却时间是请求准入下界，不是独立任务：
 
@@ -224,7 +224,7 @@ DISCOVER(request_i) → SCREEN → BUILD_QUEUE
   所有读（含 onboarding 验证）都经同一准入器；控制指令不能排在整轮扫描后面。
   `blockConcurrencyWhile` 只用于有界初始化，不包围外部网络调用或整轮扫描。
 
-**live 订阅与 20 秒目标：**
+**live 订阅与 5 秒目标：**
 
 - 将 `subscribed`、`focusChain`、`leaseUntil`、`nextPollAt`、暂停状态以及各链的上次
   规范化快照/采集时间持久化。原浏览器每 5 秒 `touch()` 的责任由订阅调度器承担。
@@ -233,9 +233,9 @@ DISCOVER(request_i) → SCREEN → BUILD_QUEUE
 - 有效订阅且未暂停、未断开时，调度器在每次到期 poll 前将 lease 续到 `now + 30s`。
   冷却或 eviction 后可依据持久订阅重新取得 lease；没有订阅时绝不自续租。
   `/pause` 停止续租，`/resume` 恢复已有订阅，`/disconnect` 清除订阅并取消未发出的 GMGN 工作。
-- 每次实际 poll 开始时记 `nextPollAt = startedAt + 20s`；慢请求或冷却造成的过期时隙合并，
+- 每次实际 poll 开始时记 `nextPollAt = startedAt + 5s`；慢请求或冷却造成的过期时隙合并，
   不并发补跑、不突发追赶。请求级 slice 允许每次读后重新检查 live 到期，避免六读连跑挡住 live。
-- 20 秒是目标间隔，不保证外部慢请求、429 或平台延迟下的精确墙钟周期。保留请求超时，
+- 5 秒是目标间隔，不保证外部慢请求、429 或平台延迟下的精确墙钟周期。保留请求超时，
   记录 `scheduledAt` / `startedAt` / `pollLagMs` / `requestMs` / 延迟原因，并显示陈旧状态。
   不得为准点而绕过限流或静默改变超时、阈值、周期预算；以 §8 的可控时钟测试验收调度。
 
@@ -427,7 +427,7 @@ epoch/generation，无 token 目标。TenantRegistry 另存 `tenant_id PRIMARY K
 
 Telegram 复刻主要界面的信息与操作。使用命令打开消息面板，inline keyboard 完成导航、
 切链、筛选、排序、分页和代币操作；不把原页面每次刷新转换成聊天推送。
-后端采集、用户查询响应、主动提醒是三个独立通道：20s live 采集不意味着每 20s 发消息。
+后端采集、用户查询响应、主动提醒是三个独立通道：5s live 采集不意味着每 5s 发消息。
 
 | 现有 web 界面 | command / 消息标题 | 信息与 inline keyboard |
 |---|---|---|
@@ -657,7 +657,7 @@ CA: <code>…</code>
 | **M1 provider** | fetch 读端点、显式串行队列、持久准入间隔、冷却、缓存、错误翻译 | 原 gmgn/risk-filters 测试适配通过；验证 Key 与审计并发提交仍单飞；429 与加权间隔跨重建不绕过 |
 | **M2 DO 扫描器** | 请求级状态机、版本化 SQLite、原子 effect/checkpoint、TenantRegistry/wake；operator `/health` `/status` | 冷却/暂停无空转；故障注入验证事务前后恢复无缺失/重复 effect；临时凭据仅用隔离测试夹具，不增加生产注入接口 |
 | **M3 Telegram 控制面** | 私聊授权、持久 inbox/outbox、onboard 原子激活、§5.0全套面板/inline keyboard/人工复核、导出与加密；原M4的持久live订阅、通知策略与七窗口统计 | 重复/乱序 update、重复 callback、断开与验证竞争、群组拒绝、跨租户短 ID、到期人工标记均覆盖；任何重试不回显 Key；主要web界面均能由command打开并通过键盘完成操作 |
-| **原M4 → M3** | #26–29并入M3：持久订阅续租、20s目标调度、live快照恢复、通知allowlist/基线、revision编辑与 `/stats` | 无用户交互仍持续轮询；冷却/慢读有可解释延迟且不补跑；mute/pause/feed off 语义分离；风险更正不被新候选 gate 抑制；后台常规变化零主动消息 |
+| **原M4 → M3** | #26–29并入M3：持久订阅续租、5s目标调度、live快照恢复、通知allowlist/基线、revision编辑与 `/stats` | 无用户交互仍持续轮询；冷却/慢读有可解释延迟且不补跑；mute/pause/feed off 语义分离；风险更正不被新候选 gate 抑制；后台常规变化零主动消息 |
 | **M5 发布准备** | 离线迁移、完整故障矩阵、requestMetrics、Worker 发布审计、密钥轮换与部署文档；删除旧运行资产 | 迁移逐字段核对；UNKNOWN 投递受持久上限约束；最终 Workers 测试与构建通过；旧 UI/平台测试由对应新行为测试替代并说明，不静默删测 |
 
 ### 8.1 必须落实的验收场景
@@ -673,7 +673,7 @@ CA: <code>…</code>
 | `test/webhook.test.mjs` | 无效 secret、群组/频道、伪造 tenant 短 ID、非 owner；持久接收前失败 | 无越权读写；未持久接收不能返回成功确认；受支持的重复 update 不重复执行 |
 | `test/inbox.test.mjs` | 重放 onboard/setkey；乱序冲突指令；验证等待中 disconnect；长期空闲后新 update ID | pending 公钥不被重放替换；旧命令不逆转新控制状态；断开后不复活；新会话合法命令不被最大 ID 误拒 |
 | `test/manual-review.test.mjs` | revision 改变、标记 24h 到期、审计超过 10m、重复按钮、旧 mark_version | 人工通过失效且卡片刷新；ignored 直到主动撤销；旧按钮不能覆盖新标记；收藏与人工通过互不替代 |
-| `test/live-discovery.test.mjs` | 开订阅后 120s 无消息；poll 间重建；关闭订阅/暂停；单读超时与429 | 可控瞬时响应下保持 20s 间隔和 30s lease；恢复保留 delta 基线；关闭后不续租；延迟记录且无突发补跑 |
+| `test/live-discovery.test.mjs` | 开订阅后 120s 无消息；poll 间重建；关闭订阅/暂停；单读超时与429 | 可控瞬时响应下保持 5s 间隔和 30s lease；恢复保留 delta 基线；关闭后不续租；延迟记录且无突发补跑 |
 | `test/telegram-outbox.test.mjs` | 发送成功后保存前崩溃；连续 UNKNOWN；旧 revision 编辑；mute 后恢复 | UNKNOWN 最多一次自动补发尝试，之后挂起；最终卡片是最新状态；不追播失效候选，风险更正仍执行 |
 | `test/telegram-panels.test.mjs` | 同一web数据夹具打开总览/feed/stats/audits/saved/events/settings，翻页/排序/筛选/搜索/详情/返回，重建后再点击 | 主要信息、指标和30m范围与web一致；均带inline keyboard；编辑原消息，session不串状态；失效按钮不写入 |
 | `test/notification-policy.test.mjs` | 连续多轮live榜单变化、样本完成、普通拒绝、429/DEGRADED；再输入新X_REVIEW、已关注币风险恶化、Key失效；开启mute | 常规变化主动发送数为0；仅allowlist生成带人工查看原因/入口的提醒；未解决问题不重复；mute下仅交互响应和旧卡片更正 |
@@ -705,7 +705,7 @@ npx wrangler deploy --dry-run
 2. **GMGN 读端点（info/security/pool/holders/traders/kline/trending/trenches）的 exist-auth
    参数形态**：以 `GMGNAI/gmgn-skills` 的 `OpenApiClient` 源码提交
    `016535ffcf500f56f28aa8797b3c6bf6ebce794a` 为准逐一对齐，避免"看起来对、实则 401"。
-3. **DO alarm 的成本与上限**（M2/M4 前）：live 目标 20s 一次，但请求级扫描、命令、
+3. **DO alarm 的成本与上限**（M2/M4 前）：live 目标 5s 一次，但请求级扫描、命令、
    outbox 及卡片刷新会额外触发 alarm；测算完整负载与等待 I/O 的计费，不按每分钟三次估算。
    单租户成本需测算；若超预算，再回到决策 4 与用户确认（**默认不改**）。
 4. **请求级 slice 与实际轮询延迟**（M2/M4 前）：测量单请求超时、加权间隔、live lag、
@@ -720,7 +720,7 @@ npx wrangler deploy --dry-run
 - 不做交易 / swap / 下单（执行永久关闭）。
 - 首版不做注册门槛 / 计费 / 配额（多租户治理由部署方自定）；仍必须执行私聊 owner 授权。
 - 不保留浏览器前端、语音合成、桌面提醒、Windows/macOS 便携包、本地 supervisor。
-- 不改任何阈值、判据、7 链、20s 轮询、限流权重、未知字段语义。
+- 不改任何阈值、判据、7 链、5s 轮询、未知字段语义。
 - 不动 MemeHarness。
 
 ## 11. 平台依据与实施边界

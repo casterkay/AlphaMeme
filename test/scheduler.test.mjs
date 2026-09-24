@@ -238,7 +238,7 @@ test('the scheduler accepts an executor result, advances its checkpoint, and rea
   assert.equal(scanner.checkpoint('cycle-executor-scheduler').endpointIndex, 1);
   assert.equal(store.read().runtime.retries['scan:cycle-executor-scheduler'], undefined);
   assert.equal(store.read().tasks[0].needsGmgn, true);
-  assert.equal(store.read().tasks[0].gmgnWeight, 1);
+  assert.equal(store.read().tasks[0].gmgnWeight, 3);
   assert.equal(store.read().tasks[0].dueAt, NOW + 1);
   assert.equal(alarms.at, NOW + 150);
 });

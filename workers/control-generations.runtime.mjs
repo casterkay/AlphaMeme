@@ -220,8 +220,8 @@ describe('Radar control generations', () => {
     const switched = await radar.switchChain({ tenantId, chain: 'base' });
     expect(switched).toMatchObject({ activeChain: 'base', controlEpoch: 0 });
     expect((await radar.getSchedulerSnapshot(tenantId)).tasks.filter(task => task.kind === 'scan')).toEqual([
-      { id: 'scan:switch-sol', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 },
-      { id: 'scan:switch-base', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 }
+      { id: 'scan:switch-sol', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 2 },
+      { id: 'scan:switch-base', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 2 }
     ]);
   });
 
@@ -235,8 +235,8 @@ describe('Radar control generations', () => {
     expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'sol-cycle' })).toMatchObject({ controlEpoch: 0 });
     expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'base-cycle' })).toMatchObject({ controlEpoch: 0 });
     expect((await radar.getSchedulerSnapshot(tenantId)).tasks.filter(task => task.kind === 'scan')).toEqual([
-      { id: 'scan:sol-cycle', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 },
-      { id: 'scan:base-cycle', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 }
+      { id: 'scan:sol-cycle', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 2 },
+      { id: 'scan:base-cycle', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 2 }
     ]);
     await radar.switchChain({ tenantId, chain: 'sol' });
     expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'sol-cycle' })).toMatchObject({ controlEpoch: 0 });
@@ -268,9 +268,9 @@ describe('Radar control generations', () => {
       expect(failure).toMatchObject({ code: 'CYCLE_CONTROL_EPOCH_STALE' });
     });
     expect((await radar.getSchedulerSnapshot(tenantId)).tasks.filter(task => task.kind === 'scan')).toEqual([
-      { id: 'scan:set-sol', kind: 'scan', dueAt: expect.any(Number), enabled: false, needsGmgn: true, gmgnWeight: 3 },
-      { id: 'scan:set-base', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 },
-      { id: 'scan:set-eth', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 3 }
+      { id: 'scan:set-sol', kind: 'scan', dueAt: expect.any(Number), enabled: false, needsGmgn: true, gmgnWeight: 2 },
+      { id: 'scan:set-base', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 2 },
+      { id: 'scan:set-eth', kind: 'scan', dueAt: expect.any(Number), enabled: true, needsGmgn: true, gmgnWeight: 2 }
     ]);
     expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'set-sol' })).toMatchObject({ controlEpoch: 0 });
     expect(await radar.getRecoverableCycle({ tenantId, cycleId: 'set-base' })).toMatchObject({ controlEpoch: 1 });

@@ -1,4 +1,4 @@
-import { GmgnClient, responseEvidence } from '../../src/providers/gmgn.mjs';
+import { GmgnClient, responseEvidence, gmgnRequestWeight } from '../../src/providers/gmgn.mjs';
 import {
   OneAlarmScheduler,
   createTaskDescriptor,
@@ -30,7 +30,7 @@ function initialRecord(scenario) {
         dueAt: kind === 'live' ? liveScheduledAt : startedAt,
         enabled: true,
         needsGmgn: true,
-        gmgnWeight: 1
+        gmgnWeight: gmgnRequestWeight('marketRank')
       })),
       runtime: { ...defaultSchedulerRuntime(), eligibility: { paused: false, configured: true } },
       gmgn: {

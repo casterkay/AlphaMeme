@@ -1,12 +1,13 @@
 import { normalizeLiveRows } from '../live-normalize.mjs';
 import { normalizeGmgnList } from '../providers/gmgn-normalize.mjs';
+import { gmgnRequestWeight } from '../providers/gmgn.mjs';
 import { discoveryScreen } from '../scoring/index.mjs';
 import { addressKey } from '../scanner-parity.mjs';
 import { createTaskDescriptor } from '../scheduler.mjs';
 import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } from '../storage/scheduler-state.mjs';
 
 const CHAINS = new Set(['sol', 'bsc', 'base', 'eth', 'robinhood', 'arc', 'stable']);
-const INTERVAL = 20_000;
+const INTERVAL = 5_000;
 const empty = () => ({ rows: [], status: 'WAITING', lastSuccessAt: null, pollCount: 0 });
 const done = at => ({ status: 'success', complete: true, checkpoint: `live:${at}` });
 
@@ -55,7 +56,7 @@ export class PersistentLive {
     if (recoverRunning && state.runtime.live.running) { this.save(state, { running: null }); state = this.state(); }
     const live = state.runtime.live;
     if (!live.subscribed || !live.focusChain || live.running || state.runtime.eligibility.paused || !state.runtime.eligibility.configured) return [];
-    return [createTaskDescriptor({ id: 'live:subscription', kind: 'live', dueAt: live.nextPollAt ?? this.now(), enabled: true, needsGmgn: true, gmgnWeight: 1 })];
+    return [createTaskDescriptor({ id: 'live:subscription', kind: 'live', dueAt: live.nextPollAt ?? this.now(), enabled: true, needsGmgn: true, gmgnWeight: gmgnRequestWeight('marketRank') })];
   }
 
   async pollOne({ request, gmgn }) {
