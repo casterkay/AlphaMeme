@@ -74,6 +74,15 @@ test('rate limit preserves prior snapshot and records safe reason; cooldown star
   assert.equal(JSON.stringify(f.live.snapshot('bsc')).includes('private'), false);
 });
 
+test('a provider block is recorded as its own reason instead of a retryable rate limit', async () => {
+  const f = fixture(); f.live.subscribeInTransaction('bsc');
+  await f.live.pollOne({ request: f.request, gmgn: { marketRank: async () => ({ rank: [token()] }) } });
+  f.advance(20000);
+  await f.live.pollOne({ request: f.request, gmgn: { marketRank: async () => { throw Object.assign(new Error('blocked'), { code: 'GMGN_RATE_LIMIT_BLOCKED', retryAfterMs: 0 }); } } });
+  assert.equal(f.live.snapshot('bsc').rows.length, 1, 'the prior snapshot is preserved');
+  assert.equal(f.live.snapshot('bsc').delayReason, 'BLOCKED');
+});
+
 test('credential change during read discards result and reconnect cannot expose old epoch cache', async () => {
   const f = fixture(); f.live.subscribeInTransaction('bsc');
   await f.live.pollOne({ request: f.request, gmgn: { marketRank: async () => {

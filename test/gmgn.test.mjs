@@ -197,6 +197,104 @@ test('preserves body and header reset times while translating 429, 401, 403, tim
   assert.equal(translateGmgnError({ code: 'GMGN_NETWORK_ERROR' }).code, 'GMGN_NETWORK_ERROR');
 });
 
+test('a repeated-error block is classified apart from a rate limit and carries upgrade guidance', async () => {
+  const resetAtUnix = Math.ceil(Date.now() / 1000) + 180;
+  const store = durableAdmissionStore();
+  const client = clientWith(async () => new Response(JSON.stringify({
+    code: 429,
+    error: 'ERROR_RATE_LIMIT_BLOCKED',
+    message: 'Repeated business errors triggered a temporary block (~180s remaining)',
+    upgrade_url: 'https://gmgn.ai/upgrade',
+    upgrade_message: 'Upgrade your plan for a higher quota'
+  }), { status: 429, headers: { 'x-ratelimit-reset': String(resetAtUnix) } }), { admissionStateStore: store });
+
+  await assert.rejects(client.tokenInfo('bsc', address), error => {
+    assert.equal(error.code, 'GMGN_RATE_LIMIT_BLOCKED');
+    assert.equal(error.apiError, 'ERROR_RATE_LIMIT_BLOCKED');
+    assert.equal(error.upgradeUrl, 'https://gmgn.ai/upgrade');
+    assert.equal(error.upgradeMessage, 'Upgrade your plan for a higher quota');
+    assert.ok(error.retryAfterMs >= 180_000);
+    return true;
+  });
+  assert.equal(client.metrics.rateLimits, 0, 'a block is not an ordinary rate limit');
+  assert.equal(store.state.backoffFactor, 1, 'a block must not escalate the rate-limit backoff');
+  assert.ok(store.state.nextAllowedAt >= now + 170_000, 'the block deadline still arms the shared cooldown');
+});
+
+test('a block without a reset deadline invents no floor, unlike a rate limit', async () => {
+  const blocked = clientWith(async () => new Response(JSON.stringify({
+    code: 429, error: 'ERROR_RATE_LIMIT_BLOCKED', message: 'temporary block'
+  }), { status: 429 }));
+  await assert.rejects(blocked.tokenInfo('bsc', address), { code: 'GMGN_RATE_LIMIT_BLOCKED', retryAfterMs: 0 });
+
+  const limited = clientWith(async () => new Response(JSON.stringify({
+    code: 429, error: 'RATE_LIMIT_EXCEEDED', message: 'too many requests'
+  }), { status: 429 }));
+  await assert.rejects(limited.tokenInfo('bsc', address), error => {
+    assert.equal(error.code, 'GMGN_RATE_LIMITED');
+    assert.equal(error.retryAfterMs, 30_000);
+    return true;
+  });
+});
+
+test('rejected responses keep bounded raw evidence and the provider request id', async () => {
+  const resetAtUnix = Math.ceil(Date.now() / 1000) + 120;
+  const client = clientWith(async () => new Response(JSON.stringify({
+    code: 429,
+    error: 'RATE_LIMIT_EXCEEDED',
+    message: 'x'.repeat(4_000)
+  }), {
+    status: 429,
+    headers: { 'x-ratelimit-reset': String(resetAtUnix), 'x-request-id': 'req-1', 'content-type': 'application/json' }
+  }));
+
+  await assert.rejects(client.tokenInfo('bsc', address), error => {
+    assert.equal(error.rateLimitEvidence.status, 429);
+    assert.equal(error.rateLimitEvidence.headers['x-ratelimit-reset'], String(resetAtUnix));
+    assert.equal(error.rateLimitEvidence.headers['x-request-id'], 'req-1');
+    assert.equal(error.rateLimitEvidence.headers['content-type'], undefined, 'unrelated headers stay out of the evidence');
+    assert.ok(error.rateLimitEvidence.bodyPrefix.includes('RATE_LIMIT_EXCEEDED'));
+    assert.ok(error.rateLimitEvidence.bodyPrefix.length <= 1024);
+    assert.equal(error.rateLimitEvidence.bodyTruncated, true);
+    return true;
+  });
+  assert.equal(client.metrics.lastRateLimitEvidence.code, 'GMGN_RATE_LIMITED');
+});
+
+test('a reset deadline beyond the throttle horizon is reported as a block, not a short retry', async () => {
+  const store = durableAdmissionStore();
+  const resetAtUnix = Math.ceil(Date.now() / 1000) + 6 * 60 * 60;
+  const client = clientWith(async () => new Response(JSON.stringify({
+    code: 429, error: 'RATE_LIMIT_EXCEEDED', message: 'quota exhausted'
+  }), { status: 429, headers: { 'x-ratelimit-reset': String(resetAtUnix) } }), { admissionStateStore: store });
+
+  await assert.rejects(client.tokenInfo('bsc', address), error => {
+    assert.equal(error.code, 'GMGN_RATE_LIMIT_BLOCKED');
+    assert.equal(error.apiError, 'RATE_LIMIT_EXCEEDED', 'the vendor classification is still preserved');
+    assert.ok(error.retryAfterMs >= 6 * 60 * 60 * 1000 - 60_000, 'the provider deadline is still honored');
+    return true;
+  });
+  assert.equal(client.metrics.rateLimits, 0, 'a quota ceiling is not throttling');
+  assert.equal(store.state.backoffFactor, 1, 'a quota ceiling must not escalate the rate-limit backoff');
+});
+
+test('a rate limit carries upgrade guidance when the provider supplies it', async () => {
+  const client = clientWith(async () => new Response(JSON.stringify({
+    code: 429,
+    error: 'RATE_LIMIT_EXCEEDED',
+    message: 'rate limit (~60s remaining)',
+    upgrade_url: 'https://gmgn.ai/upgrade',
+    upgrade_message: 'Upgrade for a higher quota'
+  }), { status: 429 }));
+
+  await assert.rejects(client.tokenInfo('bsc', address), error => {
+    assert.equal(error.code, 'GMGN_RATE_LIMITED');
+    assert.equal(error.upgradeUrl, 'https://gmgn.ai/upgrade');
+    assert.equal(error.upgradeMessage, 'Upgrade for a higher quota');
+    return true;
+  });
+});
+
 test('non-JSON HTTP 429 preserves its reset header and enters the shared cooldown', async () => {
   const headerResetAtUnix = Math.ceil(Date.now() / 1000) + 120;
   const client = clientWith(async () => new Response('temporarily unavailable', {
@@ -354,7 +452,7 @@ test('cache entries are invalidated by the persisted credential epoch', async ()
 
 test('429 backoff is persisted before the admission queue accepts another request', async () => {
   const store = durableAdmissionStore();
-  const resetAtUnix = Math.ceil((now + 60_000) / 1000);
+  const resetAtUnix = Math.ceil(Date.now() / 1000) + 60;
   const client = clientWith(async () => new Response(JSON.stringify({ code: 429, error: 'RATE_LIMIT_EXCEEDED' }), {
     status: 429,
     headers: { 'x-ratelimit-reset': String(resetAtUnix) }

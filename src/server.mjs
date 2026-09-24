@@ -295,6 +295,7 @@ export function createServer({ state, settings, controls, switchChain, saveGmgnK
           GMGN_AUTH_FAILED: [401, 'gmgn_auth_failed'],
           GMGN_PERMISSION_DENIED: [403, 'gmgn_permission_denied'],
           GMGN_RATE_LIMITED: [429, 'gmgn_rate_limited'],
+          GMGN_RATE_LIMIT_BLOCKED: [429, 'gmgn_rate_limit_blocked'],
           GMGN_CHECK_BUSY: [409, 'gmgn_check_busy'],
           GMGN_TIMEOUT: [504, 'gmgn_timeout'],
           GMGN_NETWORK_ERROR: [502, 'gmgn_network_error'],
@@ -305,7 +306,7 @@ export function createServer({ state, settings, controls, switchChain, saveGmgnK
         const safe = safeErrors[error?.code];
         if (safe) {
           const body = { error: safe[1] };
-          if (error?.code === 'GMGN_RATE_LIMITED') {
+          if (error?.code === 'GMGN_RATE_LIMITED' || error?.code === 'GMGN_RATE_LIMIT_BLOCKED') {
             body.retryAfterSeconds = Math.max(1, Math.min(300, Math.ceil((Number(error.retryAfterMs) || 30_000) / 1000)));
           }
           return sendJson(res, safe[0], body, csp);

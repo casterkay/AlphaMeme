@@ -40,6 +40,20 @@ test('audit and fresh cutoffs are inclusive and saved records survive evidence e
   assert.match(detail.text,/no longer retained/);assert.ok(!actions(detail).includes('mark.set_passed'));
 });
 
+test('the live feed states why collection is delayed, including a blocked key, in both locales',()=>{
+  for(const [reason,zh,en] of [['BLOCKED','密钥被临时封锁','Key temporarily blocked'],['RATE_LIMITED','请求额度受限','Rate limited'],['REQUEST_WAIT','等待采集窗口','Waiting for a collection slot']]) {
+    const snapshot=fixture();
+    snapshot.live={subscribed:true,focusChain:'sol'};
+    snapshot.liveByChain={sol:{rows:[],status:reason,lastAttemptAt:now,lastSuccessAt:null,delayReason:reason}};
+    assert.match(renderPanel(snapshot,session('feed'),'zh').text,new RegExp(zh),reason);
+    assert.match(renderPanel(snapshot,session('feed'),'en').text,new RegExp(en),reason);
+  }
+  const healthy=fixture();
+  healthy.live={subscribed:true,focusChain:'sol'};
+  healthy.liveByChain={sol:{rows:[],status:'READY',lastAttemptAt:now,lastSuccessAt:now,delayReason:null}};
+  assert.doesNotMatch(renderPanel(healthy,session('feed'),'en').text,/Feed status/);
+});
+
 test('five-row pagination clamps after deletion and token buttons bind identities rather than ordinals',()=>{
   const snapshot=fixture(),result=renderPanel(snapshot,session('audits',{page:999}),'en');
   const buttons=result.keyboard.flat().filter(item=>item.token);

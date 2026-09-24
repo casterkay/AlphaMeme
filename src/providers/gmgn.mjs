@@ -44,13 +44,47 @@ function mergeDefined(left = {}, right = {}) {
 }
 
 
+// Both the message-derived wait and a provider-declared deadline are judged against one horizon:
+// the provider documents that repeated requests extend a block by at most five minutes, and a
+// deadline beyond that is a quota or plan condition rather than momentary throttling.
+const RESET_HORIZON_MS = 5 * 60_000;
+
 function retryAfterMs(message) {
   const match = String(message || '').match(/~?(\d+)s\s+remaining/i);
-  return Math.min(5 * 60_000, Math.max(30_000, Number(match?.[1] || 30) * 1000));
+  return Math.min(RESET_HORIZON_MS, Math.max(30_000, Number(match?.[1] || 30) * 1000));
+}
+
+// The provider's official client reads the reset deadline from the `x-ratelimit-reset` header
+// only. The body `reset_at` field is retained because some published skills describe it.
+function resetDeadlineUnix(error) {
+  return Math.max(Number(error?.headerResetAtUnix) || 0, Number(error?.bodyResetAtUnix) || 0, Number(error?.resetAtUnix) || 0);
+}
+
+function resetDeadlineMs(error) {
+  return Math.max(0, resetDeadlineUnix(error) * 1000 - Date.now() + 1000 || 0);
+}
+
+const EVIDENCE_BODY_LIMIT = 1024;
+const EVIDENCE_HEADER_PATTERN = /^(x-ratelimit|retry-after|x-request-id|cf-ray)/i;
+
+// Bounded raw evidence from a rejected response, so the first real 429 can be classified from
+// captured bytes instead of an assumed shape.
+function rejectionEvidence(response, body) {
+  const headers = {};
+  for (const [name, value] of response?.headers?.entries?.() ?? []) {
+    if (EVIDENCE_HEADER_PATTERN.test(name)) headers[name.toLowerCase()] = value;
+  }
+  const text = typeof body === 'string' ? body : '';
+  return {
+    status: Number(response?.status) || 0,
+    headers,
+    bodyPrefix: text.slice(0, EVIDENCE_BODY_LIMIT),
+    bodyTruncated: text.length > EVIDENCE_BODY_LIMIT
+  };
 }
 
 function preserveErrorMetadata(translated, source) {
-  for (const name of ['status', 'apiCode', 'apiError', 'apiMessage', 'resetAtUnix', 'headerResetAtUnix', 'bodyResetAtUnix']) {
+  for (const name of ['status', 'apiCode', 'apiError', 'apiMessage', 'upgradeUrl', 'upgradeMessage', 'resetAtUnix', 'headerResetAtUnix', 'bodyResetAtUnix', 'rateLimitEvidence']) {
     if (source?.[name] !== undefined) translated[name] = source[name];
   }
   return translated;
@@ -75,11 +109,27 @@ export function translateGmgnError(error) {
   } else if (error?.code === 'GMGN_INVALID_RESPONSE' || /non-JSON|invalid response/i.test(raw)) {
     code = 'GMGN_INVALID_RESPONSE';
     message = 'GMGN返回的数据格式无法解析，已丢弃原始响应并等待重试。';
+  } else if (/ERROR_RATE_LIMIT_BLOCKED/i.test(raw)) {
+    // Repeated *business* errors block the key; GMGN requires the request to be fixed and does
+    // not auto-retry this case. No floor is invented: the block's own reset deadline governs.
+    retryAfterMsValue = resetDeadlineMs(error);
+    code = 'GMGN_RATE_LIMIT_BLOCKED';
+    message = retryAfterMsValue > 0
+      ? `GMGN已因重复的请求错误临时封锁该Key；约${Math.ceil(retryAfterMsValue / 1000)}秒后可重试，请先修正请求，继续请求可能延长封锁。`
+      : 'GMGN已因重复的请求错误临时封锁该Key，需修正请求后再试；继续请求可能延长封锁。';
   } else if (/RATE_LIMIT_EXCEEDED|RATE_LIMIT_BANNED|GMGN_RATE_LIMITED|HTTP\s*429|API\s*429/i.test(raw)) {
-    const resetAtUnix = Math.max(Number(error?.headerResetAtUnix) || 0, Number(error?.bodyResetAtUnix) || 0, Number(error?.resetAtUnix) || 0);
-    retryAfterMsValue = Math.max(retryAfterMs(raw), resetAtUnix * 1000 - Date.now() + 1000 || 0);
-    code = 'GMGN_RATE_LIMITED';
-    message = `GMGN请求频率超限，已停止本轮后续请求；约${Math.ceil(retryAfterMsValue / 1000)}秒后可恢复，下一轮会自动重试。`;
+    const resetMs = resetDeadlineMs(error);
+    if (resetMs > RESET_HORIZON_MS) {
+      // A deadline beyond the throttle horizon is a quota or plan ceiling. The wait is still
+      // honored, but it is reported as a block so it is not misread as "retry shortly".
+      retryAfterMsValue = resetMs;
+      code = 'GMGN_RATE_LIMIT_BLOCKED';
+      message = `GMGN限流恢复时间约${Math.ceil(resetMs / 60_000)}分钟，超过${Math.ceil(RESET_HORIZON_MS / 60_000)}分钟阈值，可能是配额或套餐上限；请检查Key与用量，勿反复重试。`;
+    } else {
+      retryAfterMsValue = Math.max(retryAfterMs(raw), resetMs);
+      code = 'GMGN_RATE_LIMITED';
+      message = `GMGN请求频率超限，已停止本轮后续请求；约${Math.ceil(retryAfterMsValue / 1000)}秒后可恢复，下一轮会自动重试。`;
+    }
   } else if (/HTTP\s*401|API\s*401|GMGN_AUTH_FAILED|UNAUTHORIZED|AUTH_KEY_INVALID|invalid.*api.?key/i.test(raw)) {
     code = 'GMGN_AUTH_FAILED';
     message = 'GMGN API Key无效或已失效，请重新配置。';
@@ -234,10 +284,12 @@ function parseEnvelope(response, body) {
   } catch {
     if (status < 200 || status >= 300) {
       throw errorWith('GMGN_HTTP_ERROR', 'GMGN returned an HTTP error', {
-        status, headerResetAtUnix, resetAtUnix: headerResetAtUnix
+        status, headerResetAtUnix, resetAtUnix: headerResetAtUnix, rateLimitEvidence: rejectionEvidence(response, body)
       });
     }
-    throw errorWith('GMGN_INVALID_RESPONSE', 'Response was not JSON', { status: response.status });
+    throw errorWith('GMGN_INVALID_RESPONSE', 'Response was not JSON', {
+      status: response.status, rateLimitEvidence: rejectionEvidence(response, body)
+    });
   }
   if (status < 200 || status >= 300 || !envelope || typeof envelope !== 'object' || envelope.code !== 0) {
     const bodyResetAtUnix = validUnixSeconds(envelope?.reset_at);
@@ -246,9 +298,12 @@ function parseEnvelope(response, body) {
       apiCode: envelope?.code,
       apiError: envelope?.error,
       apiMessage: envelope?.message,
+      upgradeUrl: envelope?.upgrade_url,
+      upgradeMessage: envelope?.upgrade_message,
       headerResetAtUnix,
       bodyResetAtUnix,
-      resetAtUnix: Math.max(headerResetAtUnix || 0, bodyResetAtUnix || 0) || undefined
+      resetAtUnix: Math.max(headerResetAtUnix || 0, bodyResetAtUnix || 0) || undefined,
+      rateLimitEvidence: rejectionEvidence(response, body)
     });
   }
   return envelope.data;
@@ -589,14 +644,20 @@ export class GmgnClient {
           ? error
           : errorWith('GMGN_NETWORK_ERROR', 'network request failed');
       const translated = translateGmgnError(source);
-      if (translated.code === 'GMGN_RATE_LIMITED') {
+      const blocked = translated.code === 'GMGN_RATE_LIMIT_BLOCKED';
+      if (translated.code === 'GMGN_RATE_LIMITED' || blocked) {
+        // A block states when it lifts, so it arms the shared cooldown from that deadline
+        // without inventing a floor and without escalating the rate-limit backoff.
         await this.#persistAdmission({
           ...this.admission,
-          nextAllowedAt: Math.max(this.nextAllowedAt, this.now() + translated.retryAfterMs),
-          backoffFactor: Math.min(8, this.backoffFactor * 2),
+          nextAllowedAt: Math.max(this.nextAllowedAt, this.now() + (Number(translated.retryAfterMs) || 0)),
+          backoffFactor: blocked ? this.backoffFactor : Math.min(8, this.backoffFactor * 2),
           successStreak: 0
         });
-        this.metrics.rateLimits++;
+        if (!blocked) this.metrics.rateLimits++;
+        if (translated.rateLimitEvidence) {
+          this.metrics.lastRateLimitEvidence = { code: translated.code, ...translated.rateLimitEvidence };
+        }
       }
       throw translated;
     } finally {

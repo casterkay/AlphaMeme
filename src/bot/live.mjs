@@ -84,7 +84,9 @@ export class PersistentLive {
       else input = normalizeGmgnList(result, ['rank']);
     } catch (error) {
       if (typeof error?.code !== 'string' && error?.name !== 'AbortError' && !(error instanceof TypeError)) throw error;
-      failure = error.code === 'GMGN_RATE_LIMITED' ? 'RATE_LIMITED' : ['GMGN_AUTH_FAILED', 'GMGN_PERMISSION_DENIED'].includes(error.code) ? 'AUTH_REQUIRED' : 'REQUEST_FAILED';
+      failure = error.code === 'GMGN_RATE_LIMITED' ? 'RATE_LIMITED'
+        : error.code === 'GMGN_RATE_LIMIT_BLOCKED' ? 'BLOCKED'
+        : ['GMGN_AUTH_FAILED', 'GMGN_PERMISSION_DENIED'].includes(error.code) ? 'AUTH_REQUIRED' : 'REQUEST_FAILED';
     }
     this.storage.transactionSync(() => {
       const state = this.state(), live = state.runtime.live;
