@@ -67,9 +67,10 @@ function resetDeadlineMs(error) {
 const EVIDENCE_BODY_LIMIT = 1024;
 const EVIDENCE_HEADER_PATTERN = /^(x-ratelimit|retry-after|x-request-id|cf-ray)/i;
 
-// Bounded raw evidence from a rejected response, so the first real 429 can be classified from
-// captured bytes instead of an assumed shape.
-function rejectionEvidence(response, body) {
+// Bounded raw evidence from a provider response, so a rejection can be classified from captured
+// bytes instead of an assumed shape. The deployed timing probe records the same fields, which is
+// how a future run distinguishes a provider rejection from a local cooldown refusal.
+export function responseEvidence(response, body) {
   const headers = {};
   for (const [name, value] of response?.headers?.entries?.() ?? []) {
     if (EVIDENCE_HEADER_PATTERN.test(name)) headers[name.toLowerCase()] = value;
@@ -284,11 +285,11 @@ function parseEnvelope(response, body) {
   } catch {
     if (status < 200 || status >= 300) {
       throw errorWith('GMGN_HTTP_ERROR', 'GMGN returned an HTTP error', {
-        status, headerResetAtUnix, resetAtUnix: headerResetAtUnix, rateLimitEvidence: rejectionEvidence(response, body)
+        status, headerResetAtUnix, resetAtUnix: headerResetAtUnix, rateLimitEvidence: responseEvidence(response, body)
       });
     }
     throw errorWith('GMGN_INVALID_RESPONSE', 'Response was not JSON', {
-      status: response.status, rateLimitEvidence: rejectionEvidence(response, body)
+      status: response.status, rateLimitEvidence: responseEvidence(response, body)
     });
   }
   if (status < 200 || status >= 300 || !envelope || typeof envelope !== 'object' || envelope.code !== 0) {
@@ -303,7 +304,7 @@ function parseEnvelope(response, body) {
       headerResetAtUnix,
       bodyResetAtUnix,
       resetAtUnix: Math.max(headerResetAtUnix || 0, bodyResetAtUnix || 0) || undefined,
-      rateLimitEvidence: rejectionEvidence(response, body)
+      rateLimitEvidence: responseEvidence(response, body)
     });
   }
   return envelope.data;

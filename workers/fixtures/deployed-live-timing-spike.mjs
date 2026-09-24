@@ -1,4 +1,4 @@
-import { GmgnClient } from '../../src/providers/gmgn.mjs';
+import { GmgnClient, responseEvidence } from '../../src/providers/gmgn.mjs';
 import {
   OneAlarmScheduler,
   createTaskDescriptor,
@@ -74,32 +74,52 @@ function publicResult(record) {
   };
 }
 
-function controlledFetch(record) {
+// Every fetch the client makes goes through here, so a refusal the client makes before reaching
+// the network stays distinguishable from a provider rejection in the recorded result.
+function controlledFetch(record, capture) {
   return async (url, options) => {
-    const firstScan = record.activeKind === 'scan' && record.activeSequence === 1;
-    if (record.scenario === 'slow' && firstScan) {
-      await new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, GMGN_TIMEOUT_MS + 5_000);
-        const abort = () => {
-          clearTimeout(timer);
-          reject(options.signal?.reason || new DOMException('Aborted', 'AbortError'));
-        };
-        if (options.signal?.aborted) abort();
-        else options.signal?.addEventListener('abort', abort, { once: true });
-      });
+    capture.attempted = true;
+    let response;
+    try {
+      response = await respond(record, url, options);
+    } catch (error) {
+      capture.transportError = String(error?.name || error);
+      throw error;
     }
-    if (record.scenario === 'rate-limit' && firstScan) {
-      return Response.json({ code: 429, error: 'RATE_LIMIT_EXCEEDED' }, {
-        status: 429,
-        headers: { 'Retry-After': '2' }
-      });
+    try {
+      // Probe payloads are single-row market reads, so reading the clone for evidence is bounded.
+      capture.response = responseEvidence(response, await response.clone().text());
+    } catch {
+      capture.response = responseEvidence(response, '');
     }
-    if (record.scenario === 'miss' && record.activeKind === 'scan') {
-      return Response.json({ code: 404, error: 'NOT_FOUND' }, { status: 404 });
-    }
-    if (record.scenario !== 'normal') return Response.json({ code: 0, data: { rank: [] } });
-    return fetch(url, options);
+    return response;
   };
+}
+
+async function respond(record, url, options) {
+  const firstScan = record.activeKind === 'scan' && record.activeSequence === 1;
+  if (record.scenario === 'slow' && firstScan) {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, GMGN_TIMEOUT_MS + 5_000);
+      const abort = () => {
+        clearTimeout(timer);
+        reject(options.signal?.reason || new DOMException('Aborted', 'AbortError'));
+      };
+      if (options.signal?.aborted) abort();
+      else options.signal?.addEventListener('abort', abort, { once: true });
+    });
+  }
+  if (record.scenario === 'rate-limit' && firstScan) {
+    return Response.json({ code: 429, error: 'RATE_LIMIT_EXCEEDED' }, {
+      status: 429,
+      headers: { 'Retry-After': '2' }
+    });
+  }
+  if (record.scenario === 'miss' && record.activeKind === 'scan') {
+    return Response.json({ code: 404, error: 'NOT_FOUND' }, { status: 404 });
+  }
+  if (record.scenario !== 'normal') return Response.json({ code: 0, data: { rank: [] } });
+  return fetch(url, options);
 }
 
 function memoryStore(record) {
@@ -177,19 +197,23 @@ export class LiveTimingProbe {
       const requestStartedAt = Date.now();
       record.activeKind = task.kind;
       record.activeSequence = sequence;
+      const cooldownAt = record.state.gmgn.nextAllowedAt || 0;
       const measurement = {
         kind: task.kind,
         sequence,
         source: record.scenario === 'normal' ? 'gmgn' : 'controlled',
         scheduledAt: task.dueAt,
         startedAt: requestStartedAt,
-        pollLagMs: task.kind === 'live' ? requestStartedAt - record.liveScheduledAt : null
+        pollLagMs: task.kind === 'live' ? requestStartedAt - record.liveScheduledAt : null,
+        clientCooldownAt: cooldownAt,
+        cooldownRemainingMs: Math.max(0, cooldownAt - requestStartedAt)
       };
+      const capture = { attempted: false, response: null, transportError: null };
       const gmgn = new GmgnClient({
         timeoutMs: GMGN_TIMEOUT_MS,
         apiKeyProvider: () => this.env.GMGN_API_KEY,
         legacyKeyProvider: () => '',
-        fetch: controlledFetch(record),
+        fetch: controlledFetch(record, capture),
         admissionStateStore: admissionStore(record),
         admissionReservation: gmgnReservation
       });
@@ -207,6 +231,9 @@ export class LiveTimingProbe {
         measurement.errorCode = String(error?.code || error?.name || 'UNKNOWN');
       } finally {
         measurement.requestMs = Date.now() - requestStartedAt;
+        measurement.networkAttempted = capture.attempted;
+        measurement.network = capture.response;
+        measurement.transportError = capture.transportError;
         record.requests.push(measurement);
         delete record.activeKind;
         delete record.activeSequence;
