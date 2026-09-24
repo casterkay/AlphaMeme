@@ -84,3 +84,12 @@ DO-alarm timing and Cloudflare CPU measurements are captured.** The isolated
 Worker target, GMGN test-credential source and Telegram test bot must be selected
 before that deployment. No production bot or deployment is changed by local
 verification.
+
+## Fly.io runtime
+
+The same Worker runs unchanged on a single Fly.io machine with a dedicated IPv4
+(see [FLY-DEPLOYMENT.md](FLY-DEPLOYMENT.md)) to escape GMGN's ban on Cloudflare's
+shared Workers egress. `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
+`MASTER_ENC_KEY` and `OPERATOR_TOKEN` become Fly secrets; GMGN keys still enter
+only through Telegram onboarding. Upgrade with `fly deploy`; roll back by pointing
+the webhook back at the Cloudflare deployment.
