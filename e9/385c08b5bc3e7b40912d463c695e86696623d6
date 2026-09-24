@@ -1,0 +1,47 @@
+README.md
+  s_d53bd87715c163::t_960ce3b45407b0 14
+  s_d53bd87715c163::t_d75cb8be1423d6 93
+docs/CLOUDFLARE-TELEGRAM-REFACTOR.md
+  s_d53bd87715c163::t_bfbc83b5fc83ac 723
+  s_d53bd87715c163::t_b8ce50f7d19916 42
+  s_d53bd87715c163::t_73fe7e64718081 238
+  s_d53bd87715c163::t_140c96e797549d 112
+  s_d53bd87715c163::t_983566a21a702f 163
+  s_d53bd87715c163::t_ad65ed64771bff 660
+  s_d53bd87715c163::t_74d9af6a48c64f 676
+  s_d53bd87715c163::t_a4025e73270ce9 65
+  s_d53bd87715c163::t_76721a8607fde6 236
+  s_d53bd87715c163::t_dbdbe05c9de1de 227
+  s_d53bd87715c163::t_c8efe59b9df4be 430
+  s_d53bd87715c163::t_46542c7f9ed908 40
+  s_d53bd87715c163::t_164abe14500c07 19
+  s_d53bd87715c163::t_0cdc816ba549dd 708
+docs/TELEGRAM-M3-INTERFACE-DESIGN.md
+  s_d53bd87715c163::t_a5dc4b34ba4172 247
+  s_d53bd87715c163::t_7827b235695d16 215
+  s_d53bd87715c163::t_9c2e39e0f280ab 251
+  s_d53bd87715c163::t_0b9e1c880fc484 291
+  s_d53bd87715c163::t_e2a5a861ad5588 272
+docs/spikes/LIVE-TIMING.md
+  s_d53bd87715c163::t_a745eb9ebc2fc1 16-21
+  s_d53bd87715c163::t_464c1804d937a7 154
+  s_d53bd87715c163::t_f903272234f1bd 160-164
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_d53bd87715c163::t_c4c2c89afefba5 60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e9385c08b5bc3e7b40912d463c695e86696623d6",
+  "prompts": {},
+  "sessions": {
+    "s_d53bd87715c163": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81e98a31-7832-4360-8cae-4fc1ac5a43ca",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
