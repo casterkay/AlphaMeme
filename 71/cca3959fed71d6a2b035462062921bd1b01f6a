@@ -1,0 +1,31 @@
+docs/spikes/LIVE-TIMING.md
+  s_d53bd87715c163::t_9ef3ad1213c1bb 98-117,125-165
+  s_d53bd87715c163::t_90eaafab0994e1 118-124
+  s_d53bd87715c163::t_4573a3784f0287 73-74
+  s_d53bd87715c163::t_a2f1cb1abfc0c0 90-96
+  s_d53bd87715c163::t_bbbd6df8b72493 8-14
+  s_d53bd87715c163::t_1ad6ba2e71c0aa 45
+  s_d53bd87715c163::t_4823b4fa77ad40 52-55
+  s_d53bd87715c163::t_e1e4baffd937e0 97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "71cca3959fed71d6a2b035462062921bd1b01f6a",
+  "prompts": {},
+  "humans": {
+    "h_0528fe13c98664": {
+      "author": "casterkay <poetrycoder>"
+    }
+  },
+  "sessions": {
+    "s_d53bd87715c163": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81e98a31-7832-4360-8cae-4fc1ac5a43ca",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
