@@ -1,0 +1,43 @@
+workers/fixtures/deployed-live-timing-spike.mjs
+  s_d53bd87715c163::t_c8ebc47ae355d3 77-79,81-87,89-93,95,99
+  s_d53bd87715c163::t_2f9a0d4f3b78fd 200,207-209,211,216
+  s_d53bd87715c163::t_f11960e72e8498 1
+  s_d53bd87715c163::t_9025bff0ce7435 100-122
+  s_d53bd87715c163::t_4ffd50cca64577 234-236
+  s_d53bd87715c163::t_37d627c2f3a13d 123-124
+docs/spikes/LIVE-TIMING.md
+  s_d53bd87715c163::t_27b7541f0c069d 30-32
+  s_d53bd87715c163::t_6719c52a81bc00 72
+  s_d53bd87715c163::t_d096cf353ca92c 94-96
+  s_d53bd87715c163::t_473fe47d606097 44
+  s_d53bd87715c163::t_9f9b87f33df738 6-13
+  s_d53bd87715c163::t_7a63451d9dc2f5 86-93,97-124
+  s_d53bd87715c163::t_a561891a93a3d4 67-71
+test/deployed-live-timing-spike.test.mjs
+  s_d53bd87715c163::t_d1dd0a042fb54c 18-32,39-59
+  s_d53bd87715c163::t_7af157881aad5b 33-38
+src/providers/gmgn.mjs
+  s_d53bd87715c163::t_78e260161c142d 288,292,307
+  s_d53bd87715c163::t_aaedb71e8bf6c0 70-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "474173584efe4c289c5346bad78f6b1a799dc717",
+  "prompts": {},
+  "humans": {
+    "h_0528fe13c98664": {
+      "author": "casterkay <poetrycoder>"
+    }
+  },
+  "sessions": {
+    "s_d53bd87715c163": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81e98a31-7832-4360-8cae-4fc1ac5a43ca",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
