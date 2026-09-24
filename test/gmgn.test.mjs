@@ -217,7 +217,7 @@ test('a repeated-error block is classified apart from a rate limit and carries u
     return true;
   });
   assert.equal(client.metrics.rateLimits, 0, 'a block is not an ordinary rate limit');
-  assert.equal(store.state.backoffFactor, 1, 'a block must not escalate the rate-limit backoff');
+  assert.equal(store.state.backoffFactor, 2, 'a block escalates the backoff to outlive its reset');
   assert.ok(store.state.nextAllowedAt >= now + 170_000, 'the block deadline still arms the shared cooldown');
 });
 
@@ -235,6 +235,47 @@ test('a block without a reset deadline invents no floor, unlike a rate limit', a
     assert.equal(error.retryAfterMs, 30_000);
     return true;
   });
+});
+
+test('an IP ban is a block even when its reset falls inside the throttle horizon', async () => {
+  const resetAtUnix = Math.ceil(Date.now() / 1000) + 285;
+  const store = durableAdmissionStore();
+  const client = clientWith(async () => new Response(JSON.stringify({
+    code: 429,
+    error: 'RATE_LIMIT_BANNED',
+    message: 'IP is temporarily banned due to repeated rate limit violations',
+    reset_at: resetAtUnix,
+    tier: 'free'
+  }), { status: 429, headers: { 'x-ratelimit-reset': String(resetAtUnix) } }), { admissionStateStore: store });
+
+  await assert.rejects(client.tokenInfo('bsc', address), error => {
+    assert.equal(error.code, 'GMGN_RATE_LIMIT_BLOCKED', 'an IP ban is a block, not a short retry');
+    assert.equal(error.apiError, 'RATE_LIMIT_BANNED');
+    assert.equal(error.tier, 'free', 'the plan tier is passed through');
+    return true;
+  });
+  assert.equal(client.metrics.rateLimits, 0);
+  assert.equal(store.state.backoffFactor, 2);
+  assert.ok(store.state.nextAllowedAt >= now + 280_000, 'the ban deadline still arms the shared cooldown');
+});
+
+test('a repeated ban after the cooldown scales the wait with the backoff factor', async () => {
+  const store = durableAdmissionStore();
+  let clock = now;
+  const resetAtUnix = () => Math.ceil(Date.now() / 1000) + 285;
+  const banned = () => new Response(JSON.stringify({
+    code: 429, error: 'RATE_LIMIT_BANNED', message: 'IP is temporarily banned'
+  }), { status: 429, headers: { 'x-ratelimit-reset': String(resetAtUnix()) } });
+  const client = clientWith(async () => banned(), { admissionStateStore: store, now: () => clock });
+
+  await assert.rejects(client.tokenInfo('bsc', address), { code: 'GMGN_RATE_LIMIT_BLOCKED' });
+  assert.equal(store.state.backoffFactor, 2);
+  const firstCooldown = store.state.nextAllowedAt - clock;
+
+  clock = store.state.nextAllowedAt;
+  await assert.rejects(client.tokenInfo('bsc', address), { code: 'GMGN_RATE_LIMIT_BLOCKED' });
+  assert.equal(store.state.backoffFactor, 4);
+  assert.ok(store.state.nextAllowedAt - clock >= firstCooldown * 2 - 1, 'the renewed ban waits twice as long');
 });
 
 test('rejected responses keep bounded raw evidence and the provider request id', async () => {
@@ -275,7 +316,7 @@ test('a reset deadline beyond the throttle horizon is reported as a block, not a
     return true;
   });
   assert.equal(client.metrics.rateLimits, 0, 'a quota ceiling is not throttling');
-  assert.equal(store.state.backoffFactor, 1, 'a quota ceiling must not escalate the rate-limit backoff');
+  assert.equal(store.state.backoffFactor, 2, 'a quota ceiling still escalates the backoff');
 });
 
 test('a rate limit carries upgrade guidance when the provider supplies it', async () => {
@@ -403,8 +444,8 @@ test('reconstructed clients honor persisted weighted spacing reservations before
   await second.marketRank('bsc', '1m', { limit: 1 });
 
   assert.deepEqual(waits, [500]);
-  assert.equal(store.state.lastWeight, 1);
-  assert.equal(store.state.spacingReadyAt, now + 600);
+  assert.equal(store.state.lastWeight, 3);
+  assert.equal(store.state.spacingReadyAt, now + 800);
 });
 
 test('persisted rate-limit cooldown survives credential changes and blocks every later read', async () => {

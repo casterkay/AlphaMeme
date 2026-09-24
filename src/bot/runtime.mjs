@@ -10,6 +10,7 @@ import { createTelegramExport, readTelegramSnapshot } from './snapshot.mjs';
 import { readTelegramStatistics } from './statistics.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
 import { normalizeGmgnApiKey } from '../gmgn-api-key.mjs';
+import { gmgnRequestWeight } from '../providers/gmgn.mjs';
 import { encryptSecret, decryptSecret } from '../util/crypto.mjs';
 import { ensurePendingSigningKey, regeneratePendingSigningKey, signingSetupSnapshot, SigningKeyError } from '../auth/key-store.mjs';
 import { prepareOnboardingVerification, verifyAndActivateOnboardingCredential, failOnboardingVerification, ConnectionError } from '../auth/connection.mjs';
@@ -161,7 +162,7 @@ export class TelegramRuntime {
       if (current) continue;
       const scanner = new RecoverableScanner({ store, settings: scannerSettings, now: this.now });
       const cycleId = `telegram:${chain}:${state.keyEpoch}:${this.now()}`;
-      scanner.begin({ cycleId, chain, keyEpoch: state.keyEpoch, controlEpoch: state.controlEpoch, deadlineAt: this.now() + scannerSettings.auditCycleBudgetMs, afterBegin: () => scheduleRecoverableScanTaskInTransaction(this.storage, this.tenantId, cycleId, this.now(), 3) });
+      scanner.begin({ cycleId, chain, keyEpoch: state.keyEpoch, controlEpoch: state.controlEpoch, deadlineAt: this.now() + scannerSettings.auditCycleBudgetMs, afterBegin: () => scheduleRecoverableScanTaskInTransaction(this.storage, this.tenantId, cycleId, this.now(), gmgnRequestWeight('trenches')) });
     }
     this.control.ensureActiveChain(enabled[0]);
   }

@@ -85,7 +85,7 @@ export function responseEvidence(response, body) {
 }
 
 function preserveErrorMetadata(translated, source) {
-  for (const name of ['status', 'apiCode', 'apiError', 'apiMessage', 'upgradeUrl', 'upgradeMessage', 'resetAtUnix', 'headerResetAtUnix', 'bodyResetAtUnix', 'rateLimitEvidence']) {
+  for (const name of ['status', 'apiCode', 'apiError', 'apiMessage', 'upgradeUrl', 'upgradeMessage', 'tier', 'resetAtUnix', 'headerResetAtUnix', 'bodyResetAtUnix', 'rateLimitEvidence']) {
     if (source?.[name] !== undefined) translated[name] = source[name];
   }
   return translated;
@@ -118,7 +118,17 @@ export function translateGmgnError(error) {
     message = retryAfterMsValue > 0
       ? `GMGN已因重复的请求错误临时封锁该Key；约${Math.ceil(retryAfterMsValue / 1000)}秒后可重试，请先修正请求，继续请求可能延长封锁。`
       : 'GMGN已因重复的请求错误临时封锁该Key，需修正请求后再试；继续请求可能延长封锁。';
-  } else if (/RATE_LIMIT_EXCEEDED|RATE_LIMIT_BANNED|GMGN_RATE_LIMITED|HTTP\s*429|API\s*429/i.test(raw)) {
+  } else if (/RATE_LIMIT_BANNED/i.test(raw)) {
+    // An IP ban names the egress address, not the credential. The reset deadline governs, but a
+    // short ban must not read as a momentary throttle: retrying at the advertised reset renews
+    // the ban (the 2026-09-24 capture renewed +285s), so it is a block regardless of how near
+    // the deadline is.
+    retryAfterMsValue = resetDeadlineMs(error);
+    code = 'GMGN_RATE_LIMIT_BLOCKED';
+    message = retryAfterMsValue > 0
+      ? `GMGN已因重复超限临时封锁该出口地址；约${Math.ceil(retryAfterMsValue / 1000)}秒后可重试，继续请求会延长封锁。`
+      : 'GMGN已因重复超限临时封锁该出口地址，需等待解封后再试；继续请求会延长封锁。';
+  } else if (/RATE_LIMIT_EXCEEDED|GMGN_RATE_LIMITED|HTTP\s*429|API\s*429/i.test(raw)) {
     const resetMs = resetDeadlineMs(error);
     if (resetMs > RESET_HORIZON_MS) {
       // A deadline beyond the throttle horizon is a quota or plan ceiling. The wait is still
@@ -150,7 +160,7 @@ export function translateGmgnError(error) {
 
 
 export function gmgnRequestWeight(operation) {
-  return ({ tokenTopHolders: 5, tokenTopTraders: 5, trenches: 3, tokenKline: 2 })[operation] || 1;
+  return ({ tokenTopHolders: 5, tokenTopTraders: 5, marketRank: 3, tokenKline: 2, trenches: 2 })[operation] || 1;
 }
 
 const ADMISSION_STATE_DEFAULTS = Object.freeze({
@@ -301,6 +311,7 @@ function parseEnvelope(response, body) {
       apiMessage: envelope?.message,
       upgradeUrl: envelope?.upgrade_url,
       upgradeMessage: envelope?.upgrade_message,
+      tier: envelope?.tier,
       headerResetAtUnix,
       bodyResetAtUnix,
       resetAtUnix: Math.max(headerResetAtUnix || 0, bodyResetAtUnix || 0) || undefined,
@@ -647,12 +658,15 @@ export class GmgnClient {
       const translated = translateGmgnError(source);
       const blocked = translated.code === 'GMGN_RATE_LIMIT_BLOCKED';
       if (translated.code === 'GMGN_RATE_LIMITED' || blocked) {
-        // A block states when it lifts, so it arms the shared cooldown from that deadline
-        // without inventing a floor and without escalating the rate-limit backoff.
+        // A block states when it lifts, but retrying exactly at the advertised reset re-bans the
+        // shared egress (the 2026-09-24 capture renewed +285s on the second try). Scaling the
+        // deadline by the backoff factor — and escalating it — keeps the next attempt past the
+        // reset so a renewal does not become a death loop. Ordinary throttling is not scaled.
+        const cooldownMs = (Number(translated.retryAfterMs) || 0) * (blocked ? this.backoffFactor : 1);
         await this.#persistAdmission({
           ...this.admission,
-          nextAllowedAt: Math.max(this.nextAllowedAt, this.now() + (Number(translated.retryAfterMs) || 0)),
-          backoffFactor: blocked ? this.backoffFactor : Math.min(8, this.backoffFactor * 2),
+          nextAllowedAt: Math.max(this.nextAllowedAt, this.now() + cooldownMs),
+          backoffFactor: Math.min(8, this.backoffFactor * 2),
           successStreak: 0
         });
         if (!blocked) this.metrics.rateLimits++;

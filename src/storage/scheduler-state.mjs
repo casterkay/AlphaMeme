@@ -8,6 +8,7 @@ import {
   readGmgnAdmissionState,
   writeGmgnAdmissionStateInTransaction
 } from './gmgn-admission-state.mjs';
+import { gmgnRequestWeight } from '../providers/gmgn.mjs';
 
 const INSTANCE_KEY = 'scheduler.instance.v1';
 const RUNTIME_KEY = 'scheduler.runtime.v1';
@@ -255,7 +256,7 @@ export function scheduleCredentialVerificationTaskInTransaction(storage, tenant,
     dueAt,
     enabled: true,
     needsGmgn: true,
-    gmgnWeight: 1
+    gmgnWeight: gmgnRequestWeight('marketRank')
   };
   const tasks = [...current.tasks.filter(item => item.kind !== 'credential'), task];
   writeRecord(storage, tenantId, TASKS_KEY, taskRecord({ version: 1, tasks }));

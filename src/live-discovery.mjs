@@ -7,8 +7,8 @@ const identity = (chain, value) => chain === 'sol' ? value : value.toLowerCase()
 const addressValid = (chain, value) => typeof value === 'string' && (chain === 'sol' ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ : /^0x[0-9a-f]{40}$/i).test(value);
 
 export class LiveDiscovery {
-  constructor({ gmgn, settings = config, now = Date.now, intervalMs = 20000, leaseMs = 30000, schedule = setTimeout, cancel = clearTimeout }) {
-    this.gmgn = gmgn; this.settings = settings; this.now = now; this.intervalMs = Math.max(20000, intervalMs);
+  constructor({ gmgn, settings = config, now = Date.now, intervalMs = 5000, leaseMs = 30000, schedule = setTimeout, cancel = clearTimeout }) {
+    this.gmgn = gmgn; this.settings = settings; this.now = now; this.intervalMs = intervalMs;
     this.leaseMs = leaseMs; this.schedule = schedule; this.cancel = cancel;
     this.states = new Map(); this.raw = new Map(); this.focus = ''; this.leaseUntil = 0;
     this.nextPollAt = 0; this.running = false; this.timer = null; this.stopped = false; this.epoch = gmgn.keyEpoch;
