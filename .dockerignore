@@ -16,8 +16,9 @@ test
 workers
 docs
 scripts
-public
 packaging
+public/*
+!public/voice-alerts.mjs
 *.md
 *.bat
 *.command

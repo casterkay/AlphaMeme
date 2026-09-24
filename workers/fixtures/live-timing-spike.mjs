@@ -59,7 +59,7 @@ export default {
       steps.push(await scheduler.alarm());
     }
     return Response.json({ scenario, environment: 'local-workerd-loopback', requestTimeoutMs: timeoutMs,
-      minRequestGapMs: 1100, liveTargetMs: 20000, requests, steps,
+      minRequestGapMs: 1100, liveTargetMs: 5000, requests, steps,
       complete: value.tasks.length === 0, cpuMs: null, cpuUnavailableReason: 'No per-invocation CPU telemetry in this local probe',
       wallMs: Date.now() - startedAt });
   }

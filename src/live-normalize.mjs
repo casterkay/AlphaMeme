@@ -30,7 +30,9 @@ export function normalizeLiveRows(input, chain, previous = [], at = Date.now(), 
       || [raw.rug_ratio, raw.bundler_rate, raw.rat_trader_amount_rate].some(value => rate(value) !== null && rate(value) > .3)) continue;
     const old = before.get(address);
     const elapsed = old ? at - old.observedAt : 0;
-    const comparable = elapsed >= 5000 && elapsed <= 120000;
+    // The floor sits below the 5s poll interval so request-latency jitter between two
+    // consecutive polls never drops a real delta below the comparable window.
+    const comparable = elapsed >= 3000 && elapsed <= 120000;
     const price = number(raw.price), holders = count(raw.holder_count), smart = count(raw.smart_degen_count);
     const hasUnknownRisk = [raw.rug_ratio, raw.bundler_rate, raw.rat_trader_amount_rate].some(value => rate(value) === null)
       || flag(raw.is_wash_trading) === null || (chain !== 'sol' && flag(raw.is_honeypot) === null);

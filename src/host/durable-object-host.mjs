@@ -62,8 +62,9 @@ export class DurableObjectHost {
     const entry = this.#entry(cls, name);
     const run = entry.queue.then(async () => {
       if (!entry.instance) {
-        entry.instance = new cls(entry.context, this.env);
+        const instance = new cls(entry.context, this.env);
         await Promise.all(entry.blocking);
+        entry.instance = instance;
       }
       if (typeof entry.instance[method] !== 'function') {
         throw new Error(`Durable Object ${name} has no method ${method}`);

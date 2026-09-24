@@ -98,6 +98,24 @@ test('setAlarm fires the durable object alarm once at its deadline', async t => 
   assert.equal(await alarmed.firedCount(), 1);
 });
 
+test('a failed blockConcurrencyWhile does not cache a half-initialized instance', async t => {
+  const { host } = fixture(t);
+
+  class Broken extends DurableObject {
+    constructor(ctx, env) {
+      super(ctx, env);
+      ctx.blockConcurrencyWhile(async () => { throw new Error('schema init failed'); });
+    }
+    async probe() { return 'ok'; }
+  }
+
+  const namespace = host.namespace(Broken);
+  const broken = namespace.get(namespace.idFromName('broken'));
+  await assert.rejects(broken.probe(), /schema init failed/);
+  // A later call must retry construction and fail the same way, not hit a stale instance.
+  await assert.rejects(broken.probe(), /schema init failed/);
+});
+
 test('RadarAgent and TenantRegistry initialize their schemas and serve RPC methods', async t => {
   const { env } = fixture(t);
 

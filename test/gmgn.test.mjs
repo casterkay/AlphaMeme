@@ -262,10 +262,10 @@ test('an IP ban is a block even when its reset falls inside the throttle horizon
 test('a repeated ban after the cooldown scales the wait with the backoff factor', async () => {
   const store = durableAdmissionStore();
   let clock = now;
-  const resetAtUnix = () => Math.ceil(Date.now() / 1000) + 285;
+  const resetAtUnix = Math.ceil(Date.now() / 1000) + 285;
   const banned = () => new Response(JSON.stringify({
     code: 429, error: 'RATE_LIMIT_BANNED', message: 'IP is temporarily banned'
-  }), { status: 429, headers: { 'x-ratelimit-reset': String(resetAtUnix()) } });
+  }), { status: 429, headers: { 'x-ratelimit-reset': String(resetAtUnix) } });
   const client = clientWith(async () => banned(), { admissionStateStore: store, now: () => clock });
 
   await assert.rejects(client.tokenInfo('bsc', address), { code: 'GMGN_RATE_LIMIT_BLOCKED' });
@@ -275,7 +275,8 @@ test('a repeated ban after the cooldown scales the wait with the backoff factor'
   clock = store.state.nextAllowedAt;
   await assert.rejects(client.tokenInfo('bsc', address), { code: 'GMGN_RATE_LIMIT_BLOCKED' });
   assert.equal(store.state.backoffFactor, 4);
-  assert.ok(store.state.nextAllowedAt - clock >= firstCooldown * 2 - 1, 'the renewed ban waits twice as long');
+  // `resetDeadlineMs` derives from the real clock, so tolerate its sub-second drift between bans.
+  assert.ok(store.state.nextAllowedAt - clock >= firstCooldown * 2 - 1000, 'the renewed ban waits twice as long');
 });
 
 test('rejected responses keep bounded raw evidence and the provider request id', async () => {
