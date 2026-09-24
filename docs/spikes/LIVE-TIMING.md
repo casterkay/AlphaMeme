@@ -5,12 +5,13 @@ request-level scheduling keeps live lag below 20 seconds for a provider timeout
 and missing sources. The production 30-second rate-limit floor produces 29.023
 seconds of live lag.
 
-The nominal path produced no steady-state sample. Its recorded
-`GMGN_RATE_LIMITED` results cannot be attributed from the fields the probe kept
-at the time, a credential re-check on 2026-09-24 returned HTTP 200 for the same
-endpoint, and the run's own duration points at a long provider reset rather than
-repeated short throttling. Attributing that result and capturing a nominal
-deployed sample are what remain.
+A rerun on 2026-09-24 captured the nominal path's real result. The provider
+rejects the deployed Worker's reads with `RATE_LIMIT_BANNED` and names the egress
+IP, not the credential and not the request rate, as the reason. The free plan's
+allowance is enforced against that shared egress IP, every attempt renews the ban,
+and a nominal sample therefore cannot be captured from Cloudflare Workers while
+that address carries the ban. Whether the M4 live target is reachable from this
+platform at all is the open question.
 
 ## Deployed probe
 
@@ -41,14 +42,17 @@ never logged, and removed from local temporary storage.
 | 15-second client timeout | 15,000 ms | 14,043 ms | 17,243 ms | 27 ms | 10 / 3 ms | Within target |
 | Controlled 429 | 0 ms | 29,023 ms | 34,423 ms | 21 ms | 17 / 7 ms | Exceeds target |
 | Three missing sources | 0 ms | 120 ms | 3,320 ms | 20 ms | 20 / 9 ms | Within target |
-| Real GMGN nominal path | 128 ms observed | Unavailable | >180,000 ms | 25 ms observed | 8 ms max observed | No sample; result not attributable |
+| Real GMGN nominal path | 128 ms observed | Unavailable | >180,000 ms | 25 ms observed | 8 ms max observed | No sample; egress IP banned |
 
 CPU values are Cloudflare Tail `cpuTime` values summed across the four alarm
 invocations in each completed scenario. Cloudflare reported only 940 ms
 `wallTime` for the alarm that awaited the 15,000 ms timeout, so tail `wallTime`
 does not represent end-to-end latency while an invocation is suspended. The
 scenario clock and request timestamps are the latency evidence; tail telemetry
-is the CPU evidence.
+is the CPU evidence. The 2026-09-24 rerun reproduced the completed scenarios
+within the same range: three missing sources 21 ms total / 11 ms max, the
+15-second timeout 8 / 2 ms, and the controlled 429 9 / 5 ms, against 20 / 9,
+10 / 3 and 17 / 7 ms on 2026-09-23.
 
 Exact completed-scenario timestamps (Unix milliseconds):
 
@@ -66,8 +70,8 @@ production route.
 
 Every recorded attempt now carries `networkAttempted`, `clientCooldownAt`,
 `cooldownRemainingMs`, the response status and headers, and a bounded body prefix,
-so a future run attributes each observation instead of inferring it. The
-completed-scenario table above predates those fields.
+so a future run attributes each observation instead of inferring it. The table
+above predates those fields; the 2026-09-24 rerun below recorded them.
 
 ## Root cause, attribution, and decision
 
@@ -83,45 +87,82 @@ extend or renew the upstream rate limit. Reducing the cooldown floor would make
 live faster only when GMGN permits an earlier retry. The current implementation
 keeps the conservative shared cooldown and reports the missed 20-second target.
 
-The real nominal path supplied no steady-state sample. The run did not complete
-within 180 seconds, and every recorded attempt carried `GMGN_RATE_LIMITED`. Those
-records cannot be attributed: the probe kept only `outcome` and `errorCode` at the
-time, and the client produces that same code from its own persisted cooldown
-without issuing a request, so the field alone does not prove that GMGN rejected
-anything. The run's duration is the stronger clue. With the 30-second floor, one
-live poll plus three scan sources complete in roughly 90 seconds, so a run still
-incomplete at 180 seconds implies a longer reset than the floor — the range the
-message-derived wait caps at five minutes. A reset deadline beyond five minutes is
-now reported as `GMGN_RATE_LIMIT_BLOCKED` rather than as an ordinary rate limit,
-so a rerun names that case instead of describing it as a restricted credential.
+The 2026-09-23 run did not complete within 180 seconds and recorded
+`GMGN_RATE_LIMITED` for its one real attempt. The 2026-09-24 rerun reproduced that
+shape with the fields the first run lacked, and identified it: the provider
+returned a rate-limit ban whose window outlasted the run. The 09-23 record kept
+only `outcome` and `errorCode`, which cannot separate that from a refusal the
+client makes from its own cooldown without issuing a request — the reason the
+probe now records `networkAttempted`.
 
-## Credential re-check (2026-09-24)
+## Credential and egress evidence (2026-09-24)
 
-Run from a local Node process against the live API using the request shape the
-probe used, with the credential from the repository's `.dev.vars`. Four requests
-were issued; no rate limit was deliberately provoked.
+Four runs on one day separate the credential from the platform. The local reads
+came from a Node process on a residential address, the rejected reads from a
+deployed probe Worker; all used the same credential from the repository's
+`.dev.vars`, the same route and the same query. No rate limit was deliberately
+provoked.
 
-| # | Request | Result | Latency | Rate-limit headers |
-| ---: | --- | --- | ---: | --- |
-| 1 | raw `fetch`, sol, `limit=1` | 200, `code:0`, rank rows | 611 ms | none |
-| 2 | raw `fetch`, bsc, `limit=1`, `order_by=volume` | 200, `code:0`, rank rows | 556 ms | none |
-| 3 | `GmgnClient.marketRank`, same as 2 | success, `metrics.rateLimits: 0` | 1,360 ms | not exposed |
-| 4 | `GmgnClient.marketRank`, same as 2 | success, `metrics.rateLimits: 0` | 1,244 ms | not exposed |
+| Time (UTC) | Egress | Request | Result |
+| --- | --- | --- | --- |
+| 09:09 | local Node | four `marketRank` reads, sol and bsc | 200, `code:0`, no rate-limit header |
+| 11:28:11.991 | probe Worker, `cf-ray …-KIX` | one `marketRank` read | 429 `RATE_LIMIT_BANNED`, reset 11:33:02 |
+| 11:33:03.002 | probe Worker | live retry, one second after that reset | 429 again, new reset 11:37:47 (+285 s) |
+| 11:34:52 | local Node | the same `marketRank` read | 200, `code:0`, no rate-limit header |
 
-The envelope was `{"code":0,"data":{"code":0,"data":{"rank":[...]}}}`, and no
-response carried `x-ratelimit-reset` or any other rate-limit header, matching the
-M1 observation that GMGN returns none on success.
+The credential is not the restricted party: the same key, route and query
+returned 200 from the local address sixty seconds after the Worker was banned.
+The ban follows the egress address, which `cf-ray` resolves to a Cloudflare
+Workers address (KIX).
 
-What this establishes: this endpoint, this request shape and this credential are
-not restricted now, and the production client path reports no rate limit for a
-live response. What it does not establish: which credential the deployed probe
-used, that credential's state on 2026-09-23, or the shape of a real 429, which
-has still never been observed. Four requests in one process are evidence about
-this credential at this time, not a steady-state sample.
+The successful envelope was `{"code":0,"data":{"code":0,"data":{"rank":[...]}}}`,
+and no successful response carried `x-ratelimit-reset` or any other rate-limit
+header, matching the M1 observation that GMGN returns none on success. The client
+path also measured roughly 700 ms slower than a raw `fetch` for the same request;
+that was not a controlled comparison — separate processes, two samples each — so
+it stays an unexplained observation rather than a finding.
 
-The client path measured roughly 700 ms slower than a raw `fetch` for the same
-request. That was not a controlled comparison — separate processes, two samples
-each — so it is recorded as an unexplained local observation, not a finding.
+### The real 429, captured
+
+Status 429, headers `x-ratelimit-reset: 1790249582`, `x-request-id`,
+`cf-ray …-KIX`, and no `Retry-After`. Body:
+
+```json
+{"code":429,"error":"RATE_LIMIT_BANNED",
+ "message":"IP is temporarily banned due to repeated rate limit violations",
+ "reset_at":1790249582,"tier":"free",
+ "upgrade_message":"已达到当前套餐的限频上限，点击 …/ai?chain=bsc&tab=paid_plans 升级套餐，获得更高速率限制",
+ "upgrade_url":"https://gmgn.ai/ai?chain=bsc&tab=paid_plans"}
+```
+
+This matches the contract derived from the provider's own client: the reset lives
+in the `x-ratelimit-reset` header, `error` carries the machine-readable class, and
+`upgrade_url`/`upgrade_message` accompany a plan limit. The body `reset_at` also
+arrives; the provider's client reads neither it nor `Retry-After`.
+
+### Why the request rate is not the cause
+
+The published schedule is `calls/sec = plan weight / API weight`. The free plan
+weight is 5 and `Market Trending` — the `/v1/market/rank` route that both the live
+poll and discovery use — is API weight 3, so the allowance is about 1.67 calls/sec.
+The live poll issues one call per 20 seconds (0.05 calls/sec), and the run that was
+banned made exactly **one** request. A ban for "repeated rate limit violations"
+cannot be earned at that volume. The egress is a shared Cloudflare Workers address
+and its previous request from this project was a day earlier, so those violations
+belong to other traffic on the same address.
+
+The repository's internal weight table also disagrees with the published one:
+`trending` is charged 1 here against a published 3, and `trenches` 3 against a
+published 2. That makes internal pacing more permissive on the route every live
+poll uses, but it is not a factor in a ban earned by one request.
+
+### What this blocks
+
+The live path cannot read from Cloudflare Workers while the egress address carries
+this ban, and waiting alone does not clear it: the retry at 11:33:03 was issued
+exactly at the advertised reset and was immediately re-banned for another 285
+seconds. A "wake at the reset and try again" policy therefore renews the ban
+indefinitely. The probe Worker was deleted after this capture to stop that loop.
 
 ## Local comparison
 
