@@ -1,0 +1,21 @@
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_d53bd87715c163::t_34d713a565b54a 87-95
+docs/FLY-DEPLOYMENT.md
+  s_d53bd87715c163::t_24bf81d1f60cf7 1-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "60e2fba86c87596fdfbf6cde84d86ff082883ce5",
+  "prompts": {},
+  "sessions": {
+    "s_d53bd87715c163": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81e98a31-7832-4360-8cae-4fc1ac5a43ca",
+        "model": "deepseek-v4-pro"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
