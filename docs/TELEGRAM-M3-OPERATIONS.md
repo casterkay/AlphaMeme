@@ -57,7 +57,7 @@ advice.
   stale owner/message/session/domain versions cannot mutate current state.
 - `/pause`, `/mute` and `/feed off` control scanning, alerts and collection
   independently. Live collection persists without chat activity, using the shared
-  GMGN queue and a 20-second target, not a deadline guarantee.
+  GMGN queue and a 5-second target, not a deadline guarantee.
 - Search and notes use a five-minute ForceReply prompt. Credentials are routed
   before note/search input and are never persisted as either.
 - An uncertain Telegram send gets at most one automatic uncertain retry over its
