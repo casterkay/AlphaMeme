@@ -1,0 +1,48 @@
+test/telegram-panels.test.mjs
+  s_d53bd87715c163::t_39f9e546895a0e 43-56
+src/server.mjs
+  s_d53bd87715c163::t_efe8419ceb56c9 309
+  s_d53bd87715c163::t_b51cb3a91f6fc7 298
+test/gmgn.test.mjs
+  s_d53bd87715c163::t_b209536abc3a49 200-240,242-247,249-252,254-263,281-297
+  s_d53bd87715c163::t_ef05a07b2ae9f8 264-280
+  s_d53bd87715c163::t_8b612cacc1444f 241,248,253
+  s_d53bd87715c163::t_544dd8e4e6d32c 455
+test/persistent-live.test.mjs
+  s_d53bd87715c163::t_4a59a71d376a88 77-85
+src/providers/gmgn.mjs
+  s_d53bd87715c163::t_004801ee977bbc 47-51,54,61-64
+  s_d53bd87715c163::t_4f71f06815b22e 647-650,653-654,657-660
+  s_d53bd87715c163::t_0fcb78985032a2 55,59-60,65-83,87
+  s_d53bd87715c163::t_43fffc2f859206 57-58
+  s_d53bd87715c163::t_a7edea3222aead 112-114,116-119
+  s_d53bd87715c163::t_789a9d68c7d7b6 115,121-132
+  s_d53bd87715c163::t_d76da6bb9b95ce 287,290-292,301-302,305-306
+  s_d53bd87715c163::t_651b1b406a4ea8 56
+src/bot/panels.mjs
+  s_d53bd87715c163::t_1dc40e28a5255c 79
+  s_d53bd87715c163::t_62c29aebcc2de2 110
+src/bot/live.mjs
+  s_d53bd87715c163::t_d7f2da6e031a49 87-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "93d0d42477f6ac6c0e3b618f0f4a0e8860231747",
+  "prompts": {},
+  "humans": {
+    "h_0528fe13c98664": {
+      "author": "casterkay <poetrycoder>"
+    }
+  },
+  "sessions": {
+    "s_d53bd87715c163": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81e98a31-7832-4360-8cae-4fc1ac5a43ca",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
