@@ -11,9 +11,9 @@ target is one chain polled every 15 seconds on the AVE free plan.
 
 | Question | Pass |
 | --- | --- |
-| Does AVE answer reads from Workers egress? | Every trending read returns HTTP 200 with rows |
+| Does AVE answer reads from Workers egress? | Every trending read is `ok`: HTTP 200, body `status` 1, a token list |
 | Does a 15-second cadence stay under AVE's rate limit? | No 429 across the full run |
-| Is a second endpoint class treated the same? | The one token-details read returns 200 |
+| Is a second endpoint class treated the same? | The one token-details read is `ok` |
 | Does one read-and-parse alarm fit the Workers Free CPU limit? | Tail `cpuTime` per alarm is well under 10 ms |
 
 A 401/403 whose body names the key is a credential problem; one that names the
@@ -29,9 +29,12 @@ latency, row count, `cf-ray`, and the egress address reported by `api.ipify.org`
 AVE connection's source). After the first successful trending read it makes a
 single `GET /v2/tokens/<token>-<chain>` read.
 
-It stops on completion, on any 401/402/403, or after three consecutive 429s; a
-429 delays the next read to at least 60 seconds or the provider's `Retry-After`,
-so a ban is observed, not renewed. The key is never logged and is redacted from
+A 429, or an HTTP 200 whose body is not a successful AVE envelope
+(`provider_error`), delays the next read to at least 60 seconds or the provider's
+`Retry-After`, so a ban is observed, not renewed. The run stops on completion, on
+any 401/402/403, after three such rejections in a row, or on an operator stop.
+Each sample is stored under its own key, and an operator stop that arrives while
+an alarm is waiting on AVE is kept. The key is never logged and is redacted from
 recorded bodies.
 
 The default run is 120 trending reads at 15 seconds (30 minutes), about
@@ -44,8 +47,9 @@ From the repository root after `npm ci`:
 ```sh
 CONFIG=workers/fixtures/wrangler.ave-egress-probe.jsonc
 npx wrangler deploy -c $CONFIG
-npx wrangler secret put PROBE_TOKEN -c $CONFIG   # any random string
-npx wrangler secret put AVE_API_KEY -c $CONFIG   # your AVE Data API key
+PROBE_TOKEN=$(node -e 'console.log(crypto.randomUUID())')
+printf %s "$PROBE_TOKEN" | npx wrangler secret put PROBE_TOKEN -c $CONFIG
+npx wrangler secret put AVE_API_KEY -c $CONFIG   # paste your AVE Data API key
 
 # In a second terminal, keep CPU evidence for the whole run:
 npx wrangler tail -c $CONFIG --format json > ave-egress-tail.json
@@ -59,7 +63,8 @@ curl -X POST -H "Authorization: Bearer $PROBE_TOKEN" \
 curl -H "Authorization: Bearer $PROBE_TOKEN" "$PROBE/runs/$RUN/result" > ave-egress-result.json
 curl -X POST -H "Authorization: Bearer $PROBE_TOKEN" "$PROBE/runs/$RUN/stop"   # early stop
 
-# Per-alarm CPU (ms):
+# CPU per invocation (ms). This also includes the few start/result/stop
+# requests, which are trivial; the alarms are the bulk of the entries.
 grep -o '"cpuTime": *[0-9]*' ave-egress-tail.json | sort -t: -k2 -n | uniq -c
 
 npx wrangler delete -c $CONFIG   # afterwards
@@ -74,10 +79,11 @@ alarm-delivery lag percentiles, observed egress addresses and the first failure;
 
 ## Local verification
 
-`node --test test/ave-egress-probe.test.mjs` covers authorization, option bounds,
-the healthy path, 429 back-off and stop, credential redaction and transport
-failures. `wrangler dev` with this config ran one alarm end to end in workerd with
-no compatibility flags; that sandbox cannot reach `prod.ave-api.com`, so it
+`node --test test/ave-egress-probe.test.mjs` covers authorization and routing,
+option bounds and malformed start bodies, the healthy path, 429 and in-body
+refusal back-off and stop, 402 quota stops, an operator stop during an in-flight
+alarm, credential redaction, timeouts and transport failures. `wrangler dev`
+with this config ran one alarm end to end in workerd with no compatibility flags; that sandbox cannot reach `prod.ave-api.com`, so it
 produced no AVE evidence.
 
 ## Result

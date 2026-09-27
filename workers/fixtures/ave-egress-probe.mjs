@@ -10,7 +10,9 @@ const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_BODY_BYTES = 1_048_576;
 const BODY_PREFIX_CHARS = 300;
 const RATE_LIMIT_FLOOR_MS = 60_000;
-const MAX_CONSECUTIVE_RATE_LIMITS = 3;
+const MAX_CONSECUTIVE_REJECTIONS = 3;
+// Outcomes that may mean the provider is refusing us; back off rather than renew a ban.
+const BACKOFF_OUTCOMES = new Set(['rate_limited', 'provider_error']);
 const CU_BY_READ = Object.freeze({ trending: 5, details: 5 });
 export const PROBE_LIMITS = Object.freeze({
   defaultSamples: 120, maxSamples: 240, defaultIntervalMs: 15_000, minIntervalMs: 15_000, maxIntervalMs: 600_000
@@ -120,6 +122,13 @@ export async function readAve({ fetchImpl, apiKey, path, kind, now = Date.now })
     const rows = listRows(parsed);
     sample.rows = rows ? rows.length : null;
     sample.firstToken = rows ? rows.map(tokenAddress).find(Boolean) ?? null : null;
+    // AVE reports some refusals inside an HTTP 200; like upstream, success needs status 1 and the expected data.
+    const expected = kind === 'trending' ? rows !== null : Boolean(parsed?.data) && typeof parsed.data === 'object';
+    if (sample.aveStatus !== 1 || !expected) {
+      sample.outcome = 'provider_error';
+      sample.bodyPrefix = redact(body.text, apiKey).slice(0, BODY_PREFIX_CHARS);
+      return sample;
+    }
     sample.outcome = 'ok';
   } catch (error) {
     sample.outcome = error?.name === 'TimeoutError' ? 'timeout' : 'network_error';
@@ -146,12 +155,12 @@ function percentile(values, fraction) {
   return sorted[Math.min(sorted.length - 1, Math.ceil(fraction * sorted.length) - 1)];
 }
 
-export function summarize(record) {
-  const trending = record.samples.filter(sample => sample.kind === 'trending');
+export function summarize(record, samples) {
+  const trending = samples.filter(sample => sample.kind === 'trending');
   const byOutcome = {};
-  for (const sample of record.samples) byOutcome[sample.outcome] = (byOutcome[sample.outcome] || 0) + 1;
+  for (const sample of samples) byOutcome[sample.outcome] = (byOutcome[sample.outcome] || 0) + 1;
   const okDurations = trending.filter(sample => sample.outcome === 'ok').map(sample => sample.durationMs);
-  const alarmLags = record.alarms.map(alarm => alarm.deliveryLagMs).filter(Number.isFinite);
+  const alarmLags = trending.map(sample => sample.alarmDeliveryLagMs).filter(Number.isFinite);
   return {
     options: record.options,
     startedAt: record.startedAt,
@@ -160,12 +169,12 @@ export function summarize(record) {
     trendingAttempts: trending.length,
     byOutcome,
     // Counts successful reads only; whether AVE also bills rejected reads is not documented.
-    estimatedCu: record.samples.filter(sample => sample.httpStatus !== null && sample.httpStatus < 400)
+    estimatedCu: samples.filter(sample => sample.httpStatus >= 200 && sample.httpStatus < 300)
       .reduce((sum, sample) => sum + CU_BY_READ[sample.kind], 0),
     trendingLatencyMs: { p50: percentile(okDurations, 0.5), p95: percentile(okDurations, 0.95), max: percentile(okDurations, 1) },
     alarmDeliveryLagMs: { p50: percentile(alarmLags, 0.5), p95: percentile(alarmLags, 0.95), max: percentile(alarmLags, 1) },
-    egressAddresses: [...new Set(record.samples.map(sample => sample.egress).filter(Boolean))],
-    firstFailure: record.samples.find(sample => sample.outcome !== 'ok') || null
+    egressAddresses: [...new Set(samples.map(sample => sample.egress).filter(Boolean))],
+    firstFailure: samples.find(sample => sample.outcome !== 'ok') || null
   };
 }
 
@@ -186,11 +195,13 @@ export class AveEgressProbe {
       if (!record.stoppedAt) this.#stop(record, 'operator');
       await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.put('record', record);
-      return Response.json(summarize(record));
+      return Response.json(summarize(record, await this.#samples()));
     }
     if (request.method === 'GET' && action === 'result') {
       const record = await this.ctx.storage.get('record');
-      return record ? Response.json({ summary: summarize(record), samples: record.samples }) : new Response('not found', { status: 404 });
+      if (!record) return new Response('not found', { status: 404 });
+      const samples = await this.#samples();
+      return Response.json({ summary: summarize(record, samples), samples });
     }
     return new Response('not found', { status: 404 });
   }
@@ -202,18 +213,24 @@ export class AveEgressProbe {
     if (await this.ctx.storage.get('record')) return new Response('run already exists; use a new run id', { status: 409 });
     let options;
     try {
-      options = parseRunOptions(await request.json().catch(() => ({})));
+      const text = await request.text();
+      options = parseRunOptions(text.trim() ? JSON.parse(text) : {});
     } catch (error) {
-      return new Response(error.message, { status: 400 });
+      return new Response(error instanceof SyntaxError ? 'start body must be JSON' : error.message, { status: 400 });
     }
     const startedAt = Date.now();
     const record = {
       options, startedAt, stoppedAt: null, stopReason: null, nextAlarmAt: startedAt,
-      consecutiveRateLimits: 0, detailsChecked: false, samples: [], alarms: []
+      consecutiveRejections: 0, detailsChecked: false, trendingAttempts: 0, sampleCount: 0
     };
     await this.ctx.storage.put('record', record);
     await this.ctx.storage.setAlarm(startedAt);
-    return Response.json(summarize(record), { status: 202 });
+    return Response.json(summarize(record, []), { status: 202 });
+  }
+
+  // One key per sample keeps every stored value small however long the run grows.
+  async #samples() {
+    return [...(await this.ctx.storage.list({ prefix: 'sample:' })).values()];
   }
 
   #stop(record, reason) {
@@ -223,11 +240,10 @@ export class AveEgressProbe {
   }
 
   async alarm() {
-    const record = await this.ctx.storage.get('record');
-    if (!record || record.stoppedAt) return;
+    const initial = await this.ctx.storage.get('record');
+    if (!initial || initial.stoppedAt) return;
     const startedAt = Date.now();
-    record.alarms.push({ scheduledAt: record.nextAlarmAt, startedAt, deliveryLagMs: startedAt - record.nextAlarmAt });
-    const { chain, samples, intervalMs } = record.options;
+    const { chain, samples, intervalMs } = initial.options;
     const apiChain = AVE_CHAINS[chain];
     const apiKey = this.env.AVE_API_KEY;
 
@@ -236,39 +252,45 @@ export class AveEgressProbe {
       fetchImpl: this.fetchImpl, apiKey, kind: 'trending',
       path: `/v2/tokens/trending?chain=${apiChain}&current_page=0&page_size=100`
     });
-    trending.egress = egress;
-    record.samples.push(trending);
+    Object.assign(trending, { egress, alarmDeliveryLagMs: startedAt - initial.nextAlarmAt });
+    const taken = [trending];
 
     // One token-details read per run shows whether a second endpoint class is treated differently.
-    if (trending.outcome === 'ok' && !record.detailsChecked && trending.firstToken) {
-      record.detailsChecked = true;
+    if (trending.outcome === 'ok' && !initial.detailsChecked && trending.firstToken) {
       const details = await readAve({
         fetchImpl: this.fetchImpl, apiKey, kind: 'details', path: `/v2/tokens/${trending.firstToken}-${apiChain}`
       });
-      details.egress = egress;
-      record.samples.push(details);
+      taken.push(Object.assign(details, { egress }));
     }
 
-    const attempts = record.samples.filter(sample => sample.kind === 'trending').length;
-    let delayMs = intervalMs;
-    if (trending.outcome === 'rate_limited') {
-      record.consecutiveRateLimits += 1;
-      // Back off instead of renewing a ban; the evidence is the first rejection, not a hundred.
-      delayMs = Math.max(intervalMs, RATE_LIMIT_FLOOR_MS, trending.retryAfterMs || 0);
-    } else {
-      record.consecutiveRateLimits = 0;
+    // Outgoing fetches let /stop run meanwhile; build on the stored record so a stop is never overwritten.
+    const record = await this.ctx.storage.get('record');
+    for (const sample of taken) {
+      await this.ctx.storage.put(`sample:${String(record.sampleCount).padStart(5, '0')}`, sample);
+      record.sampleCount += 1;
     }
+    record.trendingAttempts += 1;
+    if (taken.length > 1) record.detailsChecked = true;
 
-    if (['rejected', 'quota'].includes(trending.outcome)) this.#stop(record, trending.outcome);
-    else if (record.consecutiveRateLimits >= MAX_CONSECUTIVE_RATE_LIMITS) this.#stop(record, 'rate_limited');
-    else if (attempts >= samples) this.#stop(record, 'complete');
-    else {
-      record.nextAlarmAt = startedAt + delayMs;
-      await this.ctx.storage.setAlarm(record.nextAlarmAt);
+    if (!record.stoppedAt) {
+      let delayMs = intervalMs;
+      if (BACKOFF_OUTCOMES.has(trending.outcome)) {
+        record.consecutiveRejections += 1;
+        delayMs = Math.max(intervalMs, RATE_LIMIT_FLOOR_MS, trending.retryAfterMs || 0);
+      } else {
+        record.consecutiveRejections = 0;
+      }
+      if (['rejected', 'quota'].includes(trending.outcome)) this.#stop(record, trending.outcome);
+      else if (record.consecutiveRejections >= MAX_CONSECUTIVE_REJECTIONS) this.#stop(record, trending.outcome);
+      else if (record.trendingAttempts >= samples) this.#stop(record, 'complete');
+      else {
+        record.nextAlarmAt = startedAt + delayMs;
+        await this.ctx.storage.setAlarm(record.nextAlarmAt);
+      }
     }
     await this.ctx.storage.put('record', record);
     console.log(JSON.stringify({
-      event: 'ave_probe_alarm', attempt: attempts, outcome: trending.outcome, httpStatus: trending.httpStatus,
+      event: 'ave_probe_alarm', attempt: record.trendingAttempts, outcome: trending.outcome, httpStatus: trending.httpStatus,
       durationMs: trending.durationMs, rows: trending.rows ?? null, egress, stopReason: record.stopReason
     }));
   }
