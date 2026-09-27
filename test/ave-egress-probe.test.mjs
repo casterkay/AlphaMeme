@@ -94,22 +94,20 @@ test('a healthy run reads trending once per alarm, checks token details once, an
   assert.equal(aveUrls.length, 4, 'a stopped run issues no further reads');
 });
 
-test('a rate-limited read backs off to the provider deadline and three in a row stop the run', async () => {
-  const limited = () => new Response('{"msg":"too many requests"}', { status: 429, headers: { 'Retry-After': '120' } });
-  const { ctx, probe } = await startedProbe([limited(), limited(), limited()], { samples: 10 });
+test('the first rate-limited read stops the run and keeps every rate-limit header as evidence', async () => {
+  const limited = () => new Response('{"msg":"too many requests"}', {
+    status: 429, headers: { 'X-RateLimit-Reset': '1790249582', 'X-RateLimit-Remaining': '0' }
+  });
+  const { probe, aveUrls } = await startedProbe([limited(), limited()], { samples: 10 });
+  await probe.alarm();
+  await probe.alarm();
 
-  const before = Date.now();
-  await probe.alarm();
-  let { samples } = await result(probe);
-  assert.equal(samples[0].outcome, 'rate_limited');
-  assert.equal(samples[0].bodyPrefix, '{"msg":"too many requests"}');
-  assert.ok(ctx.read('alarm') - before >= 120_000, 'the next read waits out Retry-After');
-
-  await probe.alarm();
-  await probe.alarm();
-  const { summary } = await result(probe);
+  const { summary, samples } = await result(probe);
   assert.equal(summary.stopReason, 'rate_limited');
-  assert.equal(summary.trendingAttempts, 3);
+  assert.equal(aveUrls.length, 1, 'no read follows a refusal, so a ban is not renewed');
+  assert.deepEqual(samples[0].rateLimitHeaders, { 'x-ratelimit-reset': '1790249582', 'x-ratelimit-remaining': '0' });
+  assert.equal(samples[0].bodyPrefix, '{"msg":"too many requests"}');
+  assert.equal(summary.nextAlarmAt, null, 'no alarm is scheduled after a refusal');
   assert.equal(summary.estimatedCu, 0);
 });
 
@@ -123,14 +121,41 @@ test('an authentication rejection stops the run and never records the key', asyn
   assert.ok(!JSON.stringify(evidence).includes(API_KEY));
 });
 
-test('a transport failure is recorded as a measurement rather than aborting the run', async () => {
-  const { ctx, probe } = await startedProbe([() => { throw new TypeError('fetch failed'); }]);
+test('transient failures back off, a success resets the count, and three in a row stop the run', async () => {
+  const failed = () => { throw new TypeError('fetch failed'); };
+  const serverError = () => new Response('bad gateway', { status: 502 });
+  const { ctx, probe } = await startedProbe([failed, serverError(), trendingOk(), detailsOk(), failed, serverError(), failed], { samples: 10 });
+
+  const before = Date.now();
+  await probe.alarm();
+  assert.equal((await result(probe)).samples[0].outcome, 'network_error');
+  assert.ok(ctx.read('alarm') - before >= 60_000, 'a failure is not retried at the normal cadence');
+
+  for (let alarm = 0; alarm < 5; alarm++) await probe.alarm();
+  const { summary } = await result(probe);
+  assert.equal(summary.trendingAttempts, 6, 'the success between failures reset the count');
+  assert.equal(summary.stopReason, 'network_error');
+  assert.deepEqual(summary.byOutcome, { network_error: 3, http_error: 2, ok: 2 });
+});
+
+test('a body over the 1 MiB cap is recorded as oversize rather than parsed', async () => {
+  const huge = () => new Response(new Uint8Array(1_048_577).fill(32), { status: 200 });
+  const { probe } = await startedProbe([huge()]);
+  await probe.alarm();
+  const [sample] = (await result(probe)).samples;
+  assert.equal(sample.outcome, 'oversize');
+  assert.equal(sample.rows, undefined);
+});
+
+test('an alarm retried after an invocation died mid-read stops the run instead of reading again', async () => {
+  const { ctx, probe, aveUrls } = await startedProbe([() => { throw new Error('isolate lost'); }]);
+  // Simulate an invocation that marked its read and then died before recording it.
+  await ctx.storage.put('record', { ...ctx.read('record'), readingSince: Date.now() - 2_000 });
   await probe.alarm();
 
-  const { summary, samples } = await result(probe);
-  assert.equal(samples[0].outcome, 'network_error');
-  assert.equal(summary.stopReason, null);
-  assert.ok(ctx.read('alarm') > summary.startedAt);
+  const { summary } = await result(probe);
+  assert.equal(summary.stopReason, 'invocation_lost');
+  assert.equal(aveUrls.length, 0);
 });
 
 test('a timed-out read is recorded as a timeout', async () => {
@@ -139,19 +164,13 @@ test('a timed-out read is recorded as a timeout', async () => {
   assert.equal((await result(probe)).samples[0].outcome, 'timeout');
 });
 
-test('an HTTP 200 whose body reports a refusal counts as a provider error, backs off and stops after three', async () => {
-  const refused = () => Response.json({ status: 0, msg: 'api key banned' });
-  const { ctx, probe } = await startedProbe([refused(), refused(), refused()], { samples: 10 });
-  const before = Date.now();
+test('an HTTP 200 whose body reports a refusal is a provider error that stops the run', async () => {
+  const { probe } = await startedProbe([Response.json({ status: 0, msg: 'api key banned' })], { samples: 10 });
   await probe.alarm();
-  assert.equal((await result(probe)).samples[0].outcome, 'provider_error');
-  assert.ok(ctx.read('alarm') - before >= 60_000, 'a refusal is not retried at the normal cadence');
-
-  await probe.alarm();
-  await probe.alarm();
-  const { summary } = await result(probe);
+  const { summary, samples } = await result(probe);
+  assert.equal(samples[0].outcome, 'provider_error');
   assert.equal(summary.stopReason, 'provider_error');
-  assert.equal(summary.byOutcome.ok, undefined);
+  assert.equal(summary.estimatedCu, 5, 'an in-body refusal may still be billed');
 });
 
 test('a 402 stops the run as a quota verdict', async () => {

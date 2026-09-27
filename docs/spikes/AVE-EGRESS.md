@@ -29,13 +29,19 @@ latency, row count, `cf-ray`, and the egress address reported by `api.ipify.org`
 AVE connection's source). After the first successful trending read it makes a
 single `GET /v2/tokens/<token>-<chain>` read.
 
-A 429, or an HTTP 200 whose body is not a successful AVE envelope
-(`provider_error`), delays the next read to at least 60 seconds or the provider's
-`Retry-After`, so a ban is observed, not renewed. The run stops on completion, on
-any 401/402/403, after three such rejections in a row, or on an operator stop.
-Each sample is stored under its own key, and an operator stop that arrives while
-an alarm is waiting on AVE is kept. The key is never logged and is redacted from
-recorded bodies.
+The first refusal ends the run: a 429, a 401/402/403, or an HTTP 200 whose body
+is not a successful AVE envelope (`provider_error`). One refusal is the evidence,
+and any further read could renew a ban. Its body prefix and any `Retry-After`,
+`X-RateLimit-*` or `RateLimit-*` headers are kept. Other failures (5xx, timeouts,
+network errors) delay the next read to 60 seconds and stop the run after three
+in a row. A run also stops on completion or an operator stop, and an operator stop
+that arrives while an alarm is waiting on AVE is kept.
+
+Before reading, each alarm marks the run as reading. If an invocation dies after
+that (for example on the CPU limit), Cloudflare retries the alarm within seconds;
+the retry sees the mark and stops the run as `invocation_lost` instead of reading
+again. Each sample is stored under its own key. The key is never logged and is
+redacted from recorded bodies.
 
 The default run is 120 trending reads at 15 seconds (30 minutes), about
 **605 CU** of the free plan's 1,000,000.
@@ -52,7 +58,7 @@ printf %s "$PROBE_TOKEN" | npx wrangler secret put PROBE_TOKEN -c $CONFIG
 npx wrangler secret put AVE_API_KEY -c $CONFIG   # paste your AVE Data API key
 
 # In a second terminal, keep CPU evidence for the whole run:
-npx wrangler tail -c $CONFIG --format json > ave-egress-tail.json
+npx wrangler tail -c workers/fixtures/wrangler.ave-egress-probe.jsonc --format json > ave-egress-tail.json
 
 PROBE=https://meme-radar-ave-egress-probe.<your-subdomain>.workers.dev
 RUN=$(node -e 'console.log(crypto.randomUUID())')
@@ -66,6 +72,8 @@ curl -X POST -H "Authorization: Bearer $PROBE_TOKEN" "$PROBE/runs/$RUN/stop"   #
 # CPU per invocation (ms). This also includes the few start/result/stop
 # requests, which are trivial; the alarms are the bulk of the entries.
 grep -o '"cpuTime": *[0-9]*' ave-egress-tail.json | sort -t: -k2 -n | uniq -c
+# Invocation outcomes; anything other than "ok" (e.g. exceededCpu) fails the CPU question.
+grep -o '"outcome": *"[A-Za-z]*"' ave-egress-tail.json | sort | uniq -c
 
 npx wrangler delete -c $CONFIG   # afterwards
 ```
@@ -73,18 +81,21 @@ npx wrangler delete -c $CONFIG   # afterwards
 Options: `chain` is `bsc`, `eth`, `base` or `sol`; `samples` 1–240;
 `intervalMs` 15,000–600,000. Each run id is single-use.
 
-The result's `summary` gives outcome counts, estimated CU, trending latency and
-alarm-delivery lag percentiles, observed egress addresses and the first failure;
+The result's `summary` gives the stop reason, the next scheduled alarm, outcome
+counts, estimated CU, trending latency and alarm-delivery lag percentiles,
+observed egress addresses and the first failure;
 `samples` holds every read.
 
 ## Local verification
 
 `node --test test/ave-egress-probe.test.mjs` covers authorization and routing,
-option bounds and malformed start bodies, the healthy path, 429 and in-body
-refusal back-off and stop, 402 quota stops, an operator stop during an in-flight
-alarm, credential redaction, timeouts and transport failures. `wrangler dev`
-with this config ran one alarm end to end in workerd with no compatibility flags; that sandbox cannot reach `prod.ave-api.com`, so it
-produced no AVE evidence.
+option bounds and malformed start bodies, the healthy path, stopping on the first
+429, in-body refusal, 401 or 402 with rate-limit headers kept, transient-failure
+back-off and its reset, the body cap, a retried alarm after a lost invocation, an
+operator stop during an in-flight alarm, credential redaction, timeouts and
+transport failures. `wrangler dev` with this config ran one alarm end to end in
+workerd with no compatibility flags; that sandbox cannot reach
+`prod.ave-api.com`, so it produced no AVE evidence.
 
 ## Result
 

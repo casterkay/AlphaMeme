@@ -9,10 +9,13 @@ const AVE_CHAINS = Object.freeze({ bsc: 'bsc', eth: 'eth', base: 'base', sol: 's
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_BODY_BYTES = 1_048_576;
 const BODY_PREFIX_CHARS = 300;
-const RATE_LIMIT_FLOOR_MS = 60_000;
-const MAX_CONSECUTIVE_REJECTIONS = 3;
-// Outcomes that may mean the provider is refusing us; back off rather than renew a ban.
-const BACKOFF_OUTCOMES = new Set(['rate_limited', 'provider_error']);
+// Any refusal ends the run: the first one is the evidence, and another read could renew a ban.
+const REFUSAL_OUTCOMES = new Set(['rate_limited', 'provider_error', 'rejected', 'quota']);
+// Other failures may be transient; slow down, and stop once they repeat.
+const FAILURE_BACKOFF_MS = 60_000;
+const MAX_CONSECUTIVE_FAILURES = 3;
+const RATE_LIMIT_HEADERS = ['retry-after', 'x-ratelimit-reset', 'x-ratelimit-remaining', 'x-ratelimit-limit',
+  'ratelimit-reset', 'ratelimit-remaining', 'ratelimit-limit'];
 const CU_BY_READ = Object.freeze({ trending: 5, details: 5 });
 export const PROBE_LIMITS = Object.freeze({
   defaultSamples: 120, maxSamples: 240, defaultIntervalMs: 15_000, minIntervalMs: 15_000, maxIntervalMs: 600_000
@@ -104,6 +107,9 @@ export async function readAve({ fetchImpl, apiKey, path, kind, now = Date.now })
     sample.cfRay = response.headers.get('cf-ray');
     sample.server = response.headers.get('server');
     sample.retryAfterMs = retryAfterMs(response.headers.get('retry-after'), now());
+    // A ban deadline may arrive in any of these rather than Retry-After; keep them verbatim.
+    const limits = RATE_LIMIT_HEADERS.map(name => [name, response.headers.get(name)]).filter(([, value]) => value !== null);
+    if (limits.length) sample.rateLimitHeaders = Object.fromEntries(limits.map(([name, value]) => [name, value.slice(0, 100)]));
     const body = await boundedText(response);
     sample.bodyBytes = body.bytes;
     if (!response.ok || body.truncated) {
@@ -166,9 +172,10 @@ export function summarize(record, samples) {
     startedAt: record.startedAt,
     stoppedAt: record.stoppedAt,
     stopReason: record.stopReason,
+    nextAlarmAt: record.nextAlarmAt,
     trendingAttempts: trending.length,
     byOutcome,
-    // Counts successful reads only; whether AVE also bills rejected reads is not documented.
+    // Counts every HTTP 2xx read, in-body refusals included, since AVE may bill those too.
     estimatedCu: samples.filter(sample => sample.httpStatus >= 200 && sample.httpStatus < 300)
       .reduce((sum, sample) => sum + CU_BY_READ[sample.kind], 0),
     trendingLatencyMs: { p50: percentile(okDurations, 0.5), p95: percentile(okDurations, 0.95), max: percentile(okDurations, 1) },
@@ -221,7 +228,7 @@ export class AveEgressProbe {
     const startedAt = Date.now();
     const record = {
       options, startedAt, stoppedAt: null, stopReason: null, nextAlarmAt: startedAt,
-      consecutiveRejections: 0, detailsChecked: false, trendingAttempts: 0, sampleCount: 0
+      consecutiveFailures: 0, readingSince: null, detailsChecked: false, trendingAttempts: 0, sampleCount: 0
     };
     await this.ctx.storage.put('record', record);
     await this.ctx.storage.setAlarm(startedAt);
@@ -243,6 +250,14 @@ export class AveEgressProbe {
     const initial = await this.ctx.storage.get('record');
     if (!initial || initial.stoppedAt) return;
     const startedAt = Date.now();
+    if (initial.readingSince !== null) {
+      // An earlier invocation died after it may have reached AVE, and the runtime is retrying it
+      // within seconds. Reading again would break the cadence, so end the run and say why.
+      this.#stop(initial, 'invocation_lost');
+      await this.ctx.storage.put('record', initial);
+      return;
+    }
+    await this.ctx.storage.put('record', { ...initial, readingSince: startedAt });
     const { chain, samples, intervalMs } = initial.options;
     const apiChain = AVE_CHAINS[chain];
     const apiKey = this.env.AVE_API_KEY;
@@ -265,6 +280,7 @@ export class AveEgressProbe {
 
     // Outgoing fetches let /stop run meanwhile; build on the stored record so a stop is never overwritten.
     const record = await this.ctx.storage.get('record');
+    record.readingSince = null;
     for (const sample of taken) {
       await this.ctx.storage.put(`sample:${String(record.sampleCount).padStart(5, '0')}`, sample);
       record.sampleCount += 1;
@@ -273,15 +289,11 @@ export class AveEgressProbe {
     if (taken.length > 1) record.detailsChecked = true;
 
     if (!record.stoppedAt) {
-      let delayMs = intervalMs;
-      if (BACKOFF_OUTCOMES.has(trending.outcome)) {
-        record.consecutiveRejections += 1;
-        delayMs = Math.max(intervalMs, RATE_LIMIT_FLOOR_MS, trending.retryAfterMs || 0);
-      } else {
-        record.consecutiveRejections = 0;
-      }
-      if (['rejected', 'quota'].includes(trending.outcome)) this.#stop(record, trending.outcome);
-      else if (record.consecutiveRejections >= MAX_CONSECUTIVE_REJECTIONS) this.#stop(record, trending.outcome);
+      const failed = trending.outcome !== 'ok';
+      record.consecutiveFailures = failed ? record.consecutiveFailures + 1 : 0;
+      const delayMs = failed ? Math.max(intervalMs, FAILURE_BACKOFF_MS) : intervalMs;
+      if (REFUSAL_OUTCOMES.has(trending.outcome)) this.#stop(record, trending.outcome);
+      else if (record.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) this.#stop(record, trending.outcome);
       else if (record.trendingAttempts >= samples) this.#stop(record, 'complete');
       else {
         record.nextAlarmAt = startedAt + delayMs;
