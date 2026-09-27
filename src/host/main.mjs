@@ -6,11 +6,14 @@ import worker, { RadarAgent, TenantRegistry } from '../worker.mjs';
 const storageDirectory = process.env.STORAGE_DIRECTORY || '/data';
 mkdirSync(storageDirectory, { recursive: true });
 
-const requiredSecrets = ['OPERATOR_TOKEN', 'TELEGRAM_WEBHOOK_SECRET', 'TELEGRAM_BOT_TOKEN', 'MASTER_ENC_KEY'];
+const requiredSecrets = ['OPERATOR_TOKEN', 'MASTER_ENC_KEY'];
 const missing = requiredSecrets.filter(name => !process.env[name]);
 if (missing.length) {
   console.error(`Missing required environment variables: ${missing.join(', ')}`);
   process.exit(1);
+}
+for (const name of ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_WEBHOOK_SECRET']) {
+  if (!process.env[name]) console.warn(`Missing ${name}: Telegram delivery and webhook are disabled.`);
 }
 
 const host = new DurableObjectHost({ storageDirectory });
