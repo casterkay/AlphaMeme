@@ -1,0 +1,24 @@
+src/host/sqlite-storage.mjs
+  s_d53bd87715c163::t_bb29137b8a46e5 12-13,29-32,34-36,38-40,42,44-45,48-49,52,55-56,58-59
+  s_d53bd87715c163::t_fa1f3d3a6e91a0 37,41,43,46
+  s_d53bd87715c163::t_93985ee9c19505 47
+test/node-host.test.mjs
+  s_d53bd87715c163::t_c7c8d46ab76bb4 136-163
+  s_d53bd87715c163::t_2f4fc78a6c9efd 6,9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "305b52e4ce0fb3a8befc35ae445dd99597c61868",
+  "prompts": {},
+  "sessions": {
+    "s_d53bd87715c163": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81e98a31-7832-4360-8cae-4fc1ac5a43ca",
+        "model": "deepseek-v4-pro"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
