@@ -9,6 +9,8 @@
 const KV_TABLE = '_cf_KV';
 
 export class SqliteStorage {
+  #txnDepth = 0;
+
   constructor({ database, alarms }) {
     this.database = database;
     this.alarms = alarms;
@@ -24,15 +26,37 @@ export class SqliteStorage {
     }
   };
 
+  // Cloudflare implements `transactionSync` with savepoint-based transactions, so nested
+  // calls (e.g. runCommand wrapping processInTransaction, which reads a snapshot via its
+  // own transactionSync) are legal there. SQLite forbids nested BEGIN, so mirror the
+  // same reentrancy here: BEGIN for the outermost transaction, SAVEPOINT for each level.
   transactionSync(callback) {
-    this.database.exec('BEGIN');
+    const depth = this.#txnDepth++;
+    if (depth === 0) {
+      this.database.exec('BEGIN');
+      try {
+        const result = callback();
+        this.database.exec('COMMIT');
+        return result;
+      } catch (error) {
+        this.database.exec('ROLLBACK');
+        throw error;
+      } finally {
+        this.#txnDepth--;
+      }
+    }
+    const savepoint = `sp_${depth}`;
+    this.database.exec(`SAVEPOINT ${savepoint}`);
     try {
       const result = callback();
-      this.database.exec('COMMIT');
+      this.database.exec(`RELEASE ${savepoint}`);
       return result;
     } catch (error) {
-      this.database.exec('ROLLBACK');
+      this.database.exec(`ROLLBACK TO ${savepoint}`);
+      this.database.exec(`RELEASE ${savepoint}`);
       throw error;
+    } finally {
+      this.#txnDepth--;
     }
   }
 

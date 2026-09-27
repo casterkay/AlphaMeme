@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { DurableObjectHost } from '../src/host/durable-object-host.mjs';
 import { DurableObject } from '../src/host/cloudflare-workers-shim.mjs';
+import { SqliteStorage } from '../src/host/sqlite-storage.mjs';
 import worker, { RadarAgent, TenantRegistry } from '../src/worker.mjs';
 
 function fixture(t) {
@@ -130,4 +132,32 @@ test('RadarAgent and TenantRegistry initialize their schemas and serve RPC metho
   const status = await radar.getStatus('123');
   assert.equal(status.schemaVersion, 1);
   assert.equal(status.lifecycle, 'SKELETON');
+});
+
+test('transactionSync is reentrant like Cloudflare savepoint transactions', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE t (id TEXT PRIMARY KEY, v TEXT NOT NULL)');
+  const storage = new SqliteStorage({ database: db, alarms: { setAlarm: async () => {}, deleteAlarm: async () => {} } });
+
+  storage.transactionSync(() => {
+    storage.sql.exec('INSERT INTO t (id, v) VALUES (?, ?)', 'outer', '1');
+    storage.transactionSync(() => {
+      storage.sql.exec('INSERT INTO t (id, v) VALUES (?, ?)', 'inner', '2');
+    });
+    storage.sql.exec('INSERT INTO t (id, v) VALUES (?, ?)', 'outer2', '3');
+  });
+  assert.deepEqual(storage.sql.exec('SELECT id FROM t ORDER BY id').toArray().map(r => r.id), ['inner', 'outer', 'outer2']);
+
+  // A nested rollback only undoes its own savepoint; the outer transaction still commits.
+  storage.transactionSync(() => {
+    storage.sql.exec('INSERT INTO t (id, v) VALUES (?, ?)', 'o3', 'x');
+    try {
+      storage.transactionSync(() => {
+        storage.sql.exec('INSERT INTO t (id, v) VALUES (?, ?)', 'i3', 'y');
+        throw new Error('boom');
+      });
+    } catch { /* inner rollback only */ }
+    storage.sql.exec('INSERT INTO t (id, v) VALUES (?, ?)', 'o4', 'z');
+  });
+  assert.deepEqual(storage.sql.exec('SELECT id FROM t ORDER BY id').toArray().map(r => r.id), ['inner', 'o3', 'o4', 'outer', 'outer2']);
 });
