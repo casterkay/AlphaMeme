@@ -11,11 +11,13 @@ target is one chain polled every 15 seconds on the AVE free plan.
 
 | Question | Pass |
 | --- | --- |
-| Does AVE answer reads from Workers egress? | Every trending read is `ok`: HTTP 200, body `status` 1, a token list |
+| Does AVE answer reads from Workers egress? | Trending reads are `ok` (HTTP 200, body `status` 1, a token list) and the run ends `complete` |
 | Does a 15-second cadence stay under AVE's rate limit? | No 429 across the full run |
 | Is a second endpoint class treated the same? | The one token-details read is `ok` |
 | Does one read-and-parse alarm fit the Workers Free CPU limit? | Tail `cpuTime` per alarm is well under 10 ms |
 
+An isolated timeout or 5xx between successful reads is noted but is not a
+failed verdict; any refusal, or a run stopped by three failures in a row, is.
 A 401/403 whose body names the key is a credential problem; one that names the
 address, a WAF or a block is an egress verdict. Record the body prefix either way.
 
