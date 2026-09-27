@@ -1,0 +1,22 @@
+src/host/main.mjs
+  s_d53bd87715c163::t_368bd7297ec6fc 9,15-16
+  s_d53bd87715c163::t_084ecfee42594f 17
+scripts/local-run.mjs
+  s_d53bd87715c163::t_131eaf16ec0268 1-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "eec3b000fa1f3bca0a52ae21019ea8116f83f1dd",
+  "prompts": {},
+  "sessions": {
+    "s_d53bd87715c163": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81e98a31-7832-4360-8cae-4fc1ac5a43ca",
+        "model": "deepseek-v4-pro"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
