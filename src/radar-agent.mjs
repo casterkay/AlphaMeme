@@ -309,10 +309,10 @@ export class RadarAgent extends DurableObject {
     });
   }
 
-  // Admission learns from every AVE answer: a refusal blocks further requests.
-  // Scan reads also report whether the active key (of keyEpoch) still works;
-  // a candidate key's verification never marks the active key unusable.
-  #recordingAveAnswer(tenantId, operation, keyEpoch = null) {
+  // Admission learns from every answer to the active key (of keyEpoch): a
+  // refusal blocks further requests, and auth reports whether the key works.
+  // A candidate key's answers belong to that key, so they are not recorded.
+  #recordingAveAnswer(tenantId, operation, keyEpoch) {
     return async options => {
       let result;
       try {
@@ -331,7 +331,7 @@ export class RadarAgent extends DurableObject {
     this.ctx.storage.transactionSync(() => {
       const state = readAveAdmissionState(this.ctx.storage, tenantId);
       writeAveAdmissionStateInTransaction(this.ctx.storage, tenantId, recordAveResponse(Date.now(), state, error, budget));
-      if (keyEpoch !== null && (!error || error.code === 'AVE_AUTH')) {
+      if (!error || error.code === 'AVE_AUTH') {
         this.ctx.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json', tenantId, 'telegram.providerAuth', JSON.stringify({ keyEpoch, unusable: Boolean(error) }));
       }
     });
@@ -375,7 +375,7 @@ export class RadarAgent extends DurableObject {
       const match = /^credential:(\d+)$/.exec(task.id);
       if (!match) throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', 'credential task identity is invalid');
       return this.#telegram(store.tenantId).verifyCredential(Number(match[1]), {
-        request: operation => request(this.#recordingAveAnswer(store.tenantId, operation)),
+        request,
         fetchImpl: globalThis.fetch
       });
     });

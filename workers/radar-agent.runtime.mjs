@@ -497,7 +497,8 @@ describe('AVE onboarding and scanning through the Durable Object', () => {
         expect(ownRequests()).toEqual([{ url: 'https://prod.ave-api.com/v2/tokens/0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c-bsc', apiKey: onboardingKey }]);
         const { control, aveAdmission } = await instance.getStatus(tenantId);
         expect(control).toMatchObject({ configured: true, keyEpoch: 1, activeChain: 'arc' });
-        expect(aveAdmission).toMatchObject({ keyEpoch: 1, cuUsed: AVE_CU.details });
+        // The candidate's read spent its own allowance, so the activated key starts at zero.
+        expect(aveAdmission).toMatchObject({ keyEpoch: 1, cuUsed: 0 });
         const scans = (await instance.getSchedulerSnapshot(tenantId)).tasks.filter(task => task.kind === 'scan');
         expect(scans).toEqual([expect.objectContaining({ enabled: true, aveCost: AVE_CU.trending })]);
 
@@ -509,8 +510,71 @@ describe('AVE onboarding and scanning through the Durable Object', () => {
         ]);
         expect(state.storage.sql.exec('SELECT chain, address, status FROM candidates WHERE tenant_id = ?', tenantId).toArray())
           .toEqual([{ chain: 'arc', address: LEAD, status: 'LIVE_READY' }]);
-        expect((await instance.getAveAdmissionState(tenantId)).cuUsed).toBe(AVE_CU.details + AVE_CU.trending);
+        expect((await instance.getAveAdmissionState(tenantId)).cuUsed).toBe(AVE_CU.trending);
         expect(JSON.stringify(state.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ?', tenantId).toArray())).not.toContain(onboardingKey);
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    ['a refused replacement leaves the working key unblocked', 402, null],
+    ['a replacement verifies and activates while the active key is quota-blocked', 200, 'QUOTA']
+  ])('%s', async (_name, candidateStatus, activeBlock) => {
+    const tenantId = activeBlock ? '19032' : '19031';
+    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    const activeKey = `ave-radar-active-key-${tenantId}`, candidateKey = `ave-radar-candidate-key-${tenantId}`;
+    const requests = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const key = init?.headers?.['X-API-KEY'] ?? null;
+      if (key === activeKey || key === candidateKey) requests.push(key);
+      if (key === candidateKey && candidateStatus !== 200) return new Response('{}', { status: candidateStatus });
+      return jsonResponse({ status: 1, data: { token: { token: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', chain: 'bsc', current_price_usd: '600' }, pairs: [] } });
+    });
+
+    try {
+      await runInDurableObject(radar, async (instance, state) => {
+        const submit = async (updateId, key) => {
+          const now = Date.now();
+          await instance.receiveTelegramCredential({
+            tenantId, actorUserId: tenantId, updateId, commandType: 'credential', payload: { source: 'message' },
+            dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: `${updateId}0`
+          }, `/setkey ${key}`);
+        };
+        const inboxStatus = updateId => state.storage.sql.exec('SELECT status FROM inbox WHERE tenant_id = ? AND update_id = ?', tenantId, updateId).one().status;
+        const runUntil = async (reached, label) => {
+          for (let step = 0; step < 20; step++) {
+            if (await reached()) return;
+            await instance.alarm();
+          }
+          throw new Error(`scheduler did not reach ${label} within 20 steps`);
+        };
+
+        await submit('1', activeKey);
+        await runUntil(async () => (await instance.getStatus(tenantId)).control.configured, 'first activation');
+        // Pause scans so every AVE read below is the replacement's verification.
+        await instance.pause({ tenantId });
+        const now = Date.now();
+        const active = {
+          ...(await instance.getAveAdmissionState(tenantId)), cuUsed: 400, spacingReadyAt: 0,
+          ...(activeBlock ? { blockedUntil: now + 30 * 86_400_000, blockReason: activeBlock } : {})
+        };
+        await instance.setAveAdmissionState({ tenantId, state: active });
+        requests.length = 0;
+
+        await submit('2', candidateKey);
+        await runUntil(() => inboxStatus('2') !== 'RECEIVED' && inboxStatus('2') !== 'RUNNING', 'a verified replacement');
+        expect(requests).toEqual([candidateKey]);
+        const after = await instance.getAveAdmissionState(tenantId);
+        if (candidateStatus === 200) {
+          expect(inboxStatus('2')).toBe('DONE');
+          expect(after).toMatchObject({ keyEpoch: active.keyEpoch + 1, cuUsed: 0, blockedUntil: 0, blockReason: null });
+        } else {
+          expect(inboxStatus('2')).toBe('FAILED');
+          expect(after).toMatchObject({ keyEpoch: active.keyEpoch, cuUsed: 400, blockedUntil: 0, blockReason: null, backoffFactor: 1 });
+          expect((await instance.getStatus(tenantId)).control).toMatchObject({ configured: true, keyEpoch: active.keyEpoch });
+        }
       });
     } finally {
       fetchSpy.mockRestore();

@@ -8,7 +8,7 @@ import { annotationVersion, nextReviewExpiry, reviewProjectionRevision } from '.
 import { createTelegramExport, readTelegramSnapshot } from './snapshot.mjs';
 import { readTelegramStatistics } from './statistics.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
-import { parseAveBudget } from '../ave-admission.mjs';
+import { aveCreditsUsed, parseAveBudget } from '../ave-admission.mjs';
 import { DEFAULT_SCAN_CHAIN } from '../chains.mjs';
 import { AVE_CU, normalizeAveApiKey, verifyAveApiKey } from '../providers/ave.mjs';
 import { encryptSecret, decryptSecret } from '../util/crypto.mjs';
@@ -34,7 +34,12 @@ export class TelegramRuntime {
       }
     });
     this.commands = new TelegramCommands({ storage, tenantId, inbox: this.inbox, outbox: this.outbox, now,
-      snapshot: (storage, tenant, at) => ({ ...readTelegramSnapshot(storage, tenant, at), stats: readTelegramStatistics(storage, tenant, at), aveBudget: parseAveBudget(env) }),
+      snapshot: (storage, tenant, at) => {
+        const snapshot = readTelegramSnapshot(storage, tenant, at), aveBudget = parseAveBudget(env);
+        // Spending rolls into a new period only on the next request; show the period as it is now.
+        const ave = { ...snapshot.ave, cuUsed: aveCreditsUsed(at, snapshot.ave, aveBudget) };
+        return { ...snapshot, ave, stats: readTelegramStatistics(storage, tenant, at), aveBudget };
+      },
       controls: {
         snapshot: () => this.control.snapshot(), pause: () => this.control.pause(), disconnect: () => this.disconnect(), resume: () => this.resume(), selectScanChain: chain => this.selectScanChain(chain),
         annotationVersion: (token, field) => annotationVersion(storage, tenantId, token, field).version,

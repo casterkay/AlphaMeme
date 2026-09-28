@@ -325,6 +325,34 @@ test('an exhausted allowance blocks AVE work until the period resets while other
   assert.equal(store.read().ave.blockReason, null);
 });
 
+test('a blocked active key still lets a candidate key verification run after spacing, without spending its allowance', async () => {
+  const ran = [];
+  const blocked = admission({ periodStartAt: 0, cuUsed: BUDGET.monthlyCu, spacingReadyAt: NOW + 1, blockedUntil: PERIOD_END, blockReason: 'QUOTA' });
+  const { instance, store } = scheduler({
+    now: () => NOW + 1,
+    store: new MemorySchedulerStore({
+      tasks: [task('scan', 'scan', NOW, { aveCost: 5 }), task('credential:1', 'credential', NOW, { aveCost: 5 })],
+      runtime: CONFIGURED,
+      ave: blocked
+    }),
+    handlers: {
+      scan: externalRequestHandler(async ({ request }) => {
+        await request(async () => { ran.push('scan'); });
+        return { status: 'success', complete: true };
+      }),
+      credential: externalRequestHandler(async ({ request }) => {
+        await request(async () => { ran.push('credential'); });
+        return { status: 'success', complete: true };
+      })
+    }
+  });
+
+  assert.deepEqual(await instance.alarm(), { status: 'succeeded', taskId: 'credential:1' });
+  assert.deepEqual(ran, ['credential']);
+  assert.deepEqual(store.read().ave, { ...blocked, lastRequestAt: NOW + 1, spacingReadyAt: NOW + 1 + 15_000 });
+  assert.equal(nextDue(NOW + 1, store.read().tasks, store.read().ave), PERIOD_END);
+});
+
 test('the scheduler accepts an executor result, advances its checkpoint, and rearms the scan task for free local work', async () => {
   const { scanner } = recoverableScanner();
   const { ave, counter } = emptyTrending();

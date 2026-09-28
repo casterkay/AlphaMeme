@@ -244,13 +244,13 @@ describe('Radar control generations', () => {
     expect(resumed.checkpoints.map(checkpoint => checkpoint.cycleId)).toEqual(['active-arc']);
   });
 
-  it('disconnect invalidates every generation while retaining the durable AVE cooldown and spend', async () => {
+  it('disconnect invalidates every generation and drops the key cooldown while keeping spacing and spend', async () => {
     const tenantId = '19102';
     const cycleId = 'disconnect-generation';
     const radar = await configuredRadar(tenantId);
-    const cooldownUntil = Date.now() + 60_000;
+    const cooldownUntil = Date.now() + 60_000, begunSpacing = Date.now() + 30_000;
     await radar.setAveAdmissionState({ tenantId, state: {
-      keyEpoch: 0, periodStartAt: 0, cuUsed: 40, lastRequestAt: Date.now(), spacingReadyAt: Date.now() + 30_000,
+      keyEpoch: 0, periodStartAt: 0, cuUsed: 40, lastRequestAt: Date.now(), spacingReadyAt: begunSpacing,
       blockedUntil: cooldownUntil, blockReason: 'RATE_LIMITED', backoffFactor: 2, successStreak: 0
     } });
     await seedAveCredential(radar, tenantId);
@@ -262,7 +262,7 @@ describe('Radar control generations', () => {
     expect(await radar.getRecoverableCycle({ tenantId, cycleId })).toBeNull();
     expect(scanTasks(await radar.getSchedulerSnapshot(tenantId))).toEqual([]);
     expect(await radar.getAveAdmissionState({ tenantId })).toMatchObject({
-      keyEpoch: 1, cuUsed: 40, blockedUntil: cooldownUntil, blockReason: 'RATE_LIMITED', backoffFactor: 2
+      keyEpoch: 1, cuUsed: 40, spacingReadyAt: begunSpacing, blockedUntil: 0, blockReason: null, backoffFactor: 1
     });
     await runInDurableObject(radar, async (_instance, state) => {
       expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM keys WHERE tenant_id = ?', tenantId).one().count).toBe(0);

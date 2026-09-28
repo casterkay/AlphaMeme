@@ -4,11 +4,13 @@ import {
   AVE_MINIMUM_GAP_MS,
   AveAdmissionError,
   activateAveKey,
+  aveCreditsUsed,
   aveReadyAt,
   budgetPeriod,
   defaultAveAdmission,
   parseAveBudget,
   recordAveResponse,
+  releaseAveKey,
   reserveAveRequest,
   validateAveAdmission
 } from '../src/ave-admission.mjs';
@@ -250,16 +252,53 @@ test('other AVE failures only reset the success streak', () => {
   }
 });
 
-test('activating a new key starts a fresh epoch without blocks while spent credits stay counted', () => {
+test('activating a new key starts a fresh epoch with its own allowance and no blocks, keeping request spacing', () => {
   const blocked = admission({
     keyEpoch: 3, periodStartAt: JANUARY, cuUsed: 400, lastRequestAt: JANUARY, spacingReadyAt: JANUARY + 15_000,
     blockedUntil: FEBRUARY, blockReason: 'QUOTA', backoffFactor: 8, successStreak: 4
   });
   const activated = activateAveKey(blocked);
   assert.deepEqual(activated, {
-    ...blocked, keyEpoch: 4, blockedUntil: 0, blockReason: null, backoffFactor: 1, successStreak: 0
+    ...blocked, keyEpoch: 4, cuUsed: 0, blockedUntil: 0, blockReason: null, backoffFactor: 1, successStreak: 0
   });
   assert.equal(aveReadyAt(activated), JANUARY + 15_000);
+});
+
+test('releasing a key drops its cooldowns but keeps its epoch, spending and spacing', () => {
+  const blocked = admission({
+    keyEpoch: 3, periodStartAt: JANUARY, cuUsed: 400, lastRequestAt: JANUARY, spacingReadyAt: JANUARY + 15_000,
+    blockedUntil: FEBRUARY, blockReason: 'RATE_LIMITED', backoffFactor: 4, successStreak: 2
+  });
+  assert.deepEqual(releaseAveKey(blocked), { ...blocked, blockedUntil: 0, blockReason: null, backoffFactor: 1, successStreak: 0 });
+});
+
+test('a candidate key read waits only for spacing and neither spends nor clears the active key allowance', () => {
+  for (const blockReason of ['QUOTA', 'BUDGET', 'RATE_LIMITED']) {
+    const blocked = admission({
+      periodStartAt: JANUARY, cuUsed: BUDGET.monthlyCu, lastRequestAt: JANUARY, spacingReadyAt: JANUARY + 15_000,
+      blockedUntil: FEBRUARY, blockReason, backoffFactor: 2
+    });
+    const now = JANUARY + 15_000;
+    assert.equal(aveReadyAt(blocked, { candidateKey: true }), now, blockReason);
+    assert.equal(aveReadyAt(blocked), FEBRUARY, blockReason);
+    assert.throws(() => reserveAveRequest(now - 1, blocked, 5, BUDGET, { candidateKey: true }), { code: 'AVE_RESERVATION_INVALID' });
+    assert.deepEqual(reserveAveRequest(now, blocked, 5, BUDGET, { candidateKey: true }), {
+      reserved: true,
+      state: { ...blocked, lastRequestAt: now, spacingReadyAt: now + AVE_MINIMUM_GAP_MS }
+    }, blockReason);
+  }
+});
+
+test('a candidate key read keeps at least the minimum gap after the active key paced read', () => {
+  const paced = admission({ periodStartAt: JANUARY, lastRequestAt: JANUARY, spacingReadyAt: JANUARY + 600_000 });
+  const { state } = reserveAveRequest(JANUARY + 600_000, paced, 5, BUDGET, { candidateKey: true });
+  assert.equal(state.spacingReadyAt, JANUARY + 600_000 + AVE_MINIMUM_GAP_MS);
+});
+
+test('credits used report zero once the period containing now is later than the recorded one', () => {
+  assert.equal(aveCreditsUsed(FEBRUARY - 1, { periodStartAt: JANUARY, cuUsed: 400 }, BUDGET), 400);
+  assert.equal(aveCreditsUsed(FEBRUARY, { periodStartAt: JANUARY, cuUsed: 400 }, BUDGET), 0);
+  assert.equal(aveCreditsUsed(JANUARY, { periodStartAt: FEBRUARY, cuUsed: 400 }, BUDGET), 400);
 });
 
 test('admission state with unknown fields, reasons, or backoff factors is refused', () => {

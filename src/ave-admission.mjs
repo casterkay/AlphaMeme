@@ -2,7 +2,8 @@
 // it is sent: requests keep at least MINIMUM_GAP_MS apart, and are paced so the
 // credits left in the plan's monthly allowance last until it resets. A refusal
 // from AVE blocks further requests: a rate limit until its cooldown ends, an
-// exhausted quota until the allowance resets.
+// exhausted quota until the allowance resets. Blocks and spending belong to the
+// active key; verifying a candidate key only keeps requests apart.
 export const AVE_MINIMUM_GAP_MS = 15_000;
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
 const MAX_BACKOFF_FACTOR = 8;
@@ -64,9 +65,9 @@ export function validateAveAdmission(value) {
   return value;
 }
 
-export function aveReadyAt(state) {
+export function aveReadyAt(state, { candidateKey = false } = {}) {
   validateAveAdmission(state);
-  return Math.max(state.spacingReadyAt, state.blockedUntil);
+  return candidateKey ? state.spacingReadyAt : Math.max(state.spacingReadyAt, state.blockedUntil);
 }
 
 // Only a later period starts a fresh allowance; a clock that steps back keeps spending counted.
@@ -74,14 +75,24 @@ function inPeriod(state, period) {
   return period.startAt > state.periodStartAt ? { ...state, periodStartAt: period.startAt, cuUsed: 0 } : state;
 }
 
+/** Credit units the active key has spent in the period containing now. */
+export function aveCreditsUsed(now, { periodStartAt, cuUsed }, budget) {
+  return budgetPeriod(now, budget).startAt > periodStartAt ? 0 : cuUsed;
+}
+
 /**
  * Reserve one request of `cost` credit units at `now`. Returns the next state
  * and whether the request may be sent; a request that would overspend the
  * allowance is not sent, and admission stays blocked until the next period.
+ * A candidate key's verification spends another allowance, so it only takes
+ * a spacing slot.
  */
-export function reserveAveRequest(now, state, cost, budget) {
-  if (!isTimestamp(now) || !Number.isSafeInteger(cost) || cost <= 0 || aveReadyAt(state) > now) {
+export function reserveAveRequest(now, state, cost, budget, { candidateKey = false } = {}) {
+  if (!isTimestamp(now) || !Number.isSafeInteger(cost) || cost <= 0 || aveReadyAt(state, { candidateKey }) > now) {
     throw new AveAdmissionError('AVE_RESERVATION_INVALID', 'an AVE request cannot be reserved before admission is ready');
+  }
+  if (candidateKey) {
+    return { reserved: true, state: { ...state, lastRequestAt: now, spacingReadyAt: Math.max(state.spacingReadyAt, now + AVE_MINIMUM_GAP_MS) } };
   }
   const period = budgetPeriod(now, budget);
   const current = inPeriod(state, period);
@@ -119,8 +130,18 @@ export function recordAveResponse(now, state, error, budget) {
   return { ...state, successStreak: 0 };
 }
 
-/** A newly activated key starts a fresh credential epoch without cooldowns; spend stays counted. */
+/**
+ * A newly activated key starts a fresh credential epoch with its own allowance.
+ * Whether it shares an AVE account with the old key is unknowable here; if it
+ * does, AVE's own quota refusal still stops overspending.
+ */
 export function activateAveKey(state) {
   validateAveAdmission(state);
-  return { ...state, keyEpoch: state.keyEpoch + 1, blockedUntil: 0, blockReason: null, backoffFactor: 1, successStreak: 0 };
+  return { ...releaseAveKey(state), keyEpoch: state.keyEpoch + 1, cuUsed: 0 };
+}
+
+/** Blocks belong to a key: dropping the key drops its cooldowns. */
+export function releaseAveKey(state) {
+  validateAveAdmission(state);
+  return { ...state, blockedUntil: 0, blockReason: null, backoffFactor: 1, successStreak: 0 };
 }

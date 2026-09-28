@@ -13,8 +13,11 @@ key and no environment fallback.
    JSON payloads.
 2. Preparation requires an active inbox row (`RECEIVED` or `RUNNING`) and the key
    from that encrypted receipt. It stores the candidate as `ave-pending-api-key`
-   and schedules one verification task through AVE admission (5 credit units).
-   Duplicate preparation reuses the current verification generation.
+   and schedules one verification task (a 5-credit details read). The candidate
+   spends its own allowance: its read waits only for request spacing, ignores
+   the active key's cooldowns and budget, and its answer is never recorded into
+   the active key's admission state. Duplicate preparation reuses the current
+   verification generation.
 3. Verification calls `verify(apiKey, { signal, timeoutMs })` only through the
    supplied admission `request` capability; it reads AVE token details for WBNB
    on BSC. Before and after that read, the command's expiry and status and the
@@ -26,8 +29,10 @@ key and no environment fallback.
    generation; this scrubs only its candidate. Rate limits, timeouts and network
    errors retry. A failed replacement keeps the old active key. Activation
    preserves pause state and does not enable alerts.
-5. Activation stores the key as `ave-api-key` and starts a new key epoch; scan
-   reads use that key, and admission and checkpoints still enforce key epochs.
+5. Activation stores the key as `ave-api-key` and starts a new key epoch with
+   its own allowance (credits used reset to 0, cooldowns cleared); scan reads
+   use that key, and admission and checkpoints still enforce key epochs.
+   `/disconnect` also clears cooldowns, which belong to the dropped key.
 
 Secret envelopes bind tenant, field, format version and master-key version using
 AES-GCM AAD with a random 96-bit nonce. `MASTER_ENC_KEY` is a nonempty string

@@ -181,10 +181,15 @@ function uniqueTasks(tasks) {
   return normalized;
 }
 
+// Credential tasks verify a candidate key, whose reads spend its own allowance.
+function isCandidateKeyRead(task) {
+  return task.kind === 'credential';
+}
+
 export function taskDueAt(now, task, ave) {
   if (!isTimestamp(now)) throw new SchedulerPolicyError('SCHEDULER_NOW_INVALID', 'scheduler now must be a non-negative safe integer timestamp');
   const normalized = policyTask(task);
-  const admissionReadyAt = normalized.aveCost > 0 ? aveReadyAt(ave) : 0;
+  const admissionReadyAt = normalized.aveCost > 0 ? aveReadyAt(ave, { candidateKey: isCandidateKeyRead(normalized) }) : 0;
   return Math.max(now, normalized.dueAt, admissionReadyAt);
 }
 
@@ -503,7 +508,7 @@ export class OneAlarmScheduler {
       const epoch = state.runtime.nextLeaseEpoch;
       let ave = state.ave;
       if (selected.task.aveCost > 0 && usableHandler) {
-        const reservation = reserveAveRequest(now, state.ave, selected.task.aveCost, this.aveBudget);
+        const reservation = reserveAveRequest(now, state.ave, selected.task.aveCost, this.aveBudget, { candidateKey: isCandidateKeyRead(selected.task) });
         // An allowance that cannot pay for the request blocks admission until it resets.
         if (!reservation.reserved) return { state: { ...state, ave: reservation.state }, value: null };
         ave = reservation.state;

@@ -1,4 +1,4 @@
-import { activateAveKey } from '../ave-admission.mjs';
+import { activateAveKey, releaseAveKey } from '../ave-admission.mjs';
 import { isScanChain } from '../chains.mjs';
 import {
   readSchedulerStateInTransaction,
@@ -182,7 +182,7 @@ export class SqliteControlStateStore {
         controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch'),
         connectionGeneration: increment(state.runtime.control.connectionGeneration, 'connection generation')
       },
-      ave: { ...state.ave, keyEpoch: increment(state.ave.keyEpoch, 'key epoch') },
+      ave: { ...releaseAveKey(state.ave), keyEpoch: increment(state.ave.keyEpoch, 'key epoch') },
       tasks: state.tasks.filter(task => !['scan', 'credential'].includes(task.kind))
     }), { discardCheckpoints: true, deleteKeys: true, cancelCredentialInbox: true });
   }
