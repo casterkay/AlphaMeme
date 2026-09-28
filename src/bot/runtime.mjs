@@ -17,28 +17,44 @@ import { SqliteControlStateStore } from '../storage/control-state.mjs';
 import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction, scheduleRecoverableScanTaskInTransaction } from '../storage/scheduler-state.mjs';
 import { SqliteRecoverableScannerStore, restartRecoverableScanInTransaction, resumeRecoverableCheckpointsInTransaction } from '../storage/recoverable-scanner.mjs';
 import { RecoverableScanner } from '../recoverable-scanner.mjs';
+import { SecretError } from '../util/crypto.mjs';
+import { parseTradingConfig, TRADING_SETTINGS } from '../trading/config.mjs';
+import { TradingEngine } from '../trading/engine.mjs';
+import { generateTradingWallet, readTradingWallet, revealTradingKey } from '../trading/wallet.mjs';
+
+// Only the fields a panel shows; never raw transactions, calldata or routes.
+function projectTrade(trade) {
+  const tx = value => value && { hash: value.hash, sentAt: value.sentAt };
+  const { route: _route, approval, swap, quote, ...rest } = trade;
+  return { ...rest, approval: tx(approval), swap: tx(swap), quote: quote && (({ data: _data, ...fields }) => fields)(quote) };
+}
 
 export class TelegramRuntime {
   constructor({ storage, env, tenantId, now = Date.now }) {
     Object.assign(this, { storage, env, tenantId, now });
+    this.tradingConfig = parseTradingConfig(env);
+    this.trading = new TradingEngine({ storage, tenantId, now, config: this.tradingConfig, masterKey: () => this.masterKey,
+      onTradeInTransaction: trade => this.presentTradeInTransaction(trade), onBalancesInTransaction: state => this.presentBalancesInTransaction(state) });
     this.inbox = new TelegramInbox({ storage, tenantId, now });
     this.control = new SqliteControlStateStore(storage, tenantId);
     this.notifications = new NotificationPolicy({ storage, tenantId, now });
     this.outbox = new TelegramOutbox({ storage, tenantId, now,
       transport: input => typeof env.TELEGRAM_BOT_TOKEN === 'string' && env.TELEGRAM_BOT_TOKEN.trim() ? createTelegramTransport({ botToken: env.TELEGRAM_BOT_TOKEN })(input) : Promise.resolve({ ok: false, kind: 'permanent', code: 'TELEGRAM_NOT_CONFIGURED' }),
       eligible: (row, payload) => this.deliveryEligible(row, payload),
+      reveal: params => this.revealSecretParams(params),
       onConfirmedInTransaction: value => {
+        if (value.payload.purpose === 'secret') this.afterSecretSentInTransaction(value);
         this.commands.sessions.confirmPromptInTransaction(value);
         if (value.payload.notification) this.notifications.acknowledgeInTransaction(value.payload.notification);
         if (value.payload.token && value.payload.purpose !== 'prompt') this.saveRenderedProjection(value);
       }
     });
-    this.commands = new TelegramCommands({ storage, tenantId, inbox: this.inbox, outbox: this.outbox, now,
+    this.commands = new TelegramCommands({ storage, tenantId, inbox: this.inbox, outbox: this.outbox, trading: this.trading, now,
       snapshot: (storage, tenant, at) => {
         const snapshot = readTelegramSnapshot(storage, tenant, at), aveBudget = parseAveBudget(env);
         // Spending rolls into a new period only on the next request; show the period as it is now.
         const ave = { ...snapshot.ave, cuUsed: aveCreditsUsed(at, snapshot.ave, aveBudget) };
-        return { ...snapshot, ave, stats: readTelegramStatistics(storage, tenant, at), aveBudget };
+        return { ...snapshot, ave, stats: readTelegramStatistics(storage, tenant, at), aveBudget, trading: this.tradingSnapshot() };
       },
       controls: {
         snapshot: () => this.control.snapshot(), pause: () => this.control.pause(), disconnect: () => this.disconnect(), resume: () => this.resume(), selectScanChain: chain => this.selectScanChain(chain),
@@ -52,6 +68,76 @@ export class TelegramRuntime {
   get masterKey() {
     const value = this.env.MASTER_ENC_KEY;
     return typeof value === 'string' && value.trimStart().startsWith('{') ? JSON.parse(value) : value;
+  }
+
+  tradingSnapshot() {
+    const chains = this.tradingConfig.chains;
+    const exportRow = this.storage.sql.exec("SELECT status FROM outbox WHERE tenant_id=? AND substr(id,1,14)='wallet-export:' ORDER BY rowid DESC LIMIT 1", this.tenantId).toArray()[0];
+    const setting = (key, fallback, maximum) => {
+      const value = this.commands.preference(key, fallback);
+      if (!Number.isSafeInteger(value) || value < 1 || value > maximum) throw new TypeError(`trading preference ${key} is malformed`);
+      return value;
+    };
+    return {
+      chains: Object.keys(chains),
+      chainFacts: Object.fromEntries(Object.entries(chains).map(([chain, facts]) => [chain, { nativeSymbol: facts.nativeSymbol, quoteDecimals: facts.quoteDecimals }])),
+      explorers: Object.fromEntries(Object.entries(chains).map(([chain, facts]) => [chain, facts.explorerUrl])),
+      wallet: readTradingWallet(this.storage, this.tenantId),
+      settings: { slippageBps: setting('tradingSlippageBps', TRADING_SETTINGS.slippageBps, 5000), capUsd: setting('tradingBuyCapUsd', TRADING_SETTINGS.buyCapUsd, 1_000_000) },
+      trades: this.trading.trades().slice(0, 10).map(projectTrade),
+      balances: this.trading.balances(),
+      exportIssue: ['UNKNOWN', 'FAILED'].includes(exportRow?.status)
+    };
+  }
+
+  /** Decrypt an export for exactly one send; the plaintext never reaches storage or logs. */
+  async revealSecretParams(params) {
+    if (params.secret === undefined) return params;
+    const { secret, ...rest } = params;
+    if (typeof secret !== 'string') return null;
+    let privateKey;
+    try { privateKey = await revealTradingKey(this.masterKey, this.tenantId, secret); } catch (error) {
+      if (error instanceof SecretError || error?.code === 'TRADE_WALLET_CORRUPT') return null;
+      throw error;
+    }
+    const en = this.commands.language === 'en';
+    const text = en
+      ? `<b>Trading wallet private key</b>\n<code>${privateKey}</code>\n\nAnyone with this key controls the wallet's funds. Store it offline and never share it. This message will be deleted in 60 seconds (deletion is not guaranteed); delete it yourself too.`
+      : `<b>交易钱包私钥</b>\n<code>${privateKey}</code>\n\n任何拿到此私钥的人都能控制钱包资金。请离线保存，切勿分享。此消息将在60秒后删除（无法保证删除），请同时自行删除。`;
+    return { ...rest, text };
+  }
+
+  afterSecretSentInTransaction({ row, result }) {
+    this.outbox.forgetSecretInTransaction(row.id);
+    if (result?.message_id != null) {
+      const at = this.now() + TRADING_SETTINGS.exportDeleteAfterMs;
+      this.outbox.enqueueInTransaction({ id: `delete:${row.id}`, chatId: this.tenantId, method: 'deleteMessage', params: { message_id: result.message_id }, purpose: 'cleanup', nextAt: at, expiresAt: at + 24 * 60 * 60_000 });
+    }
+  }
+
+  /** Show a trade's new state on the panel that tracks it, or report its end in a message. */
+  presentTradeInTransaction(trade) {
+    const session = trade.sessionId ? this.commands.sessions.get(trade.sessionId) : null;
+    if (session?.panel === 'trade' && session.query.tradeId === trade.id) {
+      this.commands.renderInTransaction(this.commands.sessions.advanceInTransaction(session), { deliveryClass: 'PANEL_UPDATE' });
+      return;
+    }
+    if (!['FILLED', 'FAILED', 'UNKNOWN'].includes(trade.state) || trade.confirmedAt === null) return;
+    const next = this.commands.sessions.createInTransaction('trade', trade.chain, { tradeId: trade.id });
+    this.commands.renderInTransaction(next, { deliveryClass: 'PANEL_UPDATE' });
+  }
+
+  presentBalancesInTransaction(state) {
+    const session = state.sessionId ? this.commands.sessions.get(state.sessionId) : null;
+    if (session?.panel === 'wallet' && session.expiresAt > this.now()) this.commands.renderInTransaction(this.commands.sessions.advanceInTransaction(session), { deliveryClass: 'PANEL_UPDATE' });
+  }
+
+  /** Work a callback needs before its transaction: generating and encrypting a new wallet key. */
+  async prepareCallback(row) {
+    if (row.command_type !== 'callback') return null;
+    const link = this.storage.sql.exec('SELECT action FROM shortlinks WHERE tenant_id=? AND id=?', this.tenantId, JSON.parse(row.payload_json).callbackId).toArray()[0];
+    if (link?.action !== 'wallet.create' || readTradingWallet(this.storage, this.tenantId)) return null;
+    return { wallet: await generateTradingWallet(this.masterKey, this.tenantId) };
   }
 
   receive(receipt, payloadEnc = null) {
@@ -89,10 +175,11 @@ export class TelegramRuntime {
     if (!row) return { status: 'success', complete: true };
     try {
       if (row.command_type === 'credential') return await this.prepareCredential(row);
+      const prepared = await this.prepareCallback(row);
       this.storage.transactionSync(() => {
         const current = this.inbox.get(updateId);
         if (!current || !['RECEIVED','RUNNING'].includes(current.status)) return;
-        this.commands.processInTransaction(current);
+        this.commands.processInTransaction(current, prepared);
       });
     } catch (error) {
       if (!(error instanceof ConnectionError) && error?.name !== 'ReviewConflict') throw error;
@@ -128,7 +215,7 @@ export class TelegramRuntime {
         this.startScan();
         this.resetNotificationBaseline();
         this.inbox.finishInTransaction(state.updateId, 'DONE');
-        this.commands.noticeInTransaction(state.updateId, this.commands.language === 'en' ? 'AVE connected. Read-only; no trades. Check and delete your key message. Notifications remain under your control: /unmute.' : 'AVE已连接。只读，不执行交易。请检查并删除密钥消息。可使用 /unmute 开启提醒。', 'connected');
+        this.commands.noticeInTransaction(state.updateId, this.commands.language === 'en' ? 'AVE connected with a read-only key. Check and delete your key message. Notifications remain under your control: /unmute.' : 'AVE已连接（只读密钥）。请检查并删除密钥消息。可使用 /unmute 开启提醒。', 'connected');
       } });
     } catch (error) {
       // A transient failure retries the verification; a refusal ends it.
@@ -270,7 +357,9 @@ export class TelegramRuntime {
     this.reconcileNotificationsInTransaction();
     const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
     const ownedOutbox = new Set(this.outbox.ids().map(row => `outbox:${row.id}`));
-    const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'telegram:corrections' && task.id !== 'telegram:expiry' && !task.id.startsWith('inbox:'));
+    const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'telegram:corrections' && task.id !== 'telegram:expiry' && !task.id.startsWith('inbox:') && task.kind !== 'trade');
+    tasks.push(...this.trading.tasksInTransaction(state.runtime.retries));
+    this.outbox.scrubSecretsInTransaction();
     tasks.push(...state.tasks.filter(task => task.id.startsWith('inbox:')));
     const expiry = this.storage.sql.exec("SELECT MIN(expires_at) AS at FROM inbox WHERE tenant_id=? AND status IN ('RECEIVED','RUNNING')", this.tenantId).toArray()[0]?.at;
     if (Number.isSafeInteger(expiry)) tasks.push({ id: 'telegram:expiry', kind: 'local-control', dueAt: expiry, enabled: true, aveCost: 0 });

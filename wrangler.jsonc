@@ -16,9 +16,23 @@
   },
   // The AVE plan's monthly credit allowance and the UTC day it resets. The
   // free plan's reset day is unverified; set it to your account's reset day.
+  // Trading: a chain is tradable only when its RPC URL is set (an https JSON-RPC
+  // endpoint; empty disables it). KYBER_CLIENT_ID is the x-client-id sent to the
+  // KyberSwap Aggregator and is required once any chain is enabled. Explorer
+  // URLs default to bscscan/basescan/etherscan; Arc has no default, so without
+  // ARC_EXPLORER_URL an Arc transaction shows its hash only.
   "vars": {
     "AVE_MONTHLY_CU": "1000000",
-    "AVE_CU_RESET_DAY": "1"
+    "AVE_CU_RESET_DAY": "1",
+    "KYBER_CLIENT_ID": "",
+    "ARC_RPC_URL": "",
+    "BSC_RPC_URL": "",
+    "BASE_RPC_URL": "",
+    "ETH_RPC_URL": "",
+    "ARC_EXPLORER_URL": "",
+    "BSC_EXPLORER_URL": "",
+    "BASE_EXPLORER_URL": "",
+    "ETH_EXPLORER_URL": ""
   },
   "triggers": {
     "crons": ["* * * * *"]

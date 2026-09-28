@@ -2,11 +2,13 @@
 // https://docs.kyberswap.com/kyberswap-solutions/kyberswap-aggregator/aggregator-api-specification/evm-swaps
 // The router address is pinned; transactions are always sent to the pinned
 // address, never to anything a response names, and no response URL is followed.
+import { getAddress } from 'viem';
 import { TradingError, requestJson } from './http.mjs';
 import { KYBER_NATIVE_TOKEN } from './config.mjs';
 
 export const KYBER_API_ORIGIN = 'https://aggregator-api.kyberswap.com';
-export const KYBER_ROUTER = '0x6131B5fAE19EA4f9D964eAc0408E4408b66337b5';
+// MetaAggregationRouterV2, the same address on every supported chain (EIP-55 checksummed).
+export const KYBER_ROUTER = getAddress('0x6131b5fae19ea4f9d964eac0408e4408b66337b5');
 const LIMITS = Object.freeze({ timeoutMs: 10_000, maxBytes: 1_048_576 });
 const unsigned = /^(0|[1-9]\d{0,77})$/;
 const decimal = /^\d{1,40}(\.\d{1,40})?$/;

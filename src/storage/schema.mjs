@@ -129,7 +129,9 @@ export const JSON_CONTAINERS = Object.freeze({
   events: Object.freeze(['data_json']),
   schedulerState: Object.freeze([
     'ave.admission.v1', 'runtime.global', 'runtime.sourceHealth', 'notification.baseline',
-    'scheduler.instance.v1', 'scheduler.runtime.v1', 'scheduler.tasks.v1'
+    'scheduler.instance.v1', 'scheduler.runtime.v1', 'scheduler.tasks.v1',
+    // One row per trade (src/trading/trades.mjs) and the wallet balance cache.
+    'trade:<id>', 'trading.balances'
   ])
 });
 
