@@ -28,5 +28,8 @@
     "@cloudflare/vitest-plugin": "1.1.13",
     "vitest": "4.1.11",
     "wrangler": "4.135.0"
+  },
+  "dependencies": {
+    "viem": "2.56.9"
   }
 }
