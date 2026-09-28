@@ -126,7 +126,6 @@ export function publicCandidate(row = {}) {
     buys: finite(row.buys),
     sells: finite(row.sells),
     twitter: text(row.twitter, 80),
-    aveUrl: externalUrl(row.aveUrl),
     status: ['X_REVIEW', 'QUALIFIED'].includes(row.status) && !currentRules ? 'WAIT_RECHECK' : text(row.status, 32),
     auditedAt: finite(row.auditedAt),
     staleAt: finite(row.staleAt),

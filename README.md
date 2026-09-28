@@ -17,14 +17,12 @@ the AVE Data API, as upstream. Read-only research: no wallet keys, signing or or
   Each cycle reads the chain's AVE hot list and applies upstream's AVE market screen;
   every passing token becomes a **market lead** and alerts immediately.
 - 线索随后由 GoPlus 与 DexScreener 免费核验（Arc：GoPlus 链 5042、DexScreener `arc`）。
-  貔貅、异常税率等一票否决会撤销线索、隐藏交易入口并推送“风险恶化”。
-  Leads are then checked on GoPlus and DexScreener; a fatal finding vetoes the lead,
-  hides its trade link and sends a "risk worsened" follow-up.
+  貔貅、异常税率等一票否决会撤销线索并推送“风险恶化”。
+  Leads are then checked on GoPlus and DexScreener; a fatal finding vetoes the lead
+  and sends a "risk worsened" follow-up.
 - AVE 不提供持有人、交易者或合约安全数据，因此线索只是行情观察，**安全性未核验不代表安全**。
   AVE has no holder, trader or contract-security data: a lead is a market
   observation, and unverified does not mean safe.
-- 代币详情提供“在AVE交易”链接；交易在 AVE 页面由你自己确认。
-  Token details link to AVE, where you confirm any trade yourself.
 
 ## 额度与节奏 / Credits and pacing
 

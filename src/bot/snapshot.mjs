@@ -49,7 +49,6 @@ export function projectTelegramCandidate(source) {
   row.address = safeTelegramText(source.address, 80);
   row.symbol = safeTelegramText(source.symbol, 30) || '?';
   row.name = safeTelegramText(source.name, 80);
-  row.aveUrl = safeTelegramUrl(source.aveUrl);
   row.info.website = safeTelegramUrl(source.info?.website);
   row.status = template.status;
   row.deep.chainPass = template.deep.chainPass;
@@ -86,7 +85,7 @@ export function projectTelegramFeedRow(source, chain) {
     chain, address: safeTelegramText(source.address,80), symbol:safeTelegramText(source.symbol,30), name:safeTelegramText(source.name,80),
     ...Object.fromEntries(numbers.map(key => [key, typeof source[key] === 'number' && Number.isFinite(source[key]) ? source[key] : null])),
     ageBasis: safeTelegramText(source.ageBasis,16), priorityBand:source.priorityBand === true, pass:source.pass === true,
-    reasons:(source.reasons || []).slice(0,3).map(value => safeTelegramText(value,120)), aveUrl:safeTelegramUrl(source.aveUrl)
+    reasons:(source.reasons || []).slice(0,3).map(value => safeTelegramText(value,120))
   };
 }
 

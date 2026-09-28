@@ -74,7 +74,7 @@ test('trending parses rows into fresh AVE market rows with their quote clocks', 
   assert.equal(row.stale, false);
   assert.equal(row.creation_timestamp, (NOW - 3_600_000) / 1000);
   assert.equal(row.ageBasis, 'launch');
-  assert.equal(row.aveUrl, `https://pro.ave.ai/token/${BSC_TOKEN}-bsc?ref=0001`);
+  assert.equal(Object.hasOwn(row, 'aveUrl'), false);
   assert.equal(AVE_CU.trending, 5);
 });
 

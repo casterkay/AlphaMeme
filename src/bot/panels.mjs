@@ -8,7 +8,6 @@ export const AUDIT_FILTERS = Object.freeze(['all','lead','chain','waiting','pass
 export const AUDIT_SORTS = Object.freeze(['audit_desc','score_desc','market_desc','market_asc','liquidity_desc']);
 export const FEED_SORTS = Object.freeze(['priority','volume']);
 const AVE_KEY_URL = 'https://cloud.ave.ai/login';
-const aveTokenUrl = row => row.aveUrl || null;
 const names = {
   radar:['雷达总览','Radar overview'], feed:['AVE热榜','AVE hot list'], audits:['近30分钟线索与核验','Leads and checks, last 30 min'], saved:['收藏与备注','Favorites and notes'], events:['雷达事件','Radar events'], status:['运行状态','Service status'], sources:['来源详情','Source details'], delivery:['投递问题','Delivery issues'], settings:['设置','Settings'], chains:['选择扫描链','Choose scan chain'], onboard:['连接AVE','Connect AVE'], help:['帮助与密钥安全','Help and key safety'], detail:['代币详情','Token detail'], evidence:['检查证据','Evidence'], view_chain:['查看链','View chain'], filter:['筛选','Filter'], sort:['排序','Order'], language:['语言','Language'], disconnect:['断开连接','Disconnect'], stats:['筛选后表现验证','Post-screen performance'], horizon:['观察窗口','Window'], cohort:['样本组别','Cohort'],
   all:['全部','All'], lead:['市场线索，安全待核验','Market lead; security unverified'], chain:['链上候选，待人工看X','On-chain candidate; review X'], waiting:['等待复查','Waiting for recheck'], passed:['人工通过','Manually approved'], ignored:['已忽略','Ignored'], rejected:['已排除','Rejected'], fresh:['5分钟内审计','Audited within 5 min'], favorite:['收藏','Favorites'], notes:['有备注','With notes'],
@@ -157,10 +156,7 @@ function detailPanel(snapshot,session,locale) {
   blocks.push(L('人工通过不会改变筛选结果或执行交易。','Manual approval does not change screening results or execute trades.'));
   const x = officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter), site = row.info?.website;
   if (!x || !site) blocks.push(L('部分官方链接不可用。','Some official links are unavailable.'));
-  // A vetoed token keeps its evidence but loses the trade link.
-  const trade = row.status === 'HARD_REJECT' ? null : urlButton(L('在AVE交易','Trade on AVE'),aveTokenUrl(row));
-  if (row.status === 'HARD_REJECT') blocks.push(L('安全核验未通过，已隐藏交易入口。','Safety check failed; the trade link is hidden.'));
-  const keyboard = [[urlButton(L('查看X','View X'),x),trade],[urlButton(L('官网','Website'),site)],[button(name('evidence',locale),'panel.open',{panel:'evidence'},identity)]];
+  const keyboard = [[urlButton(L('查看X','View X'),x)],[urlButton(L('官网','Website'),site)],[button(name('evidence',locale),'panel.open',{panel:'evidence'},identity)]];
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };
   if (mark?.decision) keyboard.push([button(mark.decision === 'passed' ? L('撤销人工通过','Undo approval') : L('取消忽略','Stop ignoring'),'mark.clear',binding,identity)]);
   else if (row.reviewRevision && backendDisposition(row) === 'chain' && row.auditedAt && snapshot.at-row.auditedAt <= 600_000) keyboard.push([button(L('人工通过','Approve manually'),'mark.set_passed',binding,identity)]);
