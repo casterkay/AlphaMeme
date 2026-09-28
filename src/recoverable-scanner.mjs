@@ -333,7 +333,7 @@ export class RecoverableScanner {
     } else if (current.phase === 'OUTCOMES_SAMPLE') {
       partial.outcomeDeadlineAt = outcomeSampleDeadline(current, now);
       const jobs = now < partial.outcomeDeadlineAt && num(partial.outcomeReads) < outcomeReadLimit(settings)
-        ? dueOutcomeJobs(retainedOutcomes(this.store.readOutcomes(current.chain), now, outcomeRetentionLimit(settings)), now) : [];
+        ? dueOutcomeJobs(retainedOutcomes(this.store.readOutcomes(), now, outcomeRetentionLimit(settings)), now) : [];
       const job = jobs[0];
       if (job) {
         partial.outcomes = { job: { chain: job.row.chain || current.chain, address: job.row.address, key: job.key, targetAt: job.targetAt } };
@@ -508,7 +508,7 @@ export class RecoverableScanner {
     if (current.phase !== 'OUTCOMES_SAMPLE') throw phaseError('outcome samples can only commit from OUTCOMES_SAMPLE');
     const job = current.partial.outcomes?.job;
     if (!job) throw phaseError('outcome sample checkpoint has no job');
-    const outcomes = this.store.readOutcomes(current.chain);
+    const outcomes = this.store.readOutcomes();
     const jobChain = job.chain || current.chain;
     const outcome = outcomes.find(row => outcomeKey(row, current.chain) === tokenKey(jobChain, job.address));
     if (!outcome) throw new RecoverableScannerError('OUTCOME_MISSING', 'outcome sample target no longer exists');
