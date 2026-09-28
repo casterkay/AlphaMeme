@@ -16,13 +16,26 @@ describe('Telegram SQLite snapshot projection',()=>{
       storage.sql.exec('INSERT INTO annotations (tenant_id,chain,address,favorite,note,updated_at) VALUES (?,?,?,?,?,?)','19200','sol','A'.repeat(32),1,'safe note',now);
       storage.sql.exec('INSERT INTO manual_marks (tenant_id,chain,address,decision,marked_at,review_revision,mark_version) VALUES (?,?,?,?,?,?,?)','19200','sol','A'.repeat(32),'passed',now-500,'revision',2);
       storage.sql.exec('INSERT INTO keys (tenant_id,name,value_enc,generation) VALUES (?,?,?,?)','19200','private','secret-ciphertext',1);
-      storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)','19200','live.snapshot:sol',JSON.stringify({keyEpoch:0,lastSuccessAt:now,rows:[{chain:'sol',address:'A'.repeat(32),symbol:'LIVE',holders:null,rawSecret:'do-not-show'}]}));
+      storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)','19200','feed.snapshot:sol',JSON.stringify({status:'OK',at:now,observedAt:now,receivedCount:1,leadCount:1,rows:[{address:'A'.repeat(32),symbol:'FEED',marketCap:null,pass:true,rawSecret:'do-not-show'}]}));
       const snapshot=readTelegramSnapshot(storage,'19200',now);
       expect(snapshot.candidates).toHaveLength(1);expect(snapshot.candidates[0].symbol).toBe('OWN');expect(snapshot.candidates[0].marketCap).toBeNull();expect(snapshot.candidates[0].holders).toBe(0);expect(snapshot.marks[0].at).toBe(now-500);expect(snapshot.marks[0].version).toBe(2);
-      expect(snapshot.liveByChain.sol.rows[0].symbol).toBe('LIVE');
+      expect(snapshot.feedByChain.sol.rows[0]).toMatchObject({chain:'sol',symbol:'FEED',marketCap:null,pass:true});expect(snapshot.feedByChain.sol.rows[0]).not.toHaveProperty('rawSecret');
       const exported=JSON.stringify(createTelegramExport(snapshot));expect(exported).not.toContain('secret-ciphertext');expect(exported).not.toContain('OTHER');expect(exported).not.toContain('do-not-show');
       const rendered=renderPanel(snapshot,{panel:'detail',viewChain:'sol',query:{selectedToken:{chain:'sol',address:'A'.repeat(32)}},version:1},'en');
       expect(rendered.text).toContain('Manually approved');expect(rendered.text).toContain('Market cap Unknown');
+    });
+  });
+  it('offers the AVE trade link on a lead detail and hides it once security vetoes the token',async()=>{
+    const radar=env.RADAR.get(env.RADAR.idFromName('panels-trade-19202'));
+    await runInDurableObject(radar,async(_instance,{storage})=>{
+      const now=1_800_000_000_000,lead='0x'+'1'.repeat(40),vetoed='0x'+'2'.repeat(40);
+      for(const [address,status] of [[lead,'LIVE_READY'],[vetoed,'HARD_REJECT']]) {
+        storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,ave_url,review_revision) VALUES (?,?,?,?,?,?,?,?)','19202','arc',address,status,status,now-1000,`https://pro.ave.ai/token/${address}-arc?ref=0001`,`revision-${status}`);
+      }
+      const snapshot=readTelegramSnapshot(storage,'19202',now);
+      const buttons=address=>renderPanel(snapshot,{panel:'detail',viewChain:'arc',query:{selectedToken:{chain:'arc',address}},version:1},'en').keyboard.flat().filter(Boolean);
+      expect(buttons(lead)).toContainEqual(expect.objectContaining({text:'Trade on AVE',url:`https://pro.ave.ai/token/${lead}-arc?ref=0001`}));
+      expect(buttons(vetoed).some(button=>button.text==='Trade on AVE'||String(button.url).includes('pro.ave.ai'))).toBe(false);
     });
   });
 });

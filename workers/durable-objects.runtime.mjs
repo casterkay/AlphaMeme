@@ -8,21 +8,26 @@ describe('M2 Durable Object bindings', () => {
     const otherTenantId = '16001';
     const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${boundTenantId}`));
     const admission = {
-      nextAllowedAt: 0,
-      backoffFactor: 1,
+      keyEpoch: 0,
+      periodStartAt: 0,
+      cuUsed: 0,
       lastRequestAt: 0,
-      lastWeight: 1,
-      successStreak: 0,
       spacingReadyAt: 0,
-      keyEpoch: 0
+      blockedUntil: 0,
+      blockReason: null,
+      backoffFactor: 1,
+      successStreak: 0
     };
 
     await runInDurableObject(radar, async (instance, state) => {
       await instance.getStatus(boundTenantId);
       const crossTenantCalls = [
         () => instance.getStatus(otherTenantId),
-        () => instance.getGmgnAdmissionState(otherTenantId),
-        () => instance.setGmgnAdmissionState(otherTenantId, admission),
+        () => instance.getAveAdmissionState(otherTenantId),
+        () => instance.setAveAdmissionState({ tenantId: otherTenantId, state: admission }),
+        () => instance.selectScanChain({ tenantId: otherTenantId, chain: 'bsc' }),
+        () => instance.pause({ tenantId: otherTenantId }),
+        () => instance.disconnect({ tenantId: otherTenantId }),
         () => instance.replaceSchedulerTasks({ tenantId: otherTenantId, tasks: [] }),
         () => instance.replaceSchedulerTaskSources({ tenantId: otherTenantId, sources: {} }),
         () => instance.replaceSchedulerEligibility({ tenantId: otherTenantId, eligibility: { paused: false, configured: false } }),
@@ -44,43 +49,49 @@ describe('M2 Durable Object bindings', () => {
     const persistedTenantId = '16001';
     const isolatedTenantId = '16002';
     const persistedState = {
-      nextAllowedAt: 1_000,
-      backoffFactor: 2,
+      keyEpoch: 7,
+      periodStartAt: 500,
+      cuUsed: 25,
       lastRequestAt: 900,
-      lastWeight: 5,
-      successStreak: 3,
       spacingReadyAt: 950,
-      keyEpoch: 7
+      blockedUntil: 1_000,
+      blockReason: 'RATE_LIMITED',
+      backoffFactor: 2,
+      successStreak: 3
     };
 
     const persistedRadar = env.RADAR.get(env.RADAR.idFromName(`radar:${persistedTenantId}`));
-    await persistedRadar.setGmgnAdmissionState(persistedTenantId, persistedState);
+    expect(await persistedRadar.setAveAdmissionState({ tenantId: persistedTenantId, state: persistedState })).toEqual(persistedState);
 
-    await runInDurableObject(persistedRadar, async (_instance, state) => {
+    await runInDurableObject(persistedRadar, async (instance, state) => {
+      await expect(instance.setAveAdmissionState({ tenantId: persistedTenantId, state: { ...persistedState, backoffFactor: 9 } }))
+        .rejects.toThrow('AVE admission state is invalid');
       const version = state.storage.sql
         .exec('SELECT value_json FROM preferences WHERE tenant_id = ? AND key = ?', '__schema__', 'schema.version')
         .one();
       const admitted = state.storage.sql
-        .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', persistedTenantId, 'gmgn.admission.v1')
+        .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', persistedTenantId, 'ave.admission.v1')
         .one();
 
-      expect(JSON.parse(version.value_json)).toEqual({ version: 1 });
+      expect(JSON.parse(version.value_json)).toEqual({ version: 2 });
       expect(JSON.parse(admitted.value_json)).toEqual(persistedState);
       expect(state.storage.sql.databaseSize).toBeGreaterThan(0);
     });
 
     await evictDurableObject(persistedRadar);
-    expect(await persistedRadar.getGmgnAdmissionState(persistedTenantId)).toEqual(persistedState);
+    expect(await persistedRadar.getAveAdmissionState(persistedTenantId)).toEqual(persistedState);
 
     const isolatedRadar = env.RADAR.get(env.RADAR.idFromName(`radar:${isolatedTenantId}`));
-    expect(await isolatedRadar.getGmgnAdmissionState(isolatedTenantId)).toEqual({
-      nextAllowedAt: 0,
-      backoffFactor: 1,
+    expect(await isolatedRadar.getAveAdmissionState(isolatedTenantId)).toEqual({
+      keyEpoch: 0,
+      periodStartAt: 0,
+      cuUsed: 0,
       lastRequestAt: 0,
-      lastWeight: 1,
-      successStreak: 0,
       spacingReadyAt: 0,
-      keyEpoch: 0
+      blockedUntil: 0,
+      blockReason: null,
+      backoffFactor: 1,
+      successStreak: 0
     });
 
     await runInDurableObject(isolatedRadar, async (_instance, state) => {
@@ -129,7 +140,7 @@ describe('M2 Durable Object bindings', () => {
     await registry.registerTenant(tenantId);
     await radar.replaceSchedulerTasks({
       tenantId,
-      tasks: [{ id: 'outbox:watchdog', kind: 'outbox', dueAt: futureOutboxAt, enabled: true, needsGmgn: false }]
+      tasks: [{ id: 'outbox:watchdog', kind: 'outbox', dueAt: futureOutboxAt, enabled: true, aveCost: 0 }]
     });
     await runInDurableObject(radar, async (_instance, state) => {
       await state.storage.deleteAlarm();
@@ -182,7 +193,7 @@ describe('M2 Durable Object bindings', () => {
 
     await radar.replaceSchedulerTasks({
       tenantId,
-      tasks: [{ id: 'outbox:future', kind: 'outbox', dueAt: futureOutboxAt, enabled: true, needsGmgn: false }]
+      tasks: [{ id: 'outbox:future', kind: 'outbox', dueAt: futureOutboxAt, enabled: true, aveCost: 0 }]
     });
 
     await runInDurableObject(radar, async (_instance, state) => {
@@ -199,7 +210,7 @@ describe('M2 Durable Object bindings', () => {
 
     expect(await runDurableObjectAlarm(radar)).toBe(true);
     expect((await radar.getSchedulerSnapshot(tenantId)).tasks).toEqual([
-      { id: 'outbox:future', kind: 'outbox', dueAt: futureOutboxAt, enabled: true, needsGmgn: false, gmgnWeight: 1 }
+      { id: 'outbox:future', kind: 'outbox', dueAt: futureOutboxAt, enabled: true, aveCost: 0 }
     ]);
 
     await runInDurableObject(radar, async (_instance, state) => {
@@ -210,7 +221,7 @@ describe('M2 Durable Object bindings', () => {
         'scheduler.tasks.v1',
         JSON.stringify({
           version: 1,
-          tasks: [{ id: 'command:retry', kind: 'command', dueAt: commandDueAt, enabled: true, needsGmgn: false, gmgnWeight: 1 }]
+          tasks: [{ id: 'command:retry', kind: 'command', dueAt: commandDueAt, enabled: true, aveCost: 0 }]
         })
       );
       state.storage.sql.exec(
@@ -222,7 +233,7 @@ describe('M2 Durable Object bindings', () => {
           nextLeaseEpoch: 1,
           inFlight: null,
           eligibility: { paused: false, configured: false },
-          live: { subscribed: false, leaseUntil: 0 },
+          control: { controlEpoch: 0, connectionGeneration: 0, activeChain: null },
           fairness: { outbox: null },
           retries: {},
           checkpoints: {},

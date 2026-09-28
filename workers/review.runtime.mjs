@@ -34,7 +34,7 @@ it('field-specific annotation writes preserve concurrent other-field edits and d
     write('note', '', 1); write('favorite', false, 1);
     expect(storage.sql.exec('SELECT * FROM annotations WHERE tenant_id = ?', tenant).toArray()).toEqual([]);
     expect(() => write('note', 'resurrect', 0)).toThrow('annotation_changed');
-    expect(() => write('note', 'gmgn_secret', 2)).toThrow('sensitive_input');
+    expect(() => write('note', '-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEI', 2)).toThrow('sensitive_input');
   });
 });
 

@@ -3,19 +3,31 @@ import { runInDurableObject } from 'cloudflare:test';
 import { describe,it,expect,vi } from 'vitest';
 import { TelegramRuntime } from '../src/bot/runtime.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
-import { readGmgnApiKey } from '../src/storage/gmgn-credential.mjs';
-import { signingSetupSnapshot } from '../src/auth/key-store.mjs';
+import { readAveApiKey } from '../src/auth/connection.mjs';
+import { AVE_CU } from '../src/providers/ave.mjs';
+import { readSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 
 const at=1_800_000_000_000;
 const masterKey={activeVersion:'1',keys:{'1':'e2e-only-master-key'}};
-const apiKey=`gmgn_${'a'.repeat(32)}`;
+const apiKey='ave-e2e-api-key-0001';
 const request=operation=>operation({signal:new AbortController().signal,timeoutMs:1000});
+const WBNB='0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c';
+const WBNB_DETAILS_URL=`https://prod.ave-api.com/v2/tokens/${WBNB}-bsc`;
+const wbnbDetails={status:1,data:{token:{token:WBNB,chain:'bsc',symbol:'WBNB',current_price_usd:'600'},pairs:[]}};
+const jsonResponse=value=>new Response(JSON.stringify(value),{status:200,headers:{'content-type':'application/json'}});
+const schedulerTasks=(storage,tenantId)=>readSchedulerStateInTransaction(storage,tenantId).tasks;
+
+// A hand-written AVE endpoint: records each request's URL and key, never touches the network.
+function aveStub(respond) {
+  const calls=[];
+  return {calls,fetch:async(url,init)=>{calls.push({url:String(url),apiKey:init.headers['X-API-KEY']});return respond(String(url));}};
+}
 
 async function withRuntime(tenantId,operation) {
   const radar=env.RADAR.get(env.RADAR.idFromName(`telegram-e2e:${tenantId}`));
   return runInDurableObject(radar,async(_instance,{storage})=>{
     let update=0,message=100;
-    const runtime=new TelegramRuntime({storage,tenantId,env:{MASTER_ENC_KEY:masterKey},now:()=>at});
+    const runtime=new TelegramRuntime({storage,tenantId,env:{MASTER_ENC_KEY:masterKey,AVE_MONTHLY_CU:env.AVE_MONTHLY_CU,AVE_CU_RESET_DAY:env.AVE_CU_RESET_DAY},now:()=>at});
     const sent=[];
     runtime.outbox.transport=async input=>{
       sent.push(structuredClone({method:input.method,params:input.params}));
@@ -47,7 +59,7 @@ async function withRuntime(tenantId,operation) {
       runtime.receive(input);await runtime.answerCallback(input);await runtime.runCommand(input.updateId);await drain();return input;
     };
     const seed=(count=1)=>{
-      for(let index=0;index<count;index++) storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?)',tenantId,'robinhood',`0x${index.toString(16).padStart(40,'a')}`,`TOKEN${index}`,'X_REVIEW',at-1000,`revision-${index}`,JSON.stringify({chainPass:true,chartRisk:{version:CHART_RISK_VERSION},checks:{openSource:true},failed:[],unknownFields:[]}));
+      for(let index=0;index<count;index++) storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?)',tenantId,'arc',`0x${index.toString(16).padStart(40,'a')}`,`TOKEN${index}`,'X_REVIEW',at-1000,`revision-${index}`,JSON.stringify({chainPass:true,chartRisk:{version:CHART_RISK_VERSION},checks:{openSource:true},failed:[],unknownFields:[]}));
     };
     await operation({runtime,storage,tenantId,sent,receipt,drain,command,sessions,link,click,seed});
   });
@@ -162,17 +174,18 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it('rejects obsolete notification and collection controls from independently current sessions',async()=>{
+  it('rejects obsolete notification and scan-chain controls from independently current sessions',async()=>{
     await withRuntime('22908',async({runtime,command,sessions,link,click})=>{
       await command('settings');const oldSettings=sessions()[0],enable=link(oldSettings,'notifications.set',params=>params.value===true);
       await command('unmute');await command('mute');
       const obsoleteNotifications=await click(enable);
       expect(runtime.inbox.get(obsoleteNotifications.updateId).status).toBe('FAILED');expect(runtime.commands.preference('notifications',false)).toBe(false);
       expect(runtime.commands.sessions.get(oldSettings.id).version).toBe(oldSettings.version);
-      await command('feed','sol');const oldFeed=sessions().at(-1),stop=link(oldFeed,'live.set',params=>params.value===false);
-      await command('feed','base');
-      const obsoleteLive=await click(stop);
-      expect(runtime.inbox.get(obsoleteLive.updateId).status).toBe('FAILED');expect(runtime.control.snapshot().live.subscribed).toBe(true);expect(runtime.control.snapshot().live.focusChain).toBe('base');
+      await command('chains');const oldChains=sessions().at(-1),toSol=link(oldChains,'chains.set',params=>params.value==='sol');
+      await command('chains');await click(link(sessions().at(-1),'chains.set',params=>params.value==='bsc'));
+      expect(runtime.control.snapshot().activeChain).toBe('bsc');
+      const obsoleteChain=await click(toSol);
+      expect(runtime.inbox.get(obsoleteChain.updateId).status).toBe('FAILED');expect(runtime.control.snapshot().activeChain).toBe('bsc');
     });
   });
 
@@ -183,19 +196,17 @@ describe('Telegram complete command and delivery flows',()=>{
       await command('saved');
       const saved=sessions()[0];expect(saved.viewChain).toBe('all');
       await click(link(saved,'panel.open',params=>params.panel==='radar'));
-      const home=runtime.commands.sessions.get(saved.id);expect(home.viewChain).toBe('robinhood');
+      const home=runtime.commands.sessions.get(saved.id);expect(home.viewChain).toBe('arc');
       await click(link(home,'panel.open',params=>params.panel==='feed'));
-      const feed=runtime.commands.sessions.get(saved.id);expect(feed.viewChain).toBe('robinhood');
-      await click(link(feed,'live.set',params=>params.value===true));
-      expect(runtime.control.snapshot().live.focusChain).toBe('robinhood');
+      const feed=runtime.commands.sessions.get(saved.id);expect(feed.viewChain).toBe('arc');
 
       await command('unmute');
-      storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,stale_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?,?)',tenantId,'robinhood','0x'+'d'.repeat(40),'ALERT','X_REVIEW',at,at+600_000,'alert-revision',JSON.stringify({chainPass:true,chartRisk:{pass:true,version:CHART_RISK_VERSION},checks:{openSource:true},failed:[],unknownFields:[]}));
-      expect(runtime.notifications.controls()).toEqual({enabled:true,chains:['robinhood']});
+      storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,stale_at,review_revision) VALUES (?,?,?,?,?,?,?,?)',tenantId,'arc','0x'+'d'.repeat(40),'ALERT','LIVE_READY',at,at+600_000,'alert-revision');
+      expect(runtime.notifications.controls()).toEqual({enabled:true,chains:['arc']});
       expect(runtime.notifications.candidates().find(row=>row.symbol==='ALERT')?.qualified).toBe(true);
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
       expect(runtime.outbox.rows().some(row=>row.delivery_class==='ACTION_REQUIRED'&&row.status==='PENDING')).toBe(true);
-      await command('feed','sol');await drain();
+      await command('feed');await drain();
       expect(runtime.outbox.rows().some(row=>row.delivery_class==='ACTION_REQUIRED'&&row.status==='CANCELLED')).toBe(false);
       expect(sent.some(row=>row.params.text?.includes('ALERT'))).toBe(true);
     });
@@ -225,19 +236,6 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it('regenerates only after the bound confirmation and returns the new public key without rejecting its own generation change',async()=>{
-    await withRuntime('22909',async({runtime,command,sessions,link,click,sent})=>{
-      await command('onboard');const guide=sessions()[0],original=await signingSetupSnapshot(runtime.keyOptions());
-      await click(link(guide,'panel.open',params=>params.panel==='regenerate'));
-      const confirmation=runtime.commands.sessions.get(guide.id);expect(confirmation.panel).toBe('regenerate');expect((await signingSetupSnapshot(runtime.keyOptions())).publicKey).toBe(original.publicKey);
-      const regenerate=link(confirmation,'onboard.regenerate');const completed=await click(regenerate);
-      expect(runtime.inbox.get(completed.updateId).status).toBe('DONE');expect(runtime.commands.sessions.get(guide.id).panel).toBe('onboard');
-      const replacement=await signingSetupSnapshot(runtime.keyOptions());expect(replacement.publicKey).not.toBe(original.publicKey);expect(replacement.generation).toBeGreaterThan(original.generation);
-      expect(sent.filter(row=>row.method==='editMessageText').at(-1).params.text).toContain(replacement.publicKey);
-      const replay=await click(regenerate);expect(runtime.inbox.get(replay.updateId).status).toBe('FAILED');expect((await signingSetupSnapshot(runtime.keyOptions())).publicKey).toBe(replacement.publicKey);
-    });
-  });
-
   it('restores list filter, sort, page and chain after detail and evidence navigation',async()=>{
     await withRuntime('22910',async({runtime,command,sessions,link,click,seed})=>{
       seed(8);await command('audits');const root=sessions()[0];
@@ -257,36 +255,85 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it('encrypts a key submission, verifies read access, and atomically completes the receipt and connection',async()=>{
+  it('connects AVE from /setkey: encrypts the submission, verifies it with one AVE details read and starts the Arc scan',async()=>{
     await withRuntime('22903',async({runtime,storage,tenantId,sent,command,receipt,drain})=>{
-      await command('onboard');expect(sent.some(row=>row.params.text?.includes('BEGIN PUBLIC KEY'))).toBe(true);
+      await command('onboard');
+      const guide=sent.find(row=>row.params.text?.includes('/setkey'));
+      expect(guide.params.reply_markup.inline_keyboard.flat().some(button=>button.url==='https://cloud.ave.ai/login')).toBe(true);
       const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);
       const pending=runtime.inbox.get(input.updateId);expect(pending.payload_enc).toBeTruthy();expect(pending.payload_enc).not.toContain(apiKey);expect(pending.payload_json).not.toContain(apiKey);
       await runtime.runCommand(input.updateId);const generation=runtime.inbox.get(input.updateId).generation;
-      let verified=0;
-      await runtime.verifyCredential(generation,{request,gmgn:{verifyApiKey:async(key,options)=>{verified++;expect(key).toBe(apiKey);expect(options.privateKey).toBeUndefined();expect(options.signal).toBeInstanceOf(AbortSignal);expect(options.timeoutMs).toBe(1000);return {verified:true};}}});
-      await drain();expect(verified).toBe(1);expect(runtime.inbox.get(input.updateId).status).toBe('DONE');expect(runtime.inbox.get(input.updateId).payload_enc).toBeNull();expect(runtime.control.snapshot().configured).toBe(true);
-      expect(await readGmgnApiKey(storage,masterKey,tenantId)).toBe(apiKey);expect((await signingSetupSnapshot(runtime.keyOptions())).pending).toBe(false);
-      expect(storage.sql.exec('SELECT value_enc FROM keys WHERE tenant_id=?',tenantId).toArray().every(row=>!row.value_enc.includes(apiKey))).toBe(true);
-      expect(sent.some(row=>row.method==='deleteMessage' && row.params.message_id===input.sourceMessageId)).toBe(true);expect(JSON.stringify(sent)).not.toContain(apiKey);
-      expect(runtime.commands.preference('notifications',false)).toBe(false);expect(runtime.control.snapshot().live.subscribed).toBe(false);
+      expect(schedulerTasks(storage,tenantId).filter(task=>task.kind==='credential')).toEqual([{id:`credential:${generation}`,kind:'credential',dueAt:at,enabled:true,aveCost:AVE_CU.details}]);
+      expect(runtime.control.snapshot().configured).toBe(false);
+      const ave=aveStub(()=>jsonResponse(wbnbDetails));
+      await runtime.verifyCredential(generation,{request,fetchImpl:ave.fetch});
+      await drain();
+      expect(ave.calls).toEqual([{url:WBNB_DETAILS_URL,apiKey}]);
+      expect(runtime.inbox.get(input.updateId).status).toBe('DONE');expect(runtime.inbox.get(input.updateId).payload_enc).toBeNull();
+      expect(runtime.control.snapshot()).toMatchObject({configured:true,keyEpoch:1,activeChain:'arc'});
+      expect(await readAveApiKey(storage,masterKey,tenantId)).toBe(apiKey);
+      expect(storage.sql.exec('SELECT name,value_enc FROM keys WHERE tenant_id=?',tenantId).toArray().map(row=>{expect(row.value_enc).not.toContain(apiKey);return row.name;})).toEqual(['ave-api-key']);
+      expect(sent.some(row=>row.method==='deleteMessage'&&row.params.message_id===input.sourceMessageId)).toBe(true);expect(JSON.stringify(sent)).not.toContain(apiKey);
+      expect(sent.some(row=>row.params.text?.includes('AVE已连接'))).toBe(true);
+      expect(runtime.commands.preference('notifications',false)).toBe(false);
+      const [scan]=schedulerTasks(storage,tenantId).filter(task=>task.kind==='scan');
+      expect(scan).toMatchObject({kind:'scan',dueAt:at,enabled:true,aveCost:AVE_CU.trending});
+      expect(storage.sql.exec('SELECT chain,key_epoch,phase FROM cycle_checkpoint WHERE tenant_id=? AND cycle_id=?',tenantId,scan.id.slice('scan:'.length)).one()).toEqual({chain:'arc',key_epoch:1,phase:'DISCOVER'});
+    });
+  });
+
+  it.each([[401,'AVE_AUTH'],[402,'AVE_QUOTA']])('ends verification on an AVE %s refusal, scrubs the candidate and tells the user',async(status)=>{
+    await withRuntime(status===401?'22918':'22919',async({runtime,storage,tenantId,sent,receipt,drain})=>{
+      const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);await runtime.runCommand(input.updateId);
+      const ave=aveStub(()=>new Response('{}',{status}));
+      await runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,{request,fetchImpl:ave.fetch});await drain();
+      expect(ave.calls).toHaveLength(1);
+      expect(runtime.inbox.get(input.updateId)).toMatchObject({status:'FAILED',payload_enc:null});
+      expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
+      expect(runtime.control.snapshot().configured).toBe(false);
+      expect(sent.some(row=>row.params.text?.includes('/onboard'))).toBe(true);
+    });
+  });
+
+  it('keeps the candidate for a retry when AVE rate-limits its verification',async()=>{
+    await withRuntime('22920',async({runtime,storage,tenantId,receipt})=>{
+      const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);await runtime.runCommand(input.updateId);
+      const ave=aveStub(()=>new Response('too many requests',{status:429,headers:{'retry-after':'30'}}));
+      await expect(runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,{request,fetchImpl:ave.fetch})).rejects.toMatchObject({code:'AVE_RATE_LIMITED'});
+      expect(['RECEIVED','RUNNING']).toContain(runtime.inbox.get(input.updateId).status);
+      expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([{name:'ave-pending-api-key'}]);
+      expect(runtime.control.snapshot().configured).toBe(false);
     });
   });
 
   it.each(['pause','disconnect'])('commits /%s during a suspended verification before its network completion',async action=>{
     await withRuntime(action==='pause'?'22904':'22905',async({runtime,storage,tenantId,command,receipt})=>{
-      await command('onboard');const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,apiKey);await runtime.runCommand(input.updateId);
+      await command('onboard');const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);await runtime.runCommand(input.updateId);
       let release,entered;
       const gate=new Promise(resolve=>{release=resolve;});const started=new Promise(resolve=>{entered=resolve;});
-      const verification=runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,{request,gmgn:{verifyApiKey:async()=>{entered();await gate;return {verified:true};}}});
+      const verification=runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,{request,fetchImpl:async()=>{entered();await gate;return jsonResponse(wbnbDetails);}});
       await started;
       const control=receipt(`command:${action}`,{source:'message',arguments:''});runtime.receive(control);
       expect(runtime.inbox.get(control.updateId).status).toBe('DONE');expect(runtime.control.snapshot().paused).toBe(true);
       release();await verification;
-      if(action==='pause') {expect(runtime.control.snapshot().configured).toBe(true);expect(runtime.control.snapshot().paused).toBe(true);expect(runtime.inbox.get(input.updateId).status).toBe('DONE');}
-      else {expect(runtime.control.snapshot().configured).toBe(false);expect(runtime.inbox.get(input.updateId).status).toBe('CANCELLED');expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);}
+      if(action==='pause') {expect(runtime.control.snapshot()).toMatchObject({configured:true,paused:true});expect(runtime.inbox.get(input.updateId).status).toBe('DONE');}
+      else {expect(runtime.control.snapshot().configured).toBe(false);expect(runtime.inbox.get(input.updateId).status).toBe('CANCELLED');expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);expect(schedulerTasks(storage,tenantId).filter(task=>task.kind==='scan')).toEqual([]);}
     });
   });
+
+  it('moves a connected scan to the chain chosen in the chains panel and drops the previous chain cycle',async()=>{
+    await withRuntime('22921',async({runtime,storage,tenantId,command,sessions,link,click,receipt,drain})=>{
+      const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);await runtime.runCommand(input.updateId);
+      await runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,{request,fetchImpl:aveStub(()=>jsonResponse(wbnbDetails)).fetch});await drain();
+      const [arcScan]=schedulerTasks(storage,tenantId).filter(task=>task.kind==='scan');
+      await command('chains');await click(link(sessions().at(-1),'chains.set',params=>params.value==='bsc'));
+      expect(runtime.control.snapshot().activeChain).toBe('bsc');
+      const scans=schedulerTasks(storage,tenantId).filter(task=>task.kind==='scan');
+      expect(scans).toHaveLength(1);expect(scans[0].id).not.toBe(arcScan.id);expect(scans[0].aveCost).toBe(AVE_CU.trending);
+      expect(storage.sql.exec('SELECT chain FROM cycle_checkpoint WHERE tenant_id=?',tenantId).toArray()).toEqual([{chain:'bsc'}]);
+    });
+  });
+
   it('rebuilds a requested detail from current evidence when an audit changes before its first edit is sent',async()=>{
     await withRuntime('22912',async({runtime,storage,tenantId,sent,command,sessions,link,seed,receipt,drain})=>{
       seed();await command('audits');
