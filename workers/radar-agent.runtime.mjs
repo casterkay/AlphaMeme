@@ -1,136 +1,108 @@
 import { env } from 'cloudflare:workers';
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
-import { stableEffectId } from '../src/storage/recoverable-scanner.mjs';
-import { SqliteRecoverableScannerStore } from '../src/storage/recoverable-scanner.mjs';
+import { describe, expect, it, vi } from 'vitest';
+import { AVE_CU, AveClient } from '../src/providers/ave.mjs';
+import { SecondaryValidator } from '../src/providers/secondary.mjs';
 import { RecoverableScanner } from '../src/recoverable-scanner.mjs';
-import { seedGmgnCredential } from './fixtures/gmgn-credential.mjs';
+import { scannerSettings } from '../src/scanner-settings.mjs';
+import { SqliteRecoverableScannerStore, stableEffectId } from '../src/storage/recoverable-scanner.mjs';
+import { encryptSecret } from '../src/util/crypto.mjs';
 
 const settings = Object.freeze({
+  ...scannerSettings,
   scanIntervalMs: 120_000,
-  maxDeepAuditsPerCycle: 1,
   auditCycleBudgetMs: 80_000,
-  queueRetentionMs: 24 * 60 * 60_000,
-  staleCandidateMs: 10 * 60_000,
-  dynamicRecheckMs: 2 * 60_000,
-  chainPassRecheckMs: 5 * 60_000,
-  hardRejectRecheckMs: 6 * 60 * 60_000,
-  outcomeReadsPerCycle: 4,
-  candidateRetentionMs: 2 * 60 * 60_000,
-  outcomeRetentionMs: 7 * 24 * 60 * 60_000,
-  minAgeSec: 5 * 60,
-  maxAgeSec: 7 * 86400,
-  discoveryMinMarketCap: 10_000,
-  discoveryMaxMarketCap: 150_000,
-  priorityMinMarketCap: 20_000,
-  priorityMaxMarketCap: 80_000,
-  minLiquidity: 3_000,
-  strictLiquidity: 8_000,
-  maxRugRatio: 0.2,
-  maxTop10Rate: 0.3,
-  maxInsiderRate: 0.15,
-  maxBundlerRate: 0.15,
-  maxSniperHoldRate: 0.08,
-  maxBotHoldRate: 0.2,
-  maxLinkedHoldRate: 0.1,
-  maxBuyTax: 0.05,
-  maxSellTax: 0.05,
-  maxTaxAsymmetry: 0.02,
-  minLpLockedRate: 0.8,
-  minOrdinaryWallets: 8
+  maxSecondaryChecksPerCycle: 1,
+  outcomeReadsPerCycle: 4
 });
+const apiKey = 'ave-radar-agent-key-0001';
+const LEAD = `0x${'1'.repeat(40)}`;
+const SECOND = `0x${'2'.repeat(40)}`;
 
-function candidateRow(now) {
+function jsonResponse(value, status = 200) {
+  return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
+}
+
+/** One raw AVE trending token that passes the AVE market screen unless overridden. */
+function arcToken(address, overrides = {}) {
+  const nowSec = Math.floor(Date.now() / 1000);
   return {
-    address: 'So11111111111111111111111111111111111111112',
-    symbol: 'TEST',
-    name: 'Test token',
-    market_cap: 50_000,
-    liquidity: 12_000,
-    price: 1,
-    creation_timestamp: Math.floor(now / 1_000) - 600,
-    rug_ratio: 0.01,
-    bundler_rate: 0.01,
-    rat_trader_amount_rate: 0.01,
-    is_wash_trading: false,
-    holder_count: 20,
-    swaps_5m: 20,
-    buys_5m: 15,
-    sells_5m: 5,
-    volume_5m: 100,
-    price_change_percent5m: 0.01,
-    smart_degen_count: 3,
-    renowned_count: 0,
-    creator_created_count: 1,
-    creator_created_open_count: 1
+    token: address, chain: 'arc', symbol: `T${address.slice(-4)}`, name: 'Arc test token', current_price_usd: '0.5',
+    market_cap: '50000', main_pair_tvl: '12000', token_tx_volume_usd_5m: '800', updated_at: nowSec - 1, launch_at: nowSec - 600,
+    ...overrides
   };
 }
 
-function auditResponses(now) {
-  const createdAt = Math.floor(now / 1_000) - 600;
-  const holders = Array.from({ length: 8 }, (_, index) => ({
-    address: `holder-${index}`, addr_type: 0, amount_percentage: 0.01, is_new: false, is_suspicious: false, buy_tx_count_cur: 1
-  }));
-  const candles = Array.from({ length: 5 }, (_, index) => ({
-    time: now - (5 - index) * 60_000, open: 1, high: 1.01, low: 0.99, close: 1, volume: 100
-  }));
-  return [
-    { price: { price: 1, swaps_5m: 20, buys_5m: 15, sells_5m: 5, volume_5m: 100, price_5m: 1 }, holder_count: 20,
-      open_timestamp: createdAt, locked_ratio: 1, dev: { creator_token_status: 'closed', creator_open_count: 1 } },
-    { open_source: true, renounced_mint: true, renounced_freeze_account: true, buy_tax: 0, sell_tax: 0, rug_ratio: 0.01,
-      top_10_holder_rate: 0.1, dev_team_hold_rate: 0.001, suspected_insider_hold_rate: 0.01,
-      bundler_trader_amount_rate: 0.01, top70_sniper_hold_rate: 0.01, is_wash_trading: false, lock_percent: 1 },
-    { liquidity: 12_000 }, holders, [], candles
-  ];
+/** The scanner's DISCOVER value exactly as AveClient.trending parses a stubbed AVE response. */
+async function trending(tokens) {
+  const client = new AveClient({ apiKey, fetchImpl: async () => jsonResponse({ status: 1, data: { tokens } }) });
+  return client.trending('arc');
 }
 
-async function reachClassification(radar, tenantId, cycleId) {
-  const now = Date.now();
+/** The scanner's SECONDARY values as the validator parses stubbed DexScreener and GoPlus responses. */
+async function secondaryValues(address, { honeypot }) {
+  const validator = new SecondaryValidator({ fetchImpl: async url => String(url).includes('gopluslabs')
+    ? jsonResponse({ code: 1, result: { [address]: { is_honeypot: honeypot ? '1' : '0' } } })
+    : jsonResponse([]) });
+  return {
+    dexScreener: await validator.fetchSource({ source: 'dexScreener', chain: 'arc', tokenAddress: address }),
+    goPlus: await validator.fetchSource({ source: 'goPlus', chain: 'arc', tokenAddress: address })
+  };
+}
+
+async function configuredRadar(tenantId) {
+  const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
   await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
-  await radar.beginRecoverableCycle({ tenantId, cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: now + 60_000, settings });
-  await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { completed: [candidateRow(now)] }, collectedAt: now });
-  await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { rank: [] }, collectedAt: now + 1 });
-  await radar.advanceRecoverableScan({ tenantId, cycleId });
-  await radar.advanceRecoverableScan({ tenantId, cycleId });
-  for (const response of auditResponses(now)) {
-    await radar.recordRecoverableScanRequest({ tenantId, cycleId, response, collectedAt: now + 2 });
-  }
-  const secondary = {
-    status: 'DEGRADED', complete: false,
-    sources: { dexScreener: { status: 'UNSUPPORTED' }, goPlus: { status: 'UNSUPPORTED' } },
-    security: { verdict: 'UNSUPPORTED' }, conflicts: []
-  };
-  await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { result: secondary }, collectedAt: now + 3 });
-  await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { result: secondary }, collectedAt: now + 4 });
+  await radar.selectScanChain({ tenantId, chain: 'arc' });
+  return radar;
+}
+
+async function beginCycle(radar, tenantId, cycleId, extra = {}) {
+  const { control } = await radar.getStatus(tenantId);
+  return radar.beginRecoverableCycle({
+    tenantId, cycleId, chain: 'arc', keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch,
+    deadlineAt: Date.now() + 60_000, settings, ...extra
+  });
+}
+
+async function seedAveCredential(radar, tenantId) {
+  await runInDurableObject(radar, async (_instance, state) => {
+    const envelope = await encryptSecret(env.MASTER_ENC_KEY, tenantId, 'ave-api-key', apiKey);
+    state.storage.sql.exec('INSERT INTO keys (tenant_id, name, value_enc, generation, created_at) VALUES (?, ?, ?, ?, ?)', tenantId, 'ave-api-key', envelope, 0, Date.now());
+  });
+}
+
+/** Screen one passing lead and record its secondary checks, stopping at CLASSIFY_AND_COMMIT. */
+async function reachClassification(radar, tenantId, cycleId, { honeypot = false } = {}) {
+  await beginCycle(radar, tenantId, cycleId);
+  await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: await trending([arcToken(LEAD)]), collectedAt: Date.now() });
+  expect((await radar.advanceRecoverableScan({ tenantId, cycleId })).phase).toBe('BUILD_QUEUE');
+  expect((await radar.advanceRecoverableScan({ tenantId, cycleId })).phase).toBe('SECONDARY');
+  const secondary = await secondaryValues(LEAD, { honeypot });
+  await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: secondary.dexScreener, collectedAt: Date.now() });
+  await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: secondary.goPlus, collectedAt: Date.now() });
+  expect((await radar.getRecoverableCycle({ tenantId, cycleId })).phase).toBe('CLASSIFY_AND_COMMIT');
+}
+
+function count(storage, table, tenantId) {
+  return storage.sql.exec(`SELECT COUNT(*) AS count FROM ${table} WHERE tenant_id = ?`, tenantId).one().count;
 }
 
 describe('recoverable Radar scanner', () => {
-  it('persists an encrypted credential and scan task before alarm rearm or eviction', async () => {
+  it('persists an encrypted AVE credential and a trending-cost scan task before alarm rearm or eviction', async () => {
     const tenantId = '19000';
     const cycleId = 'cycle-scheduled';
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    await seedGmgnCredential(radar, tenantId);
-    const checkpoint = await radar.beginRecoverableCycle({
-      tenantId,
-      cycleId,
-      chain: 'sol',
-      keyEpoch: 1,
-      controlEpoch: 0,
-      deadlineAt: Date.now() + 60_000,
-      settings
-    });
+    const radar = await configuredRadar(tenantId);
+    await seedAveCredential(radar, tenantId);
+    const checkpoint = await beginCycle(radar, tenantId, cycleId);
     expect(checkpoint.phase).toBe('DISCOVER');
     await runInDurableObject(radar, async (_instance, state) => {
-      const key = state.storage.sql.exec('SELECT value_enc FROM keys WHERE tenant_id = ? AND name = ?', tenantId, 'gmgn-api-key').one();
+      const key = state.storage.sql.exec('SELECT value_enc FROM keys WHERE tenant_id = ? AND name = ?', tenantId, 'ave-api-key').one();
       const tasks = JSON.parse(state.storage.sql
         .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'scheduler.tasks.v1')
         .one().value_json).tasks;
-      const runtime = JSON.parse(state.storage.sql
-        .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'scheduler.runtime.v1')
-        .one().value_json);
-      expect(key.value_enc).not.toContain('gmgn_');
-      expect(tasks).toContainEqual(expect.objectContaining({ id: `scan:${cycleId}`, kind: 'scan' }));
-      expect(runtime.eligibility).toEqual({ paused: false, configured: true });
+      expect(key.value_enc).not.toContain(apiKey);
+      expect(tasks).toContainEqual(expect.objectContaining({ id: `scan:${cycleId}`, kind: 'scan', aveCost: AVE_CU.trending }));
       expect(await state.storage.getAlarm()).not.toBeNull();
     });
     await evictDurableObject(radar);
@@ -140,28 +112,14 @@ describe('recoverable Radar scanner', () => {
   it('rearms a recoverable scan after a missing credential without moving its request cursor', async () => {
     const tenantId = '19003';
     const cycleId = 'cycle-missing-credential';
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
-    await radar.beginRecoverableCycle({
-      tenantId,
-      cycleId,
-      chain: 'sol',
-      keyEpoch: 0,
-      controlEpoch: 0,
-      deadlineAt: Date.now() + 60_000,
-      settings
-    });
+    const radar = await configuredRadar(tenantId);
+    await beginCycle(radar, tenantId, cycleId);
     await runInDurableObject(radar, async (_instance, state) => {
       const taskState = JSON.parse(state.storage.sql
         .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'scheduler.tasks.v1')
         .one().value_json);
       taskState.tasks[0].dueAt = Date.now() - 1;
-      state.storage.sql.exec(
-        'UPDATE scheduler_state SET value_json = ? WHERE tenant_id = ? AND key = ?',
-        JSON.stringify(taskState),
-        tenantId,
-        'scheduler.tasks.v1'
-      );
+      state.storage.sql.exec('UPDATE scheduler_state SET value_json = ? WHERE tenant_id = ? AND key = ?', JSON.stringify(taskState), tenantId, 'scheduler.tasks.v1');
       await state.storage.setAlarm(Date.now() + 60_000);
     });
 
@@ -170,20 +128,48 @@ describe('recoverable Radar scanner', () => {
       const runtime = JSON.parse(state.storage.sql
         .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'scheduler.runtime.v1')
         .one().value_json);
-      expect(runtime.retries[`scan:${cycleId}`]).toMatchObject({ attempts: 1, lastErrorCode: 'GMGN_CREDENTIAL_MISSING' });
+      expect(runtime.retries[`scan:${cycleId}`]).toMatchObject({ attempts: 1, lastErrorCode: 'AVE_CREDENTIAL_MISSING' });
       expect(await state.storage.getAlarm()).not.toBeNull();
     });
-    expect((await radar.getRecoverableCycle({ tenantId, cycleId })).endpointIndex).toBe(0);
+    expect(await radar.getRecoverableCycle({ tenantId, cycleId })).toMatchObject({ phase: 'DISCOVER', endpointIndex: 0 });
   });
 
-  it('rolls back effects before commit, then keeps the committed checkpoint and effect across eviction', async () => {
-    const tenantId = '19001';
+  it('turns every passing trending token into a lead with a new-lead event, outcome baseline and feed snapshot', async () => {
+    const tenantId = '19012';
+    const cycleId = 'cycle-screen';
+    const radar = await configuredRadar(tenantId);
+    await beginCycle(radar, tenantId, cycleId);
+    const response = await trending([arcToken(LEAD), arcToken(SECOND, { market_cap: '1000' })]);
+    await radar.recordRecoverableScanRequest({ tenantId, cycleId, response, collectedAt: Date.now() });
+    const screened = await radar.advanceRecoverableScan({ tenantId, cycleId });
+    expect(screened.phase).toBe('BUILD_QUEUE');
+    expect(screened.partial.leads.map(lead => lead.row.address)).toEqual([LEAD]);
+    await runInDurableObject(radar, async (_instance, state) => {
+      const leads = state.storage.sql.exec('SELECT address, status, review_revision, ave_url FROM candidates WHERE tenant_id = ?', tenantId).toArray();
+      expect(leads).toEqual([{ address: LEAD, status: 'LIVE_READY', review_revision: expect.stringMatching(/^lead-arc-/), ave_url: `https://pro.ave.ai/token/${LEAD}-arc?ref=0001` }]);
+      expect(state.storage.sql.exec('SELECT id, type, address FROM events WHERE tenant_id = ?', tenantId).toArray())
+        .toEqual([{ id: stableEffectId(tenantId, cycleId, 'arc', LEAD, 'CANDIDATE_NEW'), type: 'CANDIDATE_NEW', address: LEAD }]);
+      expect(state.storage.sql.exec('SELECT address, initial_decision, baseline_price FROM outcomes WHERE tenant_id = ?', tenantId).toArray())
+        .toEqual([{ address: LEAD, initial_decision: 'LIVE_READY', baseline_price: 0.5 }]);
+      const feed = JSON.parse(state.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'feed.snapshot:arc').one().value_json);
+      expect(feed).toMatchObject({ status: 'READY', receivedCount: 2, leadCount: 1, observedAt: response.capturedAt });
+      expect(feed.rows.map(row => [row.address, row.pass])).toEqual([[LEAD, true], [SECOND, false]]);
+    });
+  });
+
+  it.each([
+    ['vetoes a lead on a GoPlus fatal finding', true],
+    ['keeps a lead and its revision when GoPlus finds nothing fatal', false]
+  ])('rolls back a failed classification commit, then %s durably across eviction', async (_name, honeypot) => {
+    const tenantId = honeypot ? '19001' : '19013';
     const cycleId = 'cycle-atomic';
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    await reachClassification(radar, tenantId, cycleId);
-    expect((await radar.getRecoverableCycle({ tenantId, cycleId })).phase).toBe('CLASSIFY_AND_COMMIT');
-    const queueCountBeforeRollback = await runInDurableObject(radar, async (_instance, state) => state.storage.sql
-      .exec('SELECT COUNT(*) AS count FROM audit_queue WHERE tenant_id = ?', tenantId).one().count);
+    const radar = await configuredRadar(tenantId);
+    await reachClassification(radar, tenantId, cycleId, { honeypot });
+    const before = await runInDurableObject(radar, async (_instance, state) => ({
+      lead: state.storage.sql.exec('SELECT status, review_revision, secondary_json FROM candidates WHERE tenant_id = ?', tenantId).one(),
+      queue: count(state.storage, 'audit_queue', tenantId)
+    }));
+    expect(before.lead).toMatchObject({ status: 'LIVE_READY', secondary_json: 'null' });
 
     await runInDurableObject(radar, async (_instance, state) => {
       state.storage.sql.exec("CREATE TRIGGER test_abort_recoverable_commit BEFORE INSERT ON audit_queue BEGIN SELECT RAISE(ABORT, 'test rollback'); END");
@@ -192,176 +178,124 @@ describe('recoverable Radar scanner', () => {
       await expect(instance.commitRecoverableClassification({ tenantId, cycleId })).rejects.toThrow('test rollback');
     });
     await runInDurableObject(radar, async (_instance, state) => {
-      for (const table of ['candidates', 'risk_exclusions', 'outcomes', 'events', 'outbox']) {
-        expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM ${table} WHERE tenant_id = ?`, tenantId).one().count).toBe(0);
-      }
-      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM audit_queue WHERE tenant_id = ?', tenantId).one().count)
-        .toBe(queueCountBeforeRollback);
+      expect(state.storage.sql.exec('SELECT status, review_revision, secondary_json FROM candidates WHERE tenant_id = ?', tenantId).one()).toEqual(before.lead);
+      expect(state.storage.sql.exec('SELECT type FROM events WHERE tenant_id = ?', tenantId).toArray()).toEqual([{ type: 'CANDIDATE_NEW' }]);
+      expect(count(state.storage, 'audit_queue', tenantId)).toBe(before.queue);
+      state.storage.sql.exec('DROP TRIGGER test_abort_recoverable_commit');
     });
     expect((await radar.getRecoverableCycle({ tenantId, cycleId })).phase).toBe('CLASSIFY_AND_COMMIT');
 
-    await runInDurableObject(radar, async (_instance, state) => {
-      state.storage.sql.exec('DROP TRIGGER test_abort_recoverable_commit');
-    });
     const committed = await radar.commitRecoverableClassification({ tenantId, cycleId });
-    const expectedEffectId = stableEffectId(tenantId, cycleId, 'sol', candidateRow(Date.now()).address, 'CANDIDATE_NEW');
-    expect(committed.effectId).toBe(expectedEffectId);
+    expect(committed.effectId).toBe(honeypot ? stableEffectId(tenantId, cycleId, 'arc', LEAD, 'RISK_WORSENED') : null);
     expect(committed.checkpoint.phase).toBe('OUTCOMES_SAMPLE');
 
     await evictDurableObject(radar);
     expect((await radar.getRecoverableCycle({ tenantId, cycleId })).phase).toBe('OUTCOMES_SAMPLE');
     await runInDurableObject(radar, async (_instance, state) => {
-      const candidate = state.storage.sql.exec('SELECT status FROM candidates WHERE tenant_id = ?', tenantId).one();
-      const outcome = state.storage.sql.exec('SELECT baseline_at, baseline_price FROM outcomes WHERE tenant_id = ?', tenantId).one();
-      const event = state.storage.sql.exec('SELECT id FROM events WHERE tenant_id = ?', tenantId).one();
-      const outbox = state.storage.sql.exec('SELECT event_id FROM outbox WHERE tenant_id = ?', tenantId).toArray();
-      expect(candidate.status).toBe('X_REVIEW');
-      expect(outcome.baseline_at).toBeGreaterThan(0);
-      expect(outcome.baseline_price).toBe(1);
-      expect(event.id).toBe(expectedEffectId);
-      // Domain events no longer bypass the Telegram notification allowlist.
-      expect(outbox).toEqual([]);
+      const candidate = state.storage.sql.exec('SELECT status, review_revision, secondary_json FROM candidates WHERE tenant_id = ?', tenantId).one();
+      expect(JSON.parse(candidate.secondary_json).sources.goPlus.status).toBe('OK');
+      if (honeypot) {
+        expect(candidate.status).toBe('HARD_REJECT');
+        expect(candidate.review_revision).not.toBe(before.lead.review_revision);
+      } else {
+        expect(candidate).toMatchObject({ status: 'LIVE_READY', review_revision: before.lead.review_revision });
+      }
+      expect(state.storage.sql.exec('SELECT latest_decision FROM outcomes WHERE tenant_id = ?', tenantId).one().latest_decision)
+        .toBe(honeypot ? 'HARD_REJECT' : 'LIVE_READY');
+      expect(state.storage.sql.exec('SELECT type FROM events WHERE tenant_id = ? ORDER BY at, type', tenantId).toArray().map(row => row.type))
+        .toEqual(honeypot ? ['CANDIDATE_NEW', 'RISK_WORSENED'] : ['CANDIDATE_NEW']);
+      // Domain events never bypass the Telegram notification allowlist.
+      expect(count(state.storage, 'outbox', tenantId)).toBe(0);
     });
   });
 
-  it('recovers a request response cursor after eviction without reusing its response timestamp', async () => {
+  it('recovers a recorded trending response after eviction without reusing its response timestamp', async () => {
     const tenantId = '19002';
     const cycleId = 'cycle-response';
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    const radar = await configuredRadar(tenantId);
     const collectedAt = Date.now();
-    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
-    await radar.beginRecoverableCycle({ tenantId, cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: collectedAt + 60_000, settings });
-    await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { completed: [] }, collectedAt });
+    await beginCycle(radar, tenantId, cycleId);
+    await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { rows: [], capturedAt: collectedAt }, collectedAt });
     await evictDurableObject(radar);
     const checkpoint = await radar.getRecoverableCycle({ tenantId, cycleId });
-    expect(checkpoint.phase).toBe('DISCOVER');
-    expect(checkpoint.endpointIndex).toBe(1);
-    expect(checkpoint.partial.discovery.responses.trenches.collectedAt).toBe(collectedAt);
-    expect((await radar.nextRecoverableScanRequest({ tenantId, cycleId })).endpoint).toBe('trending');
+    expect(checkpoint).toMatchObject({ phase: 'SCREEN', endpointIndex: 0, updatedAt: collectedAt });
+    expect(checkpoint.partial.discovery.responses.trending.collectedAt).toBe(collectedAt);
+    expect(await radar.nextRecoverableScanRequest({ tenantId, cycleId })).toBeNull();
   });
 
-  it('rebuilds scan admission from a persisted checkpoint after local transitions and eviction', async () => {
+  it('rebuilds the scan task AVE cost from the persisted checkpoint after local transitions and eviction', async () => {
     const tenantId = '19004';
     const cycleId = 'cycle-reconcile-admission';
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    const now = Date.now();
-    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
-    await radar.beginRecoverableCycle({ tenantId, cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: now + 60_000, settings });
-    await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { completed: [candidateRow(now)] }, collectedAt: now });
-    await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { rank: [] }, collectedAt: now + 1 });
-    await radar.advanceRecoverableScan({ tenantId, cycleId });
-    expect((await radar.getRecoverableCycle({ tenantId, cycleId })).phase).toBe('BUILD_QUEUE');
+    const radar = await configuredRadar(tenantId);
+    await beginCycle(radar, tenantId, cycleId);
+    const scanTask = async () => (await radar.getSchedulerSnapshot(tenantId)).tasks.find(task => task.id === `scan:${cycleId}`);
+    expect((await scanTask()).aveCost).toBe(AVE_CU.trending);
+    await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { rows: [], capturedAt: Date.now() }, collectedAt: Date.now() });
 
     await evictDurableObject(radar);
     await radar.wake();
-    expect((await radar.getSchedulerSnapshot(tenantId)).tasks).toContainEqual(expect.objectContaining({
-      id: `scan:${cycleId}`, needsGmgn: false, gmgnWeight: 1
-    }));
+    expect((await scanTask()).aveCost).toBe(0);
 
-    await radar.advanceRecoverableScan({ tenantId, cycleId });
-    expect((await radar.getRecoverableCycle({ tenantId, cycleId })).phase).toBe('AUDIT');
+    await runInDurableObject(radar, async (_instance, state) => {
+      const partial = { settings, rootCycleId: cycleId, outcomeDeadlineAt: Date.now() + 60_000,
+        outcomes: { job: { chain: 'arc', address: LEAD, key: 'm5', targetAt: Date.now() - 60_000 } } };
+      state.storage.sql.exec('UPDATE cycle_checkpoint SET phase = ?, partial_json = ? WHERE tenant_id = ? AND cycle_id = ?', 'OUTCOMES_SAMPLE', JSON.stringify(partial), tenantId, cycleId);
+    });
     await evictDurableObject(radar);
     await radar.wake();
-    expect((await radar.getSchedulerSnapshot(tenantId)).tasks).toContainEqual(expect.objectContaining({
-      id: `scan:${cycleId}`, needsGmgn: true, gmgnWeight: 1
-    }));
+    expect((await scanTask()).aveCost).toBe(AVE_CU.klines);
   });
 
-  it('persists unselected audit queue rows and reuses their fairness history in the next cycle', async () => {
+  it('persists unselected secondary queue rows and reuses their fairness history in the next cycle', async () => {
     const tenantId = '19005';
-    const firstCycleId = 'cycle-queue-first';
-    const secondCycleId = 'cycle-queue-second';
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    const now = Date.now();
-    const second = { ...candidateRow(now), address: 'So11111111111111111111111111111111111111113', symbol: 'SECOND' };
-    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
-    await radar.beginRecoverableCycle({ tenantId, cycleId: firstCycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: now + 60_000, settings });
-    await radar.recordRecoverableScanRequest({ tenantId, cycleId: firstCycleId, response: { completed: [candidateRow(now), second] }, collectedAt: now });
-    await radar.recordRecoverableScanRequest({ tenantId, cycleId: firstCycleId, response: { rank: [] }, collectedAt: now + 1 });
-    await radar.advanceRecoverableScan({ tenantId, cycleId: firstCycleId });
-    const first = await radar.advanceRecoverableScan({ tenantId, cycleId: firstCycleId });
-    expect(first.phase).toBe('AUDIT');
-    expect(first.partial.queue.rows).toHaveLength(2);
+    const radar = await configuredRadar(tenantId);
+    const tokens = () => [arcToken(LEAD), arcToken(SECOND)];
+    await beginCycle(radar, tenantId, 'cycle-queue-first');
+    await radar.recordRecoverableScanRequest({ tenantId, cycleId: 'cycle-queue-first', response: await trending(tokens()), collectedAt: Date.now() });
+    await radar.advanceRecoverableScan({ tenantId, cycleId: 'cycle-queue-first' });
+    const first = await radar.advanceRecoverableScan({ tenantId, cycleId: 'cycle-queue-first' });
+    expect(first.phase).toBe('SECONDARY');
     expect(first.partial.queue.selected).toHaveLength(1);
     const firstSelectedAddress = first.partial.queue.selected[0].address;
-    const queueFirstSeenAt = new Map(first.partial.queue.rows.map(row => [row.address, row.firstSeenAt]));
 
     await evictDurableObject(radar);
-    await runInDurableObject(radar, async (_instance, state) => {
-      const queue = state.storage.sql
-        .exec('SELECT address, first_seen_at, attempts FROM audit_queue WHERE tenant_id = ? ORDER BY address', tenantId).toArray();
-      expect(queue).toHaveLength(2);
-      expect(queue.every(row => row.first_seen_at === queueFirstSeenAt.get(row.address) && row.attempts === 0)).toBe(true);
+    const firstSeen = await runInDurableObject(radar, async (_instance, state) => {
+      const queue = state.storage.sql.exec('SELECT address, first_seen_at, attempts FROM audit_queue WHERE tenant_id = ? ORDER BY address', tenantId).toArray();
+      expect(queue.map(row => [row.address, row.attempts])).toEqual([[LEAD, 0], [SECOND, 0]]);
+      return new Map(queue.map(row => [row.address, row.first_seen_at]));
     });
 
-    await radar.beginRecoverableCycle({
-      tenantId,
-      cycleId: secondCycleId,
-      chain: 'sol',
-      keyEpoch: 0,
-      controlEpoch: 0,
-      deadlineAt: now + 60_000,
-      partial: { scanCount: 4 },
-      settings
+    await beginCycle(radar, tenantId, 'cycle-queue-second', { partial: { scanCount: 4 } });
+    await radar.recordRecoverableScanRequest({ tenantId, cycleId: 'cycle-queue-second', response: await trending(tokens()), collectedAt: Date.now() });
+    await radar.advanceRecoverableScan({ tenantId, cycleId: 'cycle-queue-second' });
+    const second = await radar.advanceRecoverableScan({ tenantId, cycleId: 'cycle-queue-second' });
+    expect(second.phase).toBe('SECONDARY');
+    expect(second.partial.queue.selected[0].address).not.toBe(firstSelectedAddress);
+    await runInDurableObject(radar, async (_instance, state) => {
+      const queue = state.storage.sql.exec('SELECT address, first_seen_at FROM audit_queue WHERE tenant_id = ?', tenantId).toArray();
+      expect(queue.every(row => row.first_seen_at === firstSeen.get(row.address))).toBe(true);
     });
-    await radar.recordRecoverableScanRequest({ tenantId, cycleId: secondCycleId, response: { completed: [candidateRow(now), second] }, collectedAt: now + 2 });
-    await radar.recordRecoverableScanRequest({ tenantId, cycleId: secondCycleId, response: { rank: [] }, collectedAt: now + 3 });
-    await radar.advanceRecoverableScan({ tenantId, cycleId: secondCycleId });
-    const secondCycle = await radar.advanceRecoverableScan({ tenantId, cycleId: secondCycleId });
-    expect(secondCycle.phase).toBe('AUDIT');
-    expect(secondCycle.partial.queue.selected[0].address).not.toBe(firstSelectedAddress);
   });
 
-  it('keeps prior X_REVIEW and favorite tokens in monitor queue while atomically downgrading adverse discovery', async () => {
+  it('eliminates a lead that now fails the AVE screen and keeps a lead missing from one hot list', async () => {
     const tenantId = '19006';
-    const initialCycleId = 'cycle-monitor-initial';
-    const monitoringCycleId = 'cycle-monitor-followup';
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    await reachClassification(radar, tenantId, initialCycleId);
-    await radar.commitRecoverableClassification({ tenantId, cycleId: initialCycleId });
-    const now = Date.now();
-    const favoriteAddress = 'So11111111111111111111111111111111111111113';
-    await runInDurableObject(radar, async (_instance, state) => {
-      state.storage.sql.exec(
-        'INSERT INTO annotations (tenant_id, chain, address, favorite, note, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-        tenantId, 'sol', favoriteAddress, 1, '', now
-      );
-    });
-    await radar.beginRecoverableCycle({ tenantId, cycleId: monitoringCycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: now + 60_000, settings });
-    await radar.recordRecoverableScanRequest({
-      tenantId,
-      cycleId: monitoringCycleId,
-      response: { completed: [{ ...candidateRow(now), market_cap: 1 }] },
-      collectedAt: now
-    });
-    await radar.recordRecoverableScanRequest({ tenantId, cycleId: monitoringCycleId, response: { rank: [] }, collectedAt: now + 1 });
-    const screened = await radar.advanceRecoverableScan({ tenantId, cycleId: monitoringCycleId });
-    expect(screened.phase).toBe('BUILD_QUEUE');
-    expect(screened.partial.monitors.map(row => row.row.address)).toEqual(expect.arrayContaining([
-      candidateRow(now).address,
-      favoriteAddress
-    ]));
+    const radar = await configuredRadar(tenantId);
+    await beginCycle(radar, tenantId, 'cycle-leads');
+    await radar.recordRecoverableScanRequest({ tenantId, cycleId: 'cycle-leads', response: await trending([arcToken(LEAD), arcToken(SECOND)]), collectedAt: Date.now() });
+    await radar.advanceRecoverableScan({ tenantId, cycleId: 'cycle-leads' });
+    const revisions = await runInDurableObject(radar, async (_instance, state) => new Map(state.storage.sql
+      .exec('SELECT address, review_revision FROM candidates WHERE tenant_id = ?', tenantId).toArray().map(row => [row.address, row.review_revision])));
+    expect([...revisions.keys()].sort()).toEqual([LEAD, SECOND]);
 
+    await beginCycle(radar, tenantId, 'cycle-followup');
+    await radar.recordRecoverableScanRequest({ tenantId, cycleId: 'cycle-followup', response: await trending([arcToken(LEAD, { market_cap: '1' })]), collectedAt: Date.now() });
+    const screened = await radar.advanceRecoverableScan({ tenantId, cycleId: 'cycle-followup' });
+    expect(screened.partial.leads).toEqual([]);
     await runInDurableObject(radar, async (_instance, state) => {
-      const candidate = state.storage.sql.exec(
-        'SELECT status, deep_json, decision_reason FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ?',
-        tenantId, 'sol', candidateRow(now).address
-      ).one();
-      const queue = state.storage.sql.exec(
-        'SELECT status FROM audit_queue WHERE tenant_id = ? AND chain = ? AND address = ?',
-        tenantId, 'sol', candidateRow(now).address
-      ).one();
-      expect(candidate.status).toBe('WAIT_RECHECK');
-      expect(JSON.parse(candidate.deep_json).chainPass).toBe(false);
-      expect(candidate.decision_reason).not.toBe('');
-      expect(queue.status).toBe('WAIT_RECHECK');
+      expect(state.storage.sql.exec('SELECT address, status, review_revision FROM candidates WHERE tenant_id = ?', tenantId).toArray())
+        .toEqual([{ address: SECOND, status: 'LIVE_READY', review_revision: revisions.get(SECOND) }]);
+      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM events WHERE tenant_id = ? AND type = ?', tenantId, 'CANDIDATE_NEW').one().count).toBe(2);
     });
-
-    const queued = await radar.advanceRecoverableScan({ tenantId, cycleId: monitoringCycleId });
-    expect(queued.partial.queue.rows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ address: candidateRow(now).address, watched: true }),
-      expect.objectContaining({ address: favoriteAddress, watched: true })
-    ]));
   });
 
   it('uses canonical EVM lookup keys without changing Solana address case', async () => {
@@ -370,176 +304,150 @@ describe('recoverable Radar scanner', () => {
     const evmAddress = `0x${'a'.repeat(40)}`;
     const solAddress = 'So11111111111111111111111111111111111111112';
     await runInDurableObject(radar, async (_instance, state) => {
-      state.storage.sql.exec(
-        'INSERT INTO candidates (tenant_id, chain, address, status, review_evidence, review_revision) VALUES (?, ?, ?, ?, ?, ?)',
-        tenantId, 'bsc', evmAddress, 'X_REVIEW', 'evidence', 'revision'
-      );
-      state.storage.sql.exec(
-        'INSERT INTO candidates (tenant_id, chain, address, status, review_evidence, review_revision) VALUES (?, ?, ?, ?, ?, ?)',
-        tenantId, 'sol', solAddress, 'X_REVIEW', 'sol-evidence', 'sol-revision'
-      );
+      for (const [chain, address, revision] of [['bsc', evmAddress, 'revision'], ['sol', solAddress, 'sol-revision']]) {
+        state.storage.sql.exec("INSERT INTO candidates (tenant_id, chain, address, status, review_evidence, review_revision, info_json, deep_json, secondary_json, social_json, audit_health_json, metadata_json) VALUES (?, ?, ?, ?, ?, ?, '{}', '{}', 'null', '{}', '{}', '{}')",
+          tenantId, chain, address, 'LIVE_READY', `${revision}-evidence`, revision);
+      }
       const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
-      expect(store.readCandidateReview('bsc', `0x${'A'.repeat(40)}`)).toEqual({
-        reviewEvidence: 'evidence', reviewRevision: 'revision', status: 'X_REVIEW'
-      });
-      expect(store.readCandidateReview('sol', solAddress)).toEqual({
-        reviewEvidence: 'sol-evidence', reviewRevision: 'sol-revision', status: 'X_REVIEW'
-      });
+      expect(store.readCandidate('bsc', `0x${'A'.repeat(40)}`)).toMatchObject({ address: evmAddress, reviewRevision: 'revision', status: 'LIVE_READY' });
+      expect(store.readCandidate('sol', solAddress)).toMatchObject({ address: solAddress, reviewRevision: 'sol-revision' });
+      expect(store.readCandidate('sol', solAddress.toLowerCase())).toBeNull();
     });
   });
 
   it('rolls back domain facts and checkpoint when transactional notification projection fails', async () => {
-    const tenantId='19025',cycleId='projection-rollback';
-    const radar=env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    await reachClassification(radar,tenantId,cycleId);
-    await runInDurableObject(radar,async(_instance,{storage})=>{
-      const store=new SqliteRecoverableScannerStore(storage,tenantId,{afterClassification:()=>{throw new Error('projection failure');}});
-      const scanner=new RecoverableScanner({store,settings});
+    const tenantId = '19025';
+    const cycleId = 'projection-rollback';
+    const radar = await configuredRadar(tenantId);
+    await reachClassification(radar, tenantId, cycleId, { honeypot: true });
+    await runInDurableObject(radar, async (_instance, { storage }) => {
+      const before = storage.sql.exec('SELECT status, review_revision FROM candidates WHERE tenant_id = ?', tenantId).toArray();
+      const store = new SqliteRecoverableScannerStore(storage, tenantId, { afterClassification: () => { throw new Error('projection failure'); } });
+      const scanner = new RecoverableScanner({ store, settings });
       await expect(scanner.commitClassification(cycleId)).rejects.toThrow('projection failure');
-      expect(storage.sql.exec('SELECT * FROM candidates WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
-      expect(storage.sql.exec('SELECT * FROM events WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
+      expect(storage.sql.exec('SELECT status, review_revision FROM candidates WHERE tenant_id = ?', tenantId).toArray()).toEqual(before);
+      expect(storage.sql.exec('SELECT type FROM events WHERE tenant_id = ?', tenantId).toArray()).toEqual([{ type: 'CANDIDATE_NEW' }]);
       expect(store.read(cycleId).phase).toBe('CLASSIFY_AND_COMMIT');
     });
   });
 
-  it('suppresses repeated cross-cycle notification effects during the legacy deduplication window', async () => {
+  it('suppresses repeated cross-cycle notification effects during the deduplication window', async () => {
     const tenantId = '19008';
-    const address = candidateRow(Date.now()).address;
     const now = Date.now();
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
+    const radar = await configuredRadar(tenantId);
+    const { control } = await radar.getStatus(tenantId);
     await runInDurableObject(radar, async (_instance, state) => {
       const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
       for (const [index, cycleId] of ['cycle-event-first', 'cycle-event-repeat'].entries()) {
         state.storage.sql.exec(
           'INSERT INTO cycle_checkpoint (tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          tenantId, cycleId, 'sol', 0, 0, null, 'CLASSIFY_AND_COMMIT', 0, 0, JSON.stringify({}), now + index
+          tenantId, cycleId, 'arc', control.keyEpoch, control.controlEpoch, null, 'CLASSIFY_AND_COMMIT', 0, 0, JSON.stringify({}), now + index
         );
         const result = store.commitClassification({
-          expected: { phase: 'CLASSIFY_AND_COMMIT', keyEpoch: 0, controlEpoch: 0 },
+          expected: { phase: 'CLASSIFY_AND_COMMIT', keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch },
           next: {
-            cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: null,
+            cycleId, chain: 'arc', keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch, deadlineAt: null,
             phase: 'OUTCOMES_SAMPLE', tokenIndex: 1, endpointIndex: 0, partial: {}, updatedAt: now + index
           },
-          candidate: { address, chain: 'sol', status: 'X_REVIEW', symbol: 'TEST' },
-          auditQueue: { address, status: 'X_REVIEW', attempts: 1 },
-          riskExclusion: null,
+          candidate: { address: LEAD, chain: 'arc', status: 'HARD_REJECT', symbol: 'TEST' },
+          auditQueue: { address: LEAD, status: 'HARD_REJECT', attempts: 1 },
           outcome: null,
-          event: {
-            effectType: 'CANDIDATE_NEW', type: 'CANDIDATE_NEW', message: 'new candidate', at: now + index,
-            data: { address }
-          }
+          event: { effectType: 'RISK_WORSENED', type: 'RISK_WORSENED', message: 'vetoed', at: now + index, data: { address: LEAD } },
+          sourceHealth: { lastSecondary: { complete: false, checkedAt: now + index, sources: {} } }
         });
-        expect(result.effectId).toBe(index === 0 ? stableEffectId(tenantId, cycleId, 'sol', address, 'CANDIDATE_NEW') : null);
+        expect(result.effectId).toBe(index === 0 ? stableEffectId(tenantId, cycleId, 'arc', LEAD, 'RISK_WORSENED') : null);
       }
-      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM events WHERE tenant_id = ?', tenantId).one().count).toBe(1);
-      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM outbox WHERE tenant_id = ?', tenantId).one().count).toBe(0);
+      expect(count(state.storage, 'events', tenantId)).toBe(1);
+      expect(count(state.storage, 'outbox', tenantId)).toBe(0);
     });
   });
 
-  it('samples a due inactive-chain outcome atomically while another chain finalizes', async () => {
+  it('samples a due outcome of a previously scanned chain atomically and prunes expired outcomes', async () => {
     const tenantId = '19009';
-    const cycleId = 'cycle-sol-outcome-sample';
+    const cycleId = 'cycle-outcome-sample';
     const address = `0x${'4'.repeat(40)}`;
     const expiredAddress = `0x${'5'.repeat(40)}`;
     const now = Date.now();
     const baselineAt = now - 400_000;
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
+    const radar = await configuredRadar(tenantId);
+    const { control } = await radar.getStatus(tenantId);
     await runInDurableObject(radar, async (_instance, state) => {
-      state.storage.sql.exec(
+      const insertOutcome = (row, at) => state.storage.sql.exec(
         'INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        tenantId, 'bsc', address, 'X_REVIEW', 'X_REVIEW', baselineAt, 1, baselineAt, 'BSC', '[]', 'FULL', 'radar-v3', '{}', '{}', '{}'
+        tenantId, 'bsc', row, 'LIVE_READY', 'LIVE_READY', at, 1, at, 'BSC', '[]', 'ALL_LEADS', 'ave-leads-v1', '{}', '{}', '{}'
       );
-      state.storage.sql.exec(
-        'INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        tenantId, 'bsc', expiredAddress, 'X_REVIEW', 'X_REVIEW', now - settings.outcomeRetentionMs - 400_000, 1,
-        now - settings.outcomeRetentionMs - 400_000, 'EXPIRED', '[]', 'FULL', 'radar-v3', '{}', '{}', '{}'
-      );
+      insertOutcome(address, baselineAt);
+      insertOutcome(expiredAddress, now - settings.outcomeRetentionMs - 400_000);
       state.storage.sql.exec(
         'INSERT INTO cycle_checkpoint (tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        tenantId, cycleId, 'sol', 0, 0, null, 'OUTCOMES_SAMPLE', 0, 0, JSON.stringify({ settings }), now
+        tenantId, cycleId, 'arc', control.keyEpoch, control.controlEpoch, null, 'OUTCOMES_SAMPLE', 0, 0, JSON.stringify({ settings }), now
       );
       const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
       const scanner = new RecoverableScanner({ store, settings, now: () => now });
       scanner.advanceLocal(cycleId);
-      expect(scanner.nextRequest(cycleId)).toMatchObject({ kind: 'OUTCOMES_SAMPLE', chain: 'bsc', address });
+      expect(scanner.nextRequest(cycleId)).toMatchObject({ kind: 'OUTCOMES_SAMPLE', chain: 'bsc', address, key: 'm5' });
       scanner.recordOutcomeSample(cycleId, { sample: { price: 2, at: baselineAt + 300_000 }, collectedAt: now });
-      const sampled = state.storage.sql.exec(
-        'SELECT samples_json FROM outcomes WHERE tenant_id = ? AND chain = ? AND address = ?', tenantId, 'bsc', address
-      ).one();
-      expect(JSON.parse(sampled.samples_json).m5.price).toBe(2);
+      const sampled = state.storage.sql.exec('SELECT samples_json FROM outcomes WHERE tenant_id = ? AND address = ?', tenantId, address).one();
+      expect(JSON.parse(sampled.samples_json).m5).toMatchObject({ price: 2, return: 1 });
       expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM outcomes WHERE tenant_id = ? AND address = ?', tenantId, expiredAddress).one().count).toBe(0);
       expect(store.read(cycleId).phase).toBe('SUMMARIZE');
     });
   });
 
-  it('prunes stale candidates and caps the per-chain durable candidate projection at finalization', async () => {
+  it('prunes stale candidates and expired leads and caps the per-chain candidate projection at finalization', async () => {
     const tenantId = '19010';
     const cycleId = 'cycle-candidate-retention';
     const now = Date.now();
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
+    const radar = await configuredRadar(tenantId);
+    const { control } = await radar.getStatus(tenantId);
     await runInDurableObject(radar, async (_instance, state) => {
+      const insert = (address, status, auditedAt, priorityBand, score, staleAt = null) => state.storage.sql.exec(
+        'INSERT INTO candidates (tenant_id, chain, address, status, audited_at, stale_at, priority_band, discovery_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        tenantId, 'arc', address, status, auditedAt, staleAt, priorityBand, score
+      );
       state.storage.sql.exec(
         'INSERT INTO cycle_checkpoint (tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        tenantId, cycleId, 'sol', 0, 0, null, 'SUMMARIZE', 0, 0, JSON.stringify({ settings }), now
+        tenantId, cycleId, 'arc', control.keyEpoch, control.controlEpoch, null, 'SUMMARIZE', 0, 0, JSON.stringify({ settings }), now
       );
-      state.storage.sql.exec(
-        'INSERT INTO candidates (tenant_id, chain, address, status, audited_at, priority_band, discovery_score) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        tenantId, 'sol', 'stale-candidate', 'X_REVIEW', now - settings.candidateRetentionMs - 1, 1, 100
-      );
-      state.storage.sql.exec(
-        'INSERT INTO candidates (tenant_id, chain, address, status, audited_at, priority_band, discovery_score) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        tenantId, 'sol', 'favorite-candidate', 'X_REVIEW', now - settings.candidateRetentionMs - 1, 1, 1_000
-      );
-      state.storage.sql.exec(
-        'INSERT INTO annotations (tenant_id, chain, address, favorite, note, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-        tenantId, 'sol', 'favorite-candidate', 1, '', now
-      );
-      for (let index = 0; index < 201; index += 1) {
-        state.storage.sql.exec(
-          'INSERT INTO candidates (tenant_id, chain, address, status, audited_at, priority_band, discovery_score) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          tenantId, 'sol', `active-${String(index).padStart(3, '0')}`, 'WAIT_RECHECK', now, 0, index
-        );
-      }
+      insert('stale-candidate', 'X_REVIEW', now - settings.candidateRetentionMs - 1, 1, 100);
+      insert('favorite-candidate', 'X_REVIEW', now - settings.candidateRetentionMs - 1, 1, 1_000);
+      insert('expired-lead', 'LIVE_READY', now, 1, 1_000, now - 1);
+      state.storage.sql.exec('INSERT INTO annotations (tenant_id, chain, address, favorite, note, updated_at) VALUES (?, ?, ?, ?, ?, ?)', tenantId, 'arc', 'favorite-candidate', 1, '', now);
+      for (let index = 0; index < 201; index += 1) insert(`active-${String(index).padStart(3, '0')}`, 'WAIT_RECHECK', now, 0, index);
       const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
       store.commitSummary({
-        expected: { phase: 'SUMMARIZE', keyEpoch: 0, controlEpoch: 0 },
+        expected: { phase: 'SUMMARIZE', keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch },
         next: {
-          cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: null,
+          cycleId, chain: 'arc', keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch, deadlineAt: null,
           phase: 'SUMMARIZE', tokenIndex: 0, endpointIndex: 0, partial: { settings, summary: { finalized: true } }, updatedAt: now
         },
         candidateRetentionMs: settings.candidateRetentionMs,
         outcomeRetentionMs: settings.outcomeRetentionMs
       });
-      const rows = state.storage.sql.exec('SELECT address FROM candidates WHERE tenant_id = ? AND chain = ?', tenantId, 'sol').toArray();
+      const rows = state.storage.sql.exec('SELECT address FROM candidates WHERE tenant_id = ? AND chain = ?', tenantId, 'arc').toArray().map(row => row.address);
       expect(rows).toHaveLength(200);
-      expect(rows.some(row => row.address === 'stale-candidate')).toBe(false);
-      expect(rows.some(row => row.address === 'favorite-candidate')).toBe(true);
+      expect(rows).not.toContain('stale-candidate');
+      expect(rows).not.toContain('expired-lead');
+      expect(rows).toContain('favorite-candidate');
     });
   });
 
   it('keeps only the replay predecessor and successor checkpoints across repeated cycles', async () => {
     const tenantId = '19011';
     const rootCycleId = 'cycle-root';
-    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
-    await radar.replaceSchedulerEligibility({ tenantId, eligibility: { paused: false, configured: true } });
+    const radar = await configuredRadar(tenantId);
+    const { control } = await radar.getStatus(tenantId);
     await runInDurableObject(radar, async (_instance, state) => {
       const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
       const checkpoint = (cycleId, phase, partial, updatedAt) => ({
-        cycleId, chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: null,
+        cycleId, chain: 'arc', keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch, deadlineAt: null,
         phase, tokenIndex: 0, endpointIndex: 0, partial, updatedAt
       });
-      store.begin(checkpoint('cycle-root', 'SUMMARIZE', {
-        rootCycleId, summary: { finalized: true, nextCycleId: 'cycle-root:cycle:2' }
-      }, 1));
+      store.begin(checkpoint('cycle-root', 'SUMMARIZE', { rootCycleId, summary: { finalized: true, nextCycleId: 'cycle-root:cycle:2' } }, 1));
       const second = store.begin(checkpoint('cycle-root:cycle:2', 'DISCOVER', { rootCycleId }, 2));
       store.advance({
-        expected: { phase: 'DISCOVER', keyEpoch: 0, controlEpoch: 0 },
-        next: checkpoint('cycle-root:cycle:2', 'SUMMARIZE', {
-          rootCycleId, summary: { finalized: true, nextCycleId: 'cycle-root:cycle:3' }
-        }, 3)
+        expected: { phase: 'DISCOVER', keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch },
+        next: checkpoint('cycle-root:cycle:2', 'SUMMARIZE', { rootCycleId, summary: { finalized: true, nextCycleId: 'cycle-root:cycle:3' } }, 3)
       });
       const third = store.begin(checkpoint('cycle-root:cycle:3', 'DISCOVER', { rootCycleId }, 4));
       const replay = store.begin(checkpoint('cycle-root:cycle:3', 'DISCOVER', { rootCycleId }, 4));
@@ -547,7 +455,83 @@ describe('recoverable Radar scanner', () => {
       expect(store.read('cycle-root')).toBeNull();
       expect(store.read(second.cycleId)).toMatchObject({ phase: 'SUMMARIZE' });
       expect(replay).toEqual(third);
-      expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM cycle_checkpoint WHERE tenant_id = ?', tenantId).one().count).toBe(2);
+      expect(count(state.storage, 'cycle_checkpoint', tenantId)).toBe(2);
     });
+  });
+});
+
+describe('AVE onboarding and scanning through the Durable Object', () => {
+  it('verifies a /setkey submission with one AVE details read, activates it and scans Arc trending into leads', async () => {
+    const tenantId = '19030';
+    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    // Other tenants' scans in this isolate share the global fetch; count only this tenant's key.
+    const onboardingKey = 'ave-radar-onboarding-key';
+    const requests = [];
+    const ownRequests = () => requests.filter(request => request.apiKey === onboardingKey);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const target = String(url);
+      requests.push({ url: target, apiKey: init?.headers?.['X-API-KEY'] ?? null });
+      if (target.startsWith('https://prod.ave-api.com/v2/tokens/trending?chain=arc')) return jsonResponse({ status: 1, data: { tokens: [arcToken(LEAD)] } });
+      if (target === 'https://prod.ave-api.com/v2/tokens/0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c-bsc') {
+        return jsonResponse({ status: 1, data: { token: { token: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', chain: 'bsc', current_price_usd: '600' }, pairs: [] } });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    try {
+      await runInDurableObject(radar, async (instance, state) => {
+        const now = Date.now();
+        await instance.receiveTelegramCredential({
+          tenantId, actorUserId: tenantId, updateId: '7', commandType: 'credential', payload: { source: 'message' },
+          dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: '70'
+        }, `/setkey ${onboardingKey}`);
+        const runUntil = async (reached, label) => {
+          for (let step = 0; step < 20; step++) {
+            if (await reached()) return;
+            await instance.alarm();
+          }
+          throw new Error(`scheduler did not reach ${label} within 20 steps`);
+        };
+
+        await runUntil(async () => (await instance.getStatus(tenantId)).control.configured, 'activation');
+        expect(ownRequests()).toEqual([{ url: 'https://prod.ave-api.com/v2/tokens/0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c-bsc', apiKey: onboardingKey }]);
+        const { control, aveAdmission } = await instance.getStatus(tenantId);
+        expect(control).toMatchObject({ configured: true, keyEpoch: 1, activeChain: 'arc' });
+        expect(aveAdmission).toMatchObject({ keyEpoch: 1, cuUsed: AVE_CU.details });
+        const scans = (await instance.getSchedulerSnapshot(tenantId)).tasks.filter(task => task.kind === 'scan');
+        expect(scans).toEqual([expect.objectContaining({ enabled: true, aveCost: AVE_CU.trending })]);
+
+        // The verification read spaced the next AVE request; release that spacing instead of waiting it out.
+        await instance.setAveAdmissionState({ tenantId, state: { ...aveAdmission, spacingReadyAt: 0 } });
+        await runUntil(() => state.storage.sql.exec('SELECT COUNT(*) AS count FROM candidates WHERE tenant_id = ?', tenantId).one().count > 0, 'a committed lead');
+        expect(ownRequests().filter(request => request.url.includes('/v2/tokens/trending'))).toEqual([
+          { url: 'https://prod.ave-api.com/v2/tokens/trending?chain=arc&current_page=0&page_size=100', apiKey: onboardingKey }
+        ]);
+        expect(state.storage.sql.exec('SELECT chain, address, status FROM candidates WHERE tenant_id = ?', tenantId).toArray())
+          .toEqual([{ chain: 'arc', address: LEAD, status: 'LIVE_READY' }]);
+        expect((await instance.getAveAdmissionState(tenantId)).cuUsed).toBe(AVE_CU.details + AVE_CU.trending);
+        expect(JSON.stringify(state.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ?', tenantId).toArray())).not.toContain(onboardingKey);
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('calls fetch with a receiver the Workers runtime accepts when AVE uses the global fetch', async () => {
+    // Workers throws "Illegal invocation" when its fetch runs with any receiver
+    // but the global scope; this stub enforces the same rule.
+    const receivers = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(function (url) {
+      receivers.push(this === undefined || this === globalThis ? 'global' : this?.constructor?.name ?? typeof this);
+      if (receivers.at(-1) !== 'global') throw new TypeError('Illegal invocation: function called with incorrect `this` reference.');
+      return jsonResponse({ status: 1, data: { tokens: [] } });
+    });
+    try {
+      const result = await new AveClient({ apiKey }).trending('arc');
+      expect(result.rows).toEqual([]);
+      expect(receivers).toEqual(['global']);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
