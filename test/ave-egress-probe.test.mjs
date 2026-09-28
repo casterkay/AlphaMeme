@@ -39,7 +39,7 @@ const authorization = { Authorization: 'Bearer probe-token' };
 const call = (probe, action, init = {}) => probe.fetch(new Request(`https://probe.invalid/${action}`, { headers: authorization, ...init }));
 const result = async probe => (await call(probe, 'result')).json();
 const trendingOk = () => Response.json({ status: 1, data: { tokens: [{ token: TOKEN }, { token: 'not-an-address' }] } });
-const detailsOk = () => Response.json({ status: 1, data: { token: { token: TOKEN, chain: 'bsc' }, pairs: [] } });
+const detailsOk = () => Response.json({ status: 1, data: { token: { token: TOKEN, chain: 'arc' }, pairs: [] } });
 
 async function startedProbe(responses, body = { samples: 3 }, env = {}) {
   const ctx = fakeContext();
@@ -66,7 +66,7 @@ test('a run cannot start without the AVE key secret and issues no AVE request', 
 
 test('run options reject cadences faster than the planned 15-second production interval', () => {
   assert.deepEqual(parseRunOptions({}), {
-    chain: 'bsc', samples: PROBE_LIMITS.defaultSamples, intervalMs: PROBE_LIMITS.defaultIntervalMs
+    chain: 'arc', samples: PROBE_LIMITS.defaultSamples, intervalMs: PROBE_LIMITS.defaultIntervalMs
   });
   for (const invalid of [{ intervalMs: 14_999 }, { samples: 0 }, { samples: PROBE_LIMITS.maxSamples + 1 }, { chain: 'stable' }, { extra: 1 }]) {
     assert.throws(() => parseRunOptions(invalid), RangeError, JSON.stringify(invalid));
@@ -82,7 +82,7 @@ test('a healthy run reads trending once per alarm, checks token details once, an
   assert.equal(summary.stopReason, 'complete');
   assert.equal(summary.estimatedCu, 20);
   assert.deepEqual(aveUrls.map(entry => new URL(entry.url).pathname), [
-    '/v2/tokens/trending', `/v2/tokens/${TOKEN}-bsc`, '/v2/tokens/trending', '/v2/tokens/trending'
+    '/v2/tokens/trending', `/v2/tokens/${TOKEN}-arc`, '/v2/tokens/trending', '/v2/tokens/trending'
   ]);
   assert.ok(aveUrls.every(entry => entry.apiKey === API_KEY));
   assert.deepEqual(samples.map(sample => sample.outcome), ['ok', 'ok', 'ok', 'ok']);

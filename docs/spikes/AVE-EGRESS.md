@@ -5,7 +5,7 @@ stays on Cloudflare Workers or falls back to the Fly.io host in #51.
 
 GMGN banned the shared Workers egress IP (`docs/spikes/LIVE-TIMING.md`), so the
 same failure must be ruled out for AVE before the provider is wired in. The
-target is one chain polled every 15 seconds on the AVE free plan.
+target is one chain, Arc, polled every 15 seconds on the AVE free plan.
 
 ## Questions and pass criteria
 
@@ -65,7 +65,7 @@ npx wrangler tail -c workers/fixtures/wrangler.ave-egress-probe.jsonc --format j
 PROBE=https://meme-radar-ave-egress-probe.<your-subdomain>.workers.dev
 RUN=$(node -e 'console.log(crypto.randomUUID())')
 curl -X POST -H "Authorization: Bearer $PROBE_TOKEN" \
-  -d '{"chain":"bsc","samples":120,"intervalMs":15000}' "$PROBE/runs/$RUN/start"
+  -d '{"chain":"arc","samples":120,"intervalMs":15000}' "$PROBE/runs/$RUN/start"
 ```
 
 Wait for the run to finish (about 30 minutes; `summary.stopReason` becomes
@@ -92,11 +92,10 @@ To end a run early: `curl -X POST -H "Authorization: Bearer $PROBE_TOKEN" "$PROB
 Options: `chain` is `bsc`, `eth`, `base`, `sol`, `robinhood` or `arc`;
 `samples` 1–240; `intervalMs` 15,000–600,000. Each run id is single-use.
 
-Run the egress verdict on `bsc`, which AVE documents. `robinhood` and `arc` are
-not in AVE's documentation, and upstream dropped `arc` for lack of evidence that
-AVE serves it. A failure on those chains, typically `provider_error`, answers
-"does AVE serve this chain?", not the egress question, so check them with a
-separate short run (for example `"samples":3`).
+`chain` defaults to `arc`, the production chain. AVE's documentation lists only
+`bsc`, `eth`, `base` and `solana`, and upstream dropped `arc` for lack of
+evidence, but a deployed run on 2026-09-28 read Arc trending (100 rows, HTTP 200,
+body `status` 1) and one Arc token-details read, both from Workers egress.
 
 The result's `summary` gives the stop reason, the next scheduled alarm, outcome
 counts, estimated CU, trending latency and alarm-delivery lag percentiles,

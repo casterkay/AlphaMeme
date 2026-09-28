@@ -5,8 +5,8 @@
 
 const AVE_ORIGIN = 'https://prod.ave-api.com';
 const EGRESS_ECHO_URL = 'https://api.ipify.org?format=json';
-// Mirrors upstream's AVE chain slugs. AVE documents only bsc, eth, base and solana;
-// robinhood and arc are accepted so a short run can show whether AVE serves them.
+// Mirrors upstream's AVE chain slugs. Arc, the production chain, defaults; AVE's
+// docs list only bsc, eth, base and solana, but a deployed run read Arc trending.
 const AVE_CHAINS = Object.freeze({ bsc: 'bsc', eth: 'eth', base: 'base', sol: 'solana', robinhood: 'robinhood', arc: 'arc' });
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_BODY_BYTES = 1_048_576;
@@ -33,7 +33,7 @@ export function parseRunOptions(body) {
   const input = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
   const unknown = Object.keys(input).filter(key => !['chain', 'samples', 'intervalMs'].includes(key));
   if (unknown.length) throw new RangeError(`unknown option: ${unknown.join(', ')}`);
-  const chain = input.chain ?? 'bsc';
+  const chain = input.chain ?? 'arc';
   const samples = input.samples ?? PROBE_LIMITS.defaultSamples;
   const intervalMs = input.intervalMs ?? PROBE_LIMITS.defaultIntervalMs;
   if (!Object.hasOwn(AVE_CHAINS, chain)) throw new RangeError(`chain must be one of ${Object.keys(AVE_CHAINS).join(', ')}`);
