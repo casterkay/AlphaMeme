@@ -3,10 +3,13 @@ import { runInDurableObject } from 'cloudflare:test';
 import { describe, it, expect, vi } from 'vitest';
 import { decodeFunctionData, encodeFunctionResult, erc20Abi, getAddress, keccak256, parseTransaction, toEventSelector } from 'viem';
 import { TelegramRuntime } from '../src/bot/runtime.mjs';
+import { OneAlarmScheduler, externalRequestHandler } from '../src/scheduler.mjs';
+import { SqliteSchedulerStore } from '../src/storage/scheduler-state.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { KYBER_API_ORIGIN, KYBER_ROUTER } from '../src/trading/kyber.mjs';
 import { ARC_USDC_ERC20, KYBER_NATIVE_TOKEN } from '../src/trading/config.mjs';
 import { listTrades } from '../src/trading/trades.mjs';
+import { swapCalldata } from '../test/fixtures/kyber-calldata.mjs';
 import { revealTradingKey, tradingWalletEnvelope } from '../src/trading/wallet.mjs';
 
 const start = 1_800_000_000_000;
@@ -20,8 +23,10 @@ const json = value => new Response(JSON.stringify(value), { status: 200, headers
 
 // A hand-written EVM node and KyberSwap endpoint; nothing touches the network.
 function venue() {
-  const chains = Object.fromEntries(Object.entries(CHAINS).map(([name, facts]) => [name, { ...facts, native: 0n, tokens: {}, allowances: {}, nonce: 0, sent: [], receipts: {}, mine: true, revert: false, sendFault: null, beforeBatch: null }]));
-  const kyber = [];
+  const chains = Object.fromEntries(Object.entries(CHAINS).map(([name, facts]) => [name, { ...facts, native: 0n, tokens: {}, allowances: {}, nonce: 0, sent: [], receipts: {}, mine: true, revert: false, sendFault: null, sendRefusal: null, httpFault: null, beforeBatch: null, balanceAt: {} }]));
+  // Kyber knobs: nativeUsd prices the native coin; thinPool refuses routes of 1 whole coin or more;
+  // routeUsd overrides a route's USD valuation; tamper alters the built swap description.
+  const kyber = [], knobs = { nativeUsd: 600n, thinPool: false, routeUsd: null, tamper: null };
   const balanceOf = (chain, token, owner) => chain.tokens[`${token.toLowerCase()}:${owner.toLowerCase()}`] ?? 0n;
   function call(chain, wallet, request) {
     const { method, params } = request;
@@ -29,7 +34,7 @@ function venue() {
     if (method === 'eth_getTransactionCount') return '0x' + (params[1] === 'latest' ? chain.sent.filter(tx => chain.receipts[tx.hash]).length : chain.nonce).toString(16);
     if (method === 'eth_gasPrice') return '0x3b9aca00';
     if (method === 'eth_getBlockByNumber') return { number: '0x10', baseFeePerGas: '0x1' };
-    if (method === 'eth_getBalance') return '0x' + chain.native.toString(16);
+    if (method === 'eth_getBalance') return '0x' + (chain.balanceAt[params[1]] ?? chain.native).toString(16);
     if (method === 'eth_estimateGas') return chain.revert && params[0].to === KYBER_ROUTER ? { error: { code: 3, message: 'execution reverted' } } : '0x186a0';
     if (method === 'eth_call') {
       const { functionName, args } = decodeFunctionData({ abi: erc20Abi, data: params[0].data });
@@ -41,6 +46,7 @@ function venue() {
     if (method === 'eth_sendRawTransaction') {
       const raw = params[0], hash = keccak256(raw), tx = parseTransaction(raw);
       if (chain.sent.some(item => item.hash === hash)) return { error: { code: -32000, message: 'already known' } };
+      if (chain.sendRefusal) { const message = chain.sendRefusal;chain.sendRefusal = null;return { error: { code: -32000, message } }; }
       chain.sent.push({ raw, hash, tx });chain.nonce += 1;
       if (tx.to.toLowerCase() !== KYBER_ROUTER.toLowerCase()) {
         const { args } = decodeFunctionData({ abi: erc20Abi, data: tx.data });
@@ -67,15 +73,25 @@ function venue() {
       kyber.push({ path: parsed.pathname, query: Object.fromEntries(parsed.searchParams), body: init.body ? JSON.parse(init.body) : null, clientId: init.headers['x-client-id'] });
       if (parsed.pathname.endsWith('/routes')) {
         const { tokenIn, tokenOut, amountIn } = Object.fromEntries(parsed.searchParams);
-        return json({ code: 0, data: { routerAddress: KYBER_ROUTER, routeSummary: { tokenIn, tokenOut, amountIn, amountOut: '5000000000000', amountInUsd: tokenIn === KYBER_NATIVE_TOKEN && amountIn === String(10n ** 18n) ? '600' : '10', amountOutUsd: '9.5', gasUsd: '0.01' } } });
+        if (knobs.thinPool && BigInt(amountIn) >= 10n ** 18n) return new Response(JSON.stringify({ code: 4008, message: 'route not found' }), { status: 400 });
+        const micro = BigInt(amountIn) * knobs.nativeUsd * 1_000_000n / 10n ** 18n;
+        const usd = tokenIn === KYBER_NATIVE_TOKEN ? `${micro / 1_000_000n}.${String(micro % 1_000_000n).padStart(6, '0')}` : '10';
+        return json({ code: 0, data: { routerAddress: KYBER_ROUTER, routeSummary: { tokenIn, tokenOut, amountIn, amountOut: '5000000000000', amountInUsd: knobs.routeUsd ?? usd, amountOutUsd: '9.5', gasUsd: '0.01' } } });
       }
-      const { routeSummary } = JSON.parse(init.body);
+      const { routeSummary, sender, slippageTolerance } = JSON.parse(init.body);
+      const amountOut = BigInt(routeSummary.amountOut);
+      const data = swapCalldata({ tokenIn: routeSummary.tokenIn, tokenOut: routeSummary.tokenOut, amountIn: BigInt(routeSummary.amountIn), recipient: sender,
+        minReturnAmount: amountOut * BigInt(10_000 - slippageTolerance) / 10_000n }, knobs.tamper ?? {});
       return json({ code: 0, data: { routerAddress: KYBER_ROUTER, amountIn: routeSummary.amountIn, amountOut: routeSummary.amountOut, amountInUsd: '10', amountOutUsd: '9.5', gasUsd: '0.01',
-        transactionValue: routeSummary.tokenIn === KYBER_NATIVE_TOKEN ? routeSummary.amountIn : '0', data: '0xdeadbeef' + BigInt(routeSummary.amountIn).toString(16).padStart(64, '0') } });
+        transactionValue: routeSummary.tokenIn === KYBER_NATIVE_TOKEN ? routeSummary.amountIn : '0', data } });
     }
     const chain = Object.values(chains).find(item => item.url.replace(/\/$/, '') === target);
     const batch = JSON.parse(init.body);
     if (chain.beforeBatch) chain.beforeBatch(batch);
+    if (chain.httpFault && batch.some(request => request.method === 'eth_sendRawTransaction')) {
+      const status = chain.httpFault;chain.httpFault = null;
+      return new Response('bad gateway', { status });
+    }
     const answers = batch.map(request => {
       if (request.method === 'eth_sendRawTransaction' && chain.sendFault) {
         const fault = chain.sendFault;chain.sendFault = null;
@@ -89,7 +105,7 @@ function venue() {
     });
     return json(answers);
   };
-  return { chains, kyber, fetch, setWallet: address => { walletAddress = address; }, fund: (name, native, tokens = {}) => {
+  return { chains, kyber, knobs, fetch, setWallet: address => { walletAddress = address; }, fund: (name, native, tokens = {}) => {
     chains[name].native = native;
     for (const [token, amount] of Object.entries(tokens)) chains[name].tokens[`${token.toLowerCase()}:${walletAddress.toLowerCase()}`] = amount;
   } };
@@ -168,9 +184,18 @@ async function withTrading(name, operation) {
       return runtime.commands.sessions.get(list.id);
     };
     const trades = () => listTrades(storage, tenantId);
+    const tradeOf = session => trades().find(trade => trade.id === runtime.commands.sessions.get(session.id).query.tradeId);
+    // Open a token detail, tap a buy (or sell) and wait for the confirm screen.
+    const quote = async (chain = 'bsc', action = 'trade.buy', predicate = params => params.usd === 10) => {
+      const detail = await openDetail(chain);
+      await click(link(detail, action, predicate));
+      await run(() => ['QUOTED', 'FAILED'].includes(tradeOf(detail).state));
+      return detail;
+    };
+    const confirm = async detail => click(link(runtime.commands.sessions.get(detail.id), 'trade.confirm'));
     const lastText = () => sent.filter(row => row.params.text).at(-1).params.text;
     await command('lang', 'en');
-    await operation({ runtime: () => runtime, restart: () => { runtime = make(); }, storage, tenantId, network, sent, command, sessions, link, has, click, run, seed, createWallet, openDetail, trades, lastText, drain,
+    await operation({ tradeOf, quote, confirm, runtime: () => runtime, restart: () => { runtime = make(); }, storage, tenantId, network, sent, command, sessions, link, has, click, run, seed, createWallet, openDetail, trades, lastText, drain,
       clock: { now: () => clock, advance: ms => { clock += ms; } }, faultTransport: fault => { transportFault = fault; } });
   });
 }
@@ -211,7 +236,7 @@ describe('one-tap trading', () => {
       const detail = await openDetail('bsc');
       await click(link(detail, 'trade.buy', params => params.usd === 20));
       await run(() => trades()[0].state === 'QUOTED');
-      expect(network.kyber[0].query).toMatchObject({ tokenIn: KYBER_NATIVE_TOKEN, amountIn: String(10n ** 18n) });
+      expect(network.kyber[0].query).toMatchObject({ tokenIn: KYBER_NATIVE_TOKEN, amountIn: String(10n ** 15n) });
       expect(trades()[0]).toMatchObject({ priceMicroUsd: '600000000', amountIn: String(2000n * 10_000n * 10n ** 18n / 600_000_000n) });
       expect(lastText()).toContain('$20 ≈ 0.0333333 BNB (at $600/BNB)');
       await click(link(runtime().commands.sessions.get(detail.id), 'trade.confirm'));
@@ -447,3 +472,234 @@ describe('trading wallet custody', () => {
   });
 });
 
+
+describe('trading safety on review', () => {
+  const OTHER = getAddress('0x' + '77'.repeat(20));
+
+  it.each([['recipient', { dstReceiver: OTHER }], ['minimum out', { minReturnAmount: 1n }], ['source token', { srcToken: OTHER }], ['destination token', { dstToken: OTHER }],
+    ['amount', { amount: 1n }], ['fee receiver', { feeReceivers: [OTHER], feeAmounts: [1n] }], ['flags', { flags: 2n }]])('refuses a build whose calldata changes the %s and never signs', async (_name, tamper) => {
+    await withTrading('tamper', async ({ network, seed, createWallet, quote, tradeOf }) => {
+      seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
+      network.knobs.tamper = tamper;
+      const detail = await quote();
+      expect(tradeOf(detail)).toMatchObject({ state: 'FAILED', result: { reason: 'KYBER_CALLDATA_REFUSED' }, quote: null });
+      expect(network.chains.bsc.sent).toEqual([]);
+    });
+  });
+
+  it('re-verifies stored calldata against the confirmed minimum right before signing', async () => {
+    await withTrading('presign-calldata', async ({ storage, tenantId, network, seed, createWallet, quote, confirm, run, tradeOf }) => {
+      seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
+      const detail = await quote();
+      const trade = tradeOf(detail);
+      const tampered = { ...trade, quote: { ...trade.quote, data: swapCalldata({ tokenIn: KYBER_NATIVE_TOKEN, tokenOut: TOKEN, amountIn: BigInt(trade.amountIn), recipient: OTHER, minReturnAmount: BigInt(trade.quote.minAmountOut) }) } };
+      storage.sql.exec('UPDATE scheduler_state SET value_json=? WHERE tenant_id=? AND key=?', JSON.stringify(tampered), tenantId, `trade:${trade.id}`);
+      await confirm(detail);
+      expect(tradeOf(detail).confirmedMinAmountOut).toBe(trade.quote.minAmountOut);
+      await run(() => tradeOf(detail).state !== 'CONFIRMED');
+      expect(tradeOf(detail)).toMatchObject({ state: 'FAILED', result: { reason: 'KYBER_CALLDATA_REFUSED' }, swap: null });
+      expect(network.chains.bsc.sent).toEqual([]);
+    });
+  });
+
+  it('keeps an ambiguously answered broadcast sent, rebroadcasts the identical bytes and settles by receipt', async () => {
+    await withTrading('ambiguous-json-rpc', async ({ network, seed, createWallet, quote, confirm, run, tradeOf }) => {
+      seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
+      const detail = await quote();
+      const raws = [];
+      network.chains.bsc.beforeBatch = batch => raws.push(...batch.filter(call => call.method === 'eth_sendRawTransaction').map(call => call.params[0]));
+      network.chains.bsc.sendRefusal = 'internal error';
+      await confirm(detail);
+      await run(() => tradeOf(detail).state === 'SWAP_SENT');
+      expect(tradeOf(detail).swap.uncertain).toBe(true);
+      await run(() => tradeOf(detail).state === 'FILLED');
+      expect(raws.length).toBeGreaterThanOrEqual(2);expect(new Set(raws).size).toBe(1);
+      expect(network.chains.bsc.sent).toHaveLength(1);
+    });
+  });
+
+  it('turns an HTTP 5xx broadcast into UNKNOWN after the deadline, never FAILED, and releases the wallet', async () => {
+    await withTrading('ambiguous-5xx', async ({ runtime, network, seed, createWallet, quote, confirm, run, tradeOf }) => {
+      seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
+      const detail = await quote();
+      network.chains.bsc.httpFault = 502;network.chains.bsc.mine = false;
+      await confirm(detail);
+      await run(() => tradeOf(detail).state === 'SWAP_SENT');
+      await run(() => tradeOf(detail).state !== 'SWAP_SENT');
+      expect(tradeOf(detail)).toMatchObject({ state: 'UNKNOWN', result: { reason: 'NO_RECEIPT' } });
+      expect(runtime().trading.executing()).toBeNull();
+    });
+  });
+
+  it('fails a definitely refused broadcast and frees the wallet for the next trade', async () => {
+    await withTrading('refused', async ({ runtime, network, seed, createWallet, quote, confirm, run, tradeOf }) => {
+      seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
+      const first = await quote();
+      network.chains.bsc.sendRefusal = 'insufficient funds for gas * price + value';
+      await confirm(first);
+      await run(() => ['FAILED', 'UNKNOWN', 'FILLED'].includes(tradeOf(first).state));
+      expect(tradeOf(first)).toMatchObject({ state: 'FAILED', result: { reason: 'BROADCAST_REJECTED_INSUFFICIENT_FUNDS' } });
+      expect(network.chains.bsc.sent).toEqual([]);
+      const second = await quote();
+      await confirm(second);
+      expect(tradeOf(second).state).toBe('CONFIRMED');
+      await run(() => tradeOf(second).state === 'FILLED');
+      expect(runtime().trading.executing()).toBeNull();
+    });
+  });
+
+  it('settles a native-out sell from the balance change across its block', async () => {
+    await withTrading('native-out', async ({ network, seed, createWallet, quote, confirm, run, tradeOf }) => {
+      seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n, { [TOKEN]: 2_000_000_000_000n });
+      const detail = await quote('bsc', 'trade.sell', params => params.percent === 50);
+      expect(tradeOf(detail).amountIn).toBe('1000000000000');
+      const before = 10n ** 18n, fee = 0x5208n * 2n, gained = 3_000_000_000_000_000n;
+      network.chains.bsc.balanceAt = { '0xf': before, '0x10': before + gained - fee };
+      await confirm(detail);
+      await run(() => tradeOf(detail).state === 'FILLED');
+      expect(tradeOf(detail).result).toMatchObject({ received: gained.toString(), spent: '1000000000000' });
+    });
+  });
+
+  it.each([['nothing was signed', 'CONFIRMED', 'FAILED'], ['a swap was signed', 'SWAP_SIGNED', 'UNKNOWN']])('ends a trade whose step throws until the scheduler gives up (%s)', async (_name, stuck, outcome) => {
+    await withTrading(`give-up-${stuck}`, async ({ runtime, storage, tenantId, network, seed, createWallet, quote, confirm, run, tradeOf, trades, clock }) => {
+      seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
+      const detail = await quote();
+      await confirm(detail);
+      if (stuck === 'SWAP_SIGNED') await run(() => tradeOf(detail).state === 'SWAP_SIGNED');
+      // Sessions expire while the scheduler backs off; follow the trade by its record.
+      const id = tradeOf(detail).id, current = () => trades().find(trade => trade.id === id);
+      network.chains.bsc.beforeBatch = () => { throw new Error('a defect in the step'); };
+      const scheduler = new OneAlarmScheduler({ store: new SqliteSchedulerStore(storage, tenantId), now: clock.now, aveBudget: { monthlyCu: 1000, resetDay: 1 },
+        alarms: { setAlarm: async () => {}, deleteAlarm: async () => {} },
+        handlers: { trade: externalRequestHandler(({ task, request }) => runtime().trading.runStep(task.id, { request, fetchImpl: network.fetch })) },
+        taskReconciler: tasks => runtime().reconcileInTransaction({ tasks }).filter(task => task.kind === 'trade') });
+      for (let attempt = 0; attempt < 20 && current().state === stuck; attempt++) { await scheduler.alarm();clock.advance(60_000); }
+      expect(current()).toMatchObject({ state: outcome, result: { reason: 'STEP_FAILED' } });
+      if (outcome === 'UNKNOWN') expect(current().swap.hash).toMatch(/^0x[0-9a-f]{64}$/);
+      expect(runtime().trading.executing()).toBeNull();
+      network.chains.bsc.beforeBatch = null;
+      const next = await quote();
+      await confirm(next);
+      expect(tradeOf(next).state).toBe('CONFIRMED');
+    });
+  });
+
+  it('re-quotes an expired confirmation with the current slippage and cap', async () => {
+    await withTrading('requote-settings', async ({ runtime, network, seed, createWallet, quote, confirm, tradeOf, clock }) => {
+      seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
+      const detail = await quote();
+      expect(tradeOf(detail)).toMatchObject({ slippageBps: 500, capUsd: 100 });
+      runtime().commands.setPreference('tradingSlippageBps', 100);runtime().commands.setPreference('tradingBuyCapUsd', 250);
+      clock.advance(30_000);
+      await confirm(detail);
+      expect(tradeOf(detail)).toMatchObject({ state: 'QUOTING', slippageBps: 100, capUsd: 250 });
+    });
+  });
+
+  it('prices a native buy with a small probe, so a pool too thin for a whole coin still quotes', async () => {
+    await withTrading('thin-pool', async ({ network, seed, createWallet, quote, tradeOf }) => {
+      seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
+      network.knobs.thinPool = true;
+      const detail = await quote();
+      expect(tradeOf(detail)).toMatchObject({ state: 'QUOTED', priceMicroUsd: '600000000' });
+    });
+  });
+
+  it('refuses a native buy whose routed USD value exceeds the cap', async () => {
+    await withTrading('cap-mismatch', async ({ network, seed, createWallet, quote, tradeOf }) => {
+      seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
+      network.knobs.nativeUsd = 60n;network.knobs.routeUsd = '150';
+      const detail = await quote('bsc', 'trade.buy', params => params.usd === 50);
+      expect(tradeOf(detail)).toMatchObject({ state: 'FAILED', result: { reason: 'OVER_CAP' }, quote: null });
+    });
+  });
+});
+
+describe('guarded wallet removal', () => {
+  const removePanel = async ({ runtime, click, link, createWallet }) => {
+    const { panel } = await createWallet();
+    await click(link(runtime().commands.sessions.get(panel.id), 'panel.open', params => params.panel === 'wallet_remove'));
+    return panel;
+  };
+
+  it('refuses while a trade is open, even from an earlier confirmation button', async () => {
+    await withTrading('remove-open', async context => {
+      const { runtime, storage, tenantId, click, link, has, seed, quote, sent } = context;
+      seed('bsc');
+      const panel = await removePanel(context);
+      const stale = link(runtime().commands.sessions.get(panel.id), 'wallet.remove');
+      await quote();
+      await click(stale);
+      expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?', tenantId).toArray()).toEqual([{ name: 'trade-wallet-key' }]);
+      expect(sent.some(row => row.params.text?.includes('cannot be removed yet'))).toBe(true);
+      await click(link(runtime().commands.sessions.get(panel.id), 'panel.back'));
+      await click(link(runtime().commands.sessions.get(panel.id), 'panel.open', params => params.panel === 'wallet_remove'));
+      expect(has(runtime().commands.sessions.get(panel.id), 'wallet.remove')).toBe(false);
+    });
+  });
+
+  it('refuses while a trade is UNKNOWN until a refresh resolves it from its receipt', async () => {
+    await withTrading('remove-unknown', async context => {
+      const { runtime, storage, tenantId, network, click, link, seed, quote, confirm, run, tradeOf, drain } = context;
+      seed('bsc');
+      const panel = await removePanel(context);
+      network.chains.bsc.mine = false;network.fund('bsc', 10n ** 18n);
+      const detail = await quote();
+      await confirm(detail);
+      await run(() => tradeOf(detail).state === 'UNKNOWN');
+      network.fund('bsc', 0n);
+      const stale = link(runtime().commands.sessions.get(panel.id), 'wallet.remove');
+      await click(stale);
+      expect(runtime().trading.wallet()).not.toBeNull();
+      network.chains.bsc.mine = true;
+      await context.command('wallet');
+      const wallet = context.sessions().at(-1);
+      await click(link(wallet, 'wallet.refresh'));
+      await run(() => tradeOf(detail).state !== 'UNKNOWN' && runtime().trading.balances().pending.length === 0);
+      await drain();
+      expect(tradeOf(detail).state).toBe('FILLED');
+      await click(link(runtime().commands.sessions.get(wallet.id), 'panel.open', params => params.panel === 'wallet_remove'));
+      await click(link(runtime().commands.sessions.get(wallet.id), 'wallet.remove'));
+      expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?', tenantId).toArray()).toEqual([]);
+    });
+  });
+
+  it('asks for an export first when funds were seen and the key was never exported, then removes after export', async () => {
+    await withTrading('remove-export-first', async context => {
+      const { runtime, storage, tenantId, network, click, link, has, run, drain, sent } = context;
+      const { panel } = await context.createWallet();
+      network.fund('arc', 5n * 10n ** 18n);network.fund('bsc', 0n);
+      await click(link(runtime().commands.sessions.get(panel.id), 'wallet.refresh'));
+      await run(() => runtime().trading.balances().pending.length === 0);
+      await drain();
+      await click(link(runtime().commands.sessions.get(panel.id), 'panel.open', params => params.panel === 'wallet_remove'));
+      const removal = runtime().commands.sessions.get(panel.id);
+      expect(has(removal, 'wallet.remove')).toBe(false);
+      expect(sent.at(-1).params.text).toContain('Export it first');
+      await click(link(removal, 'panel.open', params => params.panel === 'wallet_export'));
+      await click(link(runtime().commands.sessions.get(panel.id), 'wallet.export'));
+      expect(runtime().trading.wallet().exportedAt).not.toBeNull();
+      await click(link(runtime().commands.sessions.get(panel.id), 'panel.open', params => params.panel === 'wallet_remove'));
+      await click(link(runtime().commands.sessions.get(panel.id), 'wallet.remove'));
+      expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?', tenantId).toArray()).toEqual([]);
+    });
+  });
+
+  it('refuses a stale removal button once funds are seen on an unexported key', async () => {
+    await withTrading('remove-stale-funds', async context => {
+      const { runtime, network, click, link, run, drain, sent } = context;
+      const panel = await removePanel(context);
+      const stale = link(runtime().commands.sessions.get(panel.id), 'wallet.remove');
+      await context.command('wallet');
+      const wallet = context.sessions().at(-1);
+      network.fund('arc', 1n);network.fund('bsc', 0n);
+      await click(link(wallet, 'wallet.refresh'));
+      await run(() => runtime().trading.balances().pending.length === 0);
+      await drain();
+      await click(stale);
+      expect(runtime().trading.wallet()).not.toBeNull();
+      expect(sent.some(row => row.params.text?.includes('export it first'))).toBe(true);
+    });
+  });
+});

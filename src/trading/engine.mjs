@@ -12,13 +12,16 @@
 import { getAddress, isAddress, keccak256 } from 'viem';
 import { TRADE_CHAINS, TRADING_SETTINGS, KYBER_NATIVE_TOKEN } from './config.mjs';
 import { TradingError } from './http.mjs';
-import { KyberClient, KYBER_ROUTER } from './kyber.mjs';
-import { EvmRpc, rpc, decodeErc20, approveCalldata, feeFields, hexQuantity, receiptStatus, transferredAmount } from './evm.mjs';
-import { percentOf, usdCentsToStableUnits, usdCentsToNativeUnits, nativePriceMicroUsd, minimumOut, withinBuyCap } from './amounts.mjs';
+import { KyberClient, KYBER_ROUTER, verifySwapCalldata } from './kyber.mjs';
+import { EvmRpc, rpc, decodeErc20, approveCalldata, feeFields, hexQuantity, receiptStatus, transferredAmount, DEFINITE_REFUSALS } from './evm.mjs';
+import { percentOf, usdCentsToStableUnits, usdCentsToNativeUnits, nativePriceMicroUsd, withinBuyCap, decimalToMicro } from './amounts.mjs';
 import { readTradingWallet, tradingAccount } from './wallet.mjs';
 import { readTrade, listTrades, writeTradeInTransaction, pruneTradesInTransaction, TERMINAL_STATES, EXECUTING_STATES } from './trades.mjs';
 
-export const BALANCE_TASK_ID = 'trade-balances';
+// Balance refreshes and receipt rechecks get a task id per request, so a request the
+// scheduler gave up on never blocks a later one.
+const balanceTaskId = requestedAt => `trade-balances:${requestedAt}`;
+const recheckTaskId = trade => `trade-recheck:${trade.id}:${trade.recheckAt}`;
 const BALANCES_KEY = 'trading.balances';
 const S = TRADING_SETTINGS;
 const done = Object.freeze({ status: 'success', complete: true });
@@ -69,36 +72,50 @@ export class TradingEngine {
       usdCents: side === 'buy' ? usdCents : null, percent: side === 'sell' ? percent : null, slippageBps, capUsd,
       state: 'QUOTING', step: 'token', sessionId, createdAt: now, updatedAt: now, nextAt: now, errors: 0, tokenMeta: null,
       tokenIn: side === 'buy' ? facts.quoteToken : address, tokenOut: side === 'buy' ? address : facts.quoteToken,
-      amountIn: null, priceMicroUsd: null, route: null, quote: null, confirmedAt: null, approval: null, swap: null, result: null };
+      amountIn: null, priceMicroUsd: null, route: null, quote: null, confirmedAt: null, confirmedMinAmountOut: null, approval: null, swap: null, result: null, recheckAt: null };
     pruneTradesInTransaction(this.storage, this.tenantId, S.recentTradesKept);
     return writeTradeInTransaction(this.storage, this.tenantId, trade, null);
   }
 
-  /** Confirm a live quote. An expired quote is replaced by a fresh one, never executed. */
-  confirmInTransaction(id) {
+  /**
+   * Confirm a live quote, fixing the minimum output the confirm screen showed.
+   * An expired quote is replaced by a fresh one under the current settings, never executed.
+   */
+  confirmInTransaction(id, settings) {
     const trade = this.#open(id, ['QUOTED']);
     const now = this.now();
     if (this.vetoed(trade)) return { trade: this.#write(trade, this.#failure('VETOED')) };
     if (now >= trade.quote.expiresAt) {
       this.#write(trade, { state: 'EXPIRED', nextAt: null });
-      return { trade: this.#again(trade), requoted: true };
+      return { trade: this.#again(trade, settings), requoted: true };
     }
     if (this.executing()) throw new TradeRefusal('BUSY');
-    return { trade: this.#write(trade, { state: 'CONFIRMED', confirmedAt: now, nextAt: now, errors: 0 }) };
+    return { trade: this.#write(trade, { state: 'CONFIRMED', confirmedAt: now, confirmedMinAmountOut: trade.quote.minAmountOut, nextAt: now, errors: 0 }) };
   }
 
   cancelInTransaction(id) {
     return this.#write(this.#open(id, ['QUOTING', 'QUOTED']), { state: 'CANCELLED', step: null, nextAt: null });
   }
 
-  requoteInTransaction(id) {
-    return this.#again(this.#open(id, ['EXPIRED']));
+  requoteInTransaction(id, settings) {
+    return this.#again(this.#open(id, ['EXPIRED']), settings);
   }
 
-  /** Before a wallet is removed: refuse while one executes, and drop open quotes. */
-  closeQuotesForRemovalInTransaction() {
-    if (this.executing()) throw new TradeRefusal('BUSY');
-    for (const trade of this.trades().filter(item => ['QUOTING', 'QUOTED'].includes(item.state))) this.#write(trade, { state: 'CANCELLED', step: null, nextAt: null });
+  /** A wallet may be removed only once no trade is open or of unknown outcome. */
+  assertRemovableInTransaction() {
+    if (this.trades().some(trade => !TERMINAL_STATES.has(trade.state) || trade.state === 'UNKNOWN')) throw new TradeRefusal('TRADES_OPEN');
+  }
+
+  /** True when the key was never exported and the last balance check saw funds. */
+  exportRequiredBeforeRemoval() {
+    const wallet = this.wallet(), balances = this.balances();
+    if (!wallet || wallet.exportedAt !== null || balances.address !== wallet.address) return false;
+    return Object.values(balances.chains).some(entry => entry?.units != null && BigInt(entry.units) > 0n);
+  }
+
+  /** Ask for a fresh receipt check of every trade whose outcome is unknown. */
+  recheckUnknownInTransaction() {
+    for (const trade of this.trades().filter(item => item.state === 'UNKNOWN' && item.recheckAt === null)) this.#write(trade, { recheckAt: this.now() });
   }
 
   #open(id, states) {
@@ -107,9 +124,9 @@ export class TradingEngine {
     return trade;
   }
 
-  #again(trade) {
+  #again(trade, { slippageBps, capUsd }) {
     return this.requestTradeInTransaction({ chain: trade.chain, token: trade.token, side: trade.side, usdCents: trade.usdCents, percent: trade.percent,
-      sessionId: trade.sessionId, slippageBps: trade.slippageBps, capUsd: trade.capUsd });
+      sessionId: trade.sessionId, slippageBps, capUsd });
   }
 
   #write(trade, changes) {
@@ -122,11 +139,24 @@ export class TradingEngine {
 
   // ---- scheduler integration ----
 
-  /** Scheduler tasks derived from durable records, honoring the scheduler's retry backoff. */
+  /**
+   * Scheduler tasks derived from durable records, honoring the scheduler's retry
+   * backoff. A trade whose step the scheduler gave up on ends here: FAILED when
+   * nothing was ever signed, else UNKNOWN (keeping its transaction link).
+   */
   tasksInTransaction(retries = {}) {
-    const tasks = this.trades().filter(trade => !TERMINAL_STATES.has(trade.state)).map(trade => ({ id: `trade:${trade.id}`, dueAt: trade.nextAt }));
+    const exhausted = id => retries[id] !== undefined && retries[id].dueAt === null;
+    for (const trade of this.trades()) {
+      if (!TERMINAL_STATES.has(trade.state) && exhausted(`trade:${trade.id}`)) {
+        const next = this.#write(trade, trade.approval === null && trade.swap === null ? this.#failure('STEP_FAILED') : this.#unknown('STEP_FAILED'));
+        this.onTradeInTransaction(next);
+      } else if (trade.recheckAt !== null && exhausted(recheckTaskId(trade))) this.#write(trade, { recheckAt: null });
+    }
+    const tasks = this.trades().flatMap(trade => !TERMINAL_STATES.has(trade.state) ? [{ id: `trade:${trade.id}`, dueAt: trade.nextAt }]
+      : trade.recheckAt !== null ? [{ id: recheckTaskId(trade), dueAt: trade.recheckAt }] : []);
     const balances = this.balances();
-    if (balances.pending.length) tasks.push({ id: BALANCE_TASK_ID, dueAt: balances.requestedAt });
+    if (balances.pending.length && exhausted(balanceTaskId(balances.requestedAt))) this.#saveBalances({ ...balances, pending: [] });
+    else if (balances.pending.length) tasks.push({ id: balanceTaskId(balances.requestedAt), dueAt: balances.requestedAt });
     return tasks.map(({ id, dueAt }) => {
       const retry = retries[id];
       return { id, kind: 'trade', dueAt: retry && retry.dueAt !== null ? Math.max(dueAt, retry.dueAt) : dueAt, enabled: !retry || retry.dueAt !== null, aveCost: 0 };
@@ -134,7 +164,9 @@ export class TradingEngine {
   }
 
   async runStep(taskId, { request, fetchImpl }) {
-    if (taskId === BALANCE_TASK_ID) return this.#balanceStep(request, fetchImpl);
+    if (/^trade-balances:\d+$/.test(taskId)) return this.#balanceStep(request, fetchImpl);
+    const recheck = /^trade-recheck:([0-9a-f]{32}):\d+$/.exec(taskId);
+    if (recheck) return this.#recheck(this.trade(recheck[1]), request, fetchImpl);
     const match = /^trade:([0-9a-f]{32})$/.exec(taskId);
     if (!match) throw new TradingError('TRADE_TASK_INVALID', 'trade task identity is invalid');
     const trade = this.trade(match[1]);
@@ -219,7 +251,8 @@ export class TradingEngine {
       return this.#commit(trade, { tokenMeta, step: 'price', errors: 0, nextAt: this.now() });
     }
     if (trade.step === 'price') {
-      const probe = 10n ** 18n;
+      // A small probe prices the native coin without needing depth for a whole coin.
+      const probe = 10n ** BigInt(18 - S.priceProbeDecimalsBelowCoin);
       const answer = await this.#network(request, signal => kyber().route({ slug: facts.kyberSlug, tokenIn: KYBER_NATIVE_TOKEN, tokenOut: trade.token, amountIn: probe, signal }));
       if (answer.error) return this.#retryOrFail(trade, answer.error);
       const price = nativePriceMicroUsd(answer.value.amountInUsd, probe);
@@ -231,16 +264,22 @@ export class TradingEngine {
     if (trade.step === 'route') {
       const answer = await this.#network(request, signal => kyber().route({ slug: facts.kyberSlug, tokenIn: trade.tokenIn, tokenOut: trade.tokenOut, amountIn: BigInt(trade.amountIn), signal }));
       if (answer.error) return this.#retryOrFail(trade, answer.error);
+      // A native buy was sized from a probe price; the route must value it within the cap.
+      if (trade.side === 'buy' && same(trade.tokenIn, KYBER_NATIVE_TOKEN)) {
+        const valued = decimalToMicro(answer.value.amountInUsd);
+        if (valued === null) return this.#commit(trade, this.#failure('PRICE_UNAVAILABLE'));
+        if (valued * 100n > BigInt(trade.capUsd) * 1_000_000n * BigInt(100 + S.capTolerancePercent)) return this.#commit(trade, this.#failure('OVER_CAP'));
+      }
       return this.#commit(trade, { route: answer.value.routeSummary, step: 'build', errors: 0, nextAt: this.now() });
     }
     const now = this.now();
     const deadline = Math.floor((now + S.swapDeadlineMs) / 1000);
-    const answer = await this.#network(request, signal => kyber().build({ slug: facts.kyberSlug, routeSummary: trade.route, tokenIn: trade.tokenIn,
+    const answer = await this.#network(request, signal => kyber().build({ slug: facts.kyberSlug, routeSummary: trade.route, tokenIn: trade.tokenIn, tokenOut: trade.tokenOut,
       amountIn: BigInt(trade.amountIn), sender: trade.wallet, slippageBps: trade.slippageBps, deadline, signal }));
     if (answer.error) return this.#retryOrFail(trade, answer.error);
     const built = answer.value, quotedAt = this.now();
     return this.#commit(trade, { state: 'QUOTED', step: null, route: null, errors: 0, nextAt: quotedAt + S.quoteTtlMs,
-      quote: { amountOut: built.amountOut.toString(), minAmountOut: minimumOut(built.amountOut, trade.slippageBps).toString(), amountInUsd: built.amountInUsd,
+      quote: { amountOut: built.amountOut.toString(), minAmountOut: built.minAmountOut.toString(), amountInUsd: built.amountInUsd,
         amountOutUsd: built.amountOutUsd, gasUsd: built.gasUsd, data: built.data, value: built.value.toString(), deadline, quotedAt, expiresAt: quotedAt + S.quoteTtlMs } });
   }
 
@@ -250,6 +289,13 @@ export class TradingEngine {
     if (trade.state === 'APPROVED' && Math.floor(this.now() / 1000) >= trade.quote.deadline) return this.#commit(trade, this.#failure('QUOTE_DEADLINE_PASSED'));
     if (this.vetoed(trade)) return this.#commit(trade, this.#failure('VETOED'));
     const amountIn = BigInt(trade.amountIn), value = BigInt(trade.quote.value);
+    // Re-verify the stored calldata against what the user confirmed, right before any signature.
+    try {
+      verifySwapCalldata(trade.quote.data, { tokenIn: trade.tokenIn, tokenOut: trade.tokenOut, amountIn, recipient: trade.wallet, minAmountOut: BigInt(trade.confirmedMinAmountOut) });
+    } catch (error) {
+      if (!(error instanceof TradingError)) throw error;
+      return this.#commit(trade, this.#failure(error.code));
+    }
     const tokenIn = !same(trade.tokenIn, KYBER_NATIVE_TOKEN);
     const approval = { from: trade.wallet, to: trade.tokenIn, data: approveCalldata(KYBER_ROUTER, amountIn), value: 0n };
     const swap = { from: trade.wallet, to: KYBER_ROUTER, data: trade.quote.data, value };
@@ -314,15 +360,16 @@ export class TradingEngine {
   async #broadcast({ trade, request, evm }, which) {
     const tx = trade[which];
     if (tx.rejected !== null) {
-      // The node refused this exact transaction. It is not pending; whether it
-      // was mined earlier is settled by whether its nonce has been consumed.
-      const answer = await this.#network(request, signal => evm.batch([rpc.minedNonce(trade.wallet)], { signal }));
-      const mined = answer.error || answer.value[0].error ? null : answer.value[0].result;
-      if (mined === null) {
+      // A definite refusal: the node will not hold this transaction. It can only
+      // have been mined by an earlier (replayed) send, which its receipt shows;
+      // without one it can never mine (its nonce is unused and refused, or taken).
+      const answer = await this.#network(request, signal => evm.batch([rpc.receipt(tx.hash)], { signal }));
+      const receipt = answer.error || answer.value[0].error ? undefined : answer.value[0].result;
+      if (receipt === undefined) {
         if (trade.errors >= S.transientRetries) return this.#commit(trade, this.#unknown('BROADCAST_UNCONFIRMED'));
         return this.#commit(trade, { errors: trade.errors + 1, nextAt: this.now() + S.receiptPollMs * 2 ** trade.errors });
       }
-      if (hexQuantity(mined) > BigInt(tx.nonce)) return this.#commit(trade, this.#sent(trade, which, true));
+      if (receipt !== null) return this.#commit(trade, this.#sent(trade, which, false));
       return this.#commit(trade, this.#failure(`BROADCAST_REJECTED_${tx.rejected}`));
     }
     const answer = await this.#network(request, signal => evm.batch([rpc.sendRaw(tx.raw)], { signal }));
@@ -331,8 +378,9 @@ export class TradingEngine {
     const [sent] = answer.value;
     if (sent.error) {
       if (sent.error.kind === 'KNOWN') return this.#commit(trade, this.#sent(trade, which, false));
-      if (sent.error.kind === 'NONCE_TOO_LOW') return this.#commit(trade, this.#sent(trade, which, true));
-      return this.#commit(trade, { [which]: { ...tx, rejected: sent.error.kind }, nextAt: this.now() });
+      // Only an allowlisted refusal proves the node did not take it; anything else is ambiguous.
+      if (DEFINITE_REFUSALS.has(sent.error.kind)) return this.#commit(trade, { [which]: { ...tx, rejected: sent.error.kind }, nextAt: this.now() });
+      return this.#commit(trade, this.#sent(trade, which, true));
     }
     return this.#commit(trade, this.#sent(trade, which, sent.result !== tx.hash));
   }
@@ -369,6 +417,43 @@ export class TradingEngine {
       return this.#commit(trade, this.#filled(null, spent));
     }
     return this.#commit(trade, { swap: { ...tx, polls, minedBlock: receipt.blockNumber.toLowerCase(), fee: fee.toString() }, result: { reason: null, received: null, spent: spent.toString(), needed: null }, errors: 0, nextAt: now });
+  }
+
+  /**
+   * Resolve an UNKNOWN trade from facts: a receipt of its last transaction, or a
+   * confirmed later nonce proving it can never mine. Otherwise it stays UNKNOWN.
+   */
+  async #recheck(trade, request, fetchImpl) {
+    if (!trade || trade.state !== 'UNKNOWN' || trade.recheckAt === null || trade.recheckAt > this.now()) return done;
+    const facts = this.chain(trade.chain), tx = trade.swap ?? trade.approval;
+    if (!facts || !tx) {
+      await this.#commit(trade, { recheckAt: null });
+      return done;
+    }
+    const evm = new EvmRpc({ url: facts.rpcUrl, chainId: facts.chainId, fetchImpl });
+    const answer = await this.#network(request, signal => evm.batch([rpc.receipt(tx.hash), rpc.minedNonce(trade.wallet)], { signal }));
+    let receipt, status, mined;
+    try {
+      if (answer.error) throw answer.error;
+      const [receiptAnswer, nonceAnswer] = answer.value;
+      if (receiptAnswer.error) throw receiptAnswer.error;
+      if (nonceAnswer.error) throw nonceAnswer.error;
+      receipt = receiptAnswer.result; status = receiptStatus(receipt); mined = hexQuantity(nonceAnswer.result);
+    } catch (error) {
+      if (!(error instanceof TradingError)) throw error;
+      await this.#commit(trade, { recheckAt: null });
+      return done;
+    }
+    const swap = tx === trade.swap;
+    let changes = { recheckAt: null };
+    if (status === 'reverted') changes = { ...this.#failure(swap ? 'SWAP_REVERTED' : 'APPROVAL_REVERTED'), recheckAt: null };
+    else if (status === 'success' && !swap) changes = { ...this.#failure('RESOLVED_WITHOUT_SWAP'), recheckAt: null };
+    else if (status === 'success') {
+      const spent = same(trade.tokenIn, KYBER_NATIVE_TOKEN) ? BigInt(trade.quote.value) : transferredAmount(receipt, trade.tokenIn, { from: trade.wallet }) ?? BigInt(trade.amountIn);
+      changes = { ...this.#filled(transferredAmount(receipt, trade.tokenOut, { to: trade.wallet }), spent), recheckAt: null };
+    } else if (mined > BigInt(tx.nonce)) changes = { ...this.#failure('NOT_MINED'), recheckAt: null };
+    await this.#commit(trade, changes);
+    return done;
   }
 
   #filled(received, spent) {

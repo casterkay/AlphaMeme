@@ -25,7 +25,12 @@ const REASONS = {
   CHAIN_DISABLED: ['此链交易已被停用。', 'Trading on this chain was disabled.'],
   NO_RECEIPT: ['10分钟内未获得回执。交易可能仍会确认，请在浏览器核对；不会自动签署替代交易。', 'No receipt within 10 minutes. The transaction may still confirm; check the explorer. No replacement will be signed.'],
   BROADCAST_UNCONFIRMED: ['无法确认广播结果，请在浏览器核对。', 'The broadcast could not be confirmed; check the explorer.'],
-  KYBER_REJECTED: ['KyberSwap无可用路由。', 'KyberSwap found no usable route.']
+  KYBER_REJECTED: ['KyberSwap无可用路由。', 'KyberSwap found no usable route.'],
+  KYBER_CALLDATA_REFUSED: ['KyberSwap返回的交易不符合报价，已拒绝签名。', 'KyberSwap returned a transaction that does not match the quote; it was not signed.'],
+  OVER_CAP: ['按路由估值超过单笔买入上限，已拒绝。', 'The routed value exceeds the per-trade buy cap; refused.'],
+  STEP_FAILED: ['交易步骤反复失败，已停止。', 'A trade step kept failing and was stopped.'],
+  NOT_MINED: ['该交易已无法上链（其nonce已被占用）。', 'The transaction can no longer be mined (its nonce was used).'],
+  RESOLVED_WITHOUT_SWAP: ['授权已上链，但兑换未执行。', 'The approval confirmed but no swap was executed.']
 };
 const reasonText = (reason, L) => REASONS[reason] ? L(...REASONS[reason])
   : String(reason).startsWith('BROADCAST_REJECTED') ? L('节点拒绝了交易，未广播。', 'The node refused the transaction; it was not broadcast.')
@@ -113,6 +118,7 @@ function tradePanel(snapshot, session, locale) {
   }
   if (['FAILED', 'UNKNOWN'].includes(trade.state)) {
     blocks.push(reasonText(trade.result.reason, L));
+    if (trade.state === 'UNKNOWN') keyboard.push([button(trade.recheckAt === null ? L('重新检查回执', 'Check the receipt again') : L('正在检查…', 'Checking…'), 'trade.recheck', { tradeId: trade.id })]);
     if (trade.result.needed !== null && chain) blocks.push(`${L('需要', 'Needed')}: ${displayUnits(trade.result.needed, trade.result.reason === 'INSUFFICIENT_TOKEN' && trade.side === 'buy' ? chain.quoteDecimals : trade.result.reason === 'INSUFFICIENT_TOKEN' ? trade.tokenMeta.decimals : 18)} ${trade.result.reason === 'INSUFFICIENT_TOKEN' && trade.side === 'sell' ? userText(symbol, 30) : chain.nativeSymbol}`);
   }
   keyboard.push([button(L('刷新', 'Refresh'), 'panel.refresh'), back]);
@@ -168,6 +174,16 @@ export function renderTradingPanel(snapshot, session, locale) {
     return finishPanel(L('导出私钥', 'Export private key'), [L('私钥将以一条消息发送一次，60秒后尝试删除（无法保证删除）。任何拿到私钥的人都能转走资金。请离线保存，切勿分享。', 'The key is sent once in a message that the bot tries to delete after 60 seconds (deletion is not guaranteed). Anyone with the key can take the funds. Store it offline and never share it.')],
       [[button(L('发送私钥', 'Send the private key'), 'wallet.export')], back], snapshot, session, locale);
   }
-  return finishPanel(L('移除交易钱包', 'Remove trading wallet'), [L('移除后机器人会删除私钥。未导出私钥时，钱包中剩余资金将永久无法找回。', 'Removing deletes the key from the bot. Without an export, any funds left in the wallet are unrecoverable forever.')],
+  const removal = snapshot.trading?.removal ?? { tradesOpen: false, exportRequired: false };
+  const warning = L('移除后机器人会删除私钥。未导出私钥时，钱包中剩余资金将永久无法找回。', 'Removing deletes the key from the bot. Without an export, any funds left in the wallet are unrecoverable forever.');
+  if (removal.tradesOpen) {
+    return finishPanel(L('移除交易钱包', 'Remove trading wallet'), [warning, L('仍有进行中或结果未知的交易，暂不能移除。请在钱包中点击刷新，待回执确认结果后再试。', 'A trade is still open or its outcome unknown, so the wallet cannot be removed yet. Refresh the wallet until the receipts resolve it, then try again.')],
+      [[button(L('刷新余额', 'Refresh balances'), 'wallet.refresh')], back], snapshot, session, locale);
+  }
+  if (removal.exportRequired) {
+    return finishPanel(L('移除交易钱包', 'Remove trading wallet'), [warning, L('上次余额检查显示仍有资金，且私钥从未导出。请先导出私钥。', 'The last balance check shows funds and the key was never exported. Export it first.')],
+      [[button(L('先导出私钥', 'Export first'), 'panel.open', { panel: 'wallet_export' })], back], snapshot, session, locale);
+  }
+  return finishPanel(L('移除交易钱包', 'Remove trading wallet'), [warning],
     [[button(L('移除并删除私钥', 'Remove and delete the key'), 'wallet.remove')], back], snapshot, session, locale);
 }

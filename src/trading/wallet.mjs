@@ -22,10 +22,11 @@ export function readTradingWallet(storage, tenantId) {
   const preference = storage.sql.exec('SELECT value_json FROM preferences WHERE tenant_id=? AND key=?', tenantId, WALLET_PREFERENCE).toArray()[0];
   if (!key && !preference) return null;
   const value = preference ? JSON.parse(preference.value_json) : null;
-  if (!key || !value || typeof value.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value.address) || value.generation !== key.generation) {
+  if (!key || !value || typeof value.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value.address) || value.generation !== key.generation
+    || !(value.exportedAt === undefined || value.exportedAt === null || (Number.isSafeInteger(value.exportedAt) && value.exportedAt >= 0))) {
     throw new TradingError('TRADE_WALLET_CORRUPT', 'trading wallet records disagree');
   }
-  return { address: value.address, createdAt: key.created_at };
+  return { address: value.address, createdAt: key.created_at, exportedAt: value.exportedAt ?? null };
 }
 
 /** Store a generated wallet unless one exists; returns the wallet in effect. */
@@ -33,8 +34,15 @@ export function saveTradingWalletInTransaction(storage, tenantId, generated, now
   const existing = readTradingWallet(storage, tenantId);
   if (existing) return { ...existing, created: false };
   storage.sql.exec('INSERT INTO keys (tenant_id,name,value_enc,generation,created_at) VALUES (?,?,?,?,?)', tenantId, TRADE_WALLET_KEY_NAME, generated.envelope, 1, now);
-  storage.sql.exec('INSERT INTO preferences (tenant_id,key,value_json) VALUES (?,?,?)', tenantId, WALLET_PREFERENCE, JSON.stringify({ address: generated.address, generation: 1 }));
-  return { address: generated.address, createdAt: now, created: true };
+  storage.sql.exec('INSERT INTO preferences (tenant_id,key,value_json) VALUES (?,?,?)', tenantId, WALLET_PREFERENCE, JSON.stringify({ address: generated.address, generation: 1, exportedAt: null }));
+  return { address: generated.address, createdAt: now, exportedAt: null, created: true };
+}
+
+/** Record that Telegram accepted an export of the current key. */
+export function markTradingWalletExportedInTransaction(storage, tenantId, at) {
+  const wallet = readTradingWallet(storage, tenantId);
+  if (!wallet) return;
+  storage.sql.exec('UPDATE preferences SET value_json=? WHERE tenant_id=? AND key=?', JSON.stringify({ address: wallet.address, generation: 1, exportedAt: at }), tenantId, WALLET_PREFERENCE);
 }
 
 export function removeTradingWalletInTransaction(storage, tenantId) {

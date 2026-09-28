@@ -24,8 +24,12 @@ Meme雷达使用用户自己的 AVE API Key 只读读取行情。可选的一键
 - 移除钱包会删除私钥且无法撤销；未导出时剩余资金永久无法找回。`/disconnect` 只删除 AVE 密钥，保留交易钱包。
   Removal deletes the key irreversibly; without an export any remaining funds are lost.
   `/disconnect` deletes only AVE keys.
-- 交易只发送到固定的 KyberSwap MetaAggregationRouterV2 地址，授权金额精确等于本次交易输入。
-  Swaps go only to the pinned KyberSwap MetaAggregationRouterV2; approvals are exact.
+- 交易只发送到固定的 KyberSwap MetaAggregationRouterV2 地址，授权金额精确等于本次交易输入；签名前解码路由调用数据，
+  只接受把确认的代币和数量兑换给本钱包、且最少获得不低于确认页数值的交易。
+  Swaps go only to the pinned KyberSwap MetaAggregationRouterV2; approvals are exact; the
+  router calldata is decoded before signing and must pay the wallet at least the confirmed minimum.
+- 移除钱包在有进行中或结果未知的交易时被拒绝；私钥从未导出且上次余额检查有资金时，须先导出。
+  Removal is refused while a trade is open or unknown, and needs an export first when funds were seen.
 
 ## 报告漏洞
 

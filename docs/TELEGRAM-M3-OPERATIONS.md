@@ -92,6 +92,26 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   fifth poll). No receipt within 10 minutes marks the trade UNKNOWN with its
   transaction link; nothing is replaced or re-signed automatically. Check the
   explorer and the wallet balance before trading again.
+- Only an allowlisted node refusal (insufficient funds, nonce too low, intrinsic
+  gas too low, underpriced or replacement underpriced, fee below base fee, invalid
+  sender or chain id, over the block gas limit or fee cap) counts as "not
+  broadcast", and then only when the transaction has no receipt. Every other
+  answer (timeouts, 5xx, internal or unknown errors) is ambiguous: the trade stays
+  sent, is polled and rebroadcast, and becomes UNKNOWN at the deadline.
+- If the scheduler gives up on a trade step, the trade ends FAILED when nothing
+  was signed and UNKNOWN otherwise; the wallet is free again either way.
+- An UNKNOWN trade is rechecked from "Check the receipt again" or a wallet
+  refresh: a receipt settles it, and a confirmed later nonce proves it can never
+  mine (FAILED).
+- Before quoting and again right before signing, the router calldata is decoded
+  (MetaAggregationRouterV2 `swap`/`swapSimpleMode`, ABI in
+  `src/trading/router-abi.mjs`) and refused unless it swaps exactly the requested
+  tokens and amount to the wallet, for at least the minimum the confirm screen
+  showed, with no fee receivers, no permit and zero flags. Nonzero flags from a
+  live build are unverified and would refuse every swap; check this live first.
+- Wallet removal is refused while a trade is open or UNKNOWN, and asks for an
+  export first when the key was never exported and the last balance check saw
+  funds.
 - One trade executes per wallet at a time; a second confirmation is refused.
 - Defaults (`TRADING_SETTINGS` in `src/trading/config.mjs`): 5% slippage
   (1/3/5/10/20%), $100 per-trade buy cap ($50/$100/$250/$500/$1000), 30 s quotes,

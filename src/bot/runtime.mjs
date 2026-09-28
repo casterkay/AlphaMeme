@@ -20,7 +20,7 @@ import { RecoverableScanner } from '../recoverable-scanner.mjs';
 import { SecretError } from '../util/crypto.mjs';
 import { parseTradingConfig, TRADING_SETTINGS } from '../trading/config.mjs';
 import { TradingEngine } from '../trading/engine.mjs';
-import { generateTradingWallet, readTradingWallet, revealTradingKey } from '../trading/wallet.mjs';
+import { generateTradingWallet, readTradingWallet, revealTradingKey, markTradingWalletExportedInTransaction } from '../trading/wallet.mjs';
 
 // Only the fields a panel shows; never raw transactions, calldata or routes.
 function projectTrade(trade) {
@@ -86,7 +86,8 @@ export class TelegramRuntime {
       settings: { slippageBps: setting('tradingSlippageBps', TRADING_SETTINGS.slippageBps, 5000), capUsd: setting('tradingBuyCapUsd', TRADING_SETTINGS.buyCapUsd, 1_000_000) },
       trades: this.trading.trades().slice(0, 10).map(projectTrade),
       balances: this.trading.balances(),
-      exportIssue: ['UNKNOWN', 'FAILED'].includes(exportRow?.status)
+      exportIssue: ['UNKNOWN', 'FAILED'].includes(exportRow?.status),
+      removal: { tradesOpen: this.trading.trades().some(trade => !['FILLED', 'FAILED', 'EXPIRED', 'CANCELLED'].includes(trade.state)), exportRequired: this.trading.exportRequiredBeforeRemoval() }
     };
   }
 
@@ -110,6 +111,7 @@ export class TelegramRuntime {
   afterSecretSentInTransaction({ row, result }) {
     this.outbox.forgetSecretInTransaction(row.id);
     if (result?.message_id != null) {
+      markTradingWalletExportedInTransaction(this.storage, this.tenantId, this.now());
       const at = this.now() + TRADING_SETTINGS.exportDeleteAfterMs;
       this.outbox.enqueueInTransaction({ id: `delete:${row.id}`, chatId: this.tenantId, method: 'deleteMessage', params: { message_id: result.message_id }, purpose: 'cleanup', nextAt: at, expiresAt: at + 24 * 60 * 60_000 });
     }
