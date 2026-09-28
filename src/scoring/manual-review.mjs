@@ -7,6 +7,8 @@ function candidateAuditAge(row, now) {
 
 export function backendDisposition(row) {
   if (row.status === 'X_REVIEW' || row.status === 'QUALIFIED') return 'chain';
+  // A market lead passed the AVE screen only; its security is not verified.
+  if (row.status === 'LIVE_READY') return 'lead';
   if (row.status === 'WAIT_RECHECK') return 'waiting';
   if (row.status === 'HARD_REJECT' || row.status === 'REJECTED') return 'rejected';
   if (row.deep && row.deep.chainPass) return 'chain';

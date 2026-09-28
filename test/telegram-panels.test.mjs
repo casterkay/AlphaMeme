@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderPanel, selectPanelRows, PANEL_NAMES, telegramCommandDescriptions } from '../src/bot/panels.mjs';
-import { projectTelegramCandidate, projectTelegramLiveRow, createTelegramExport, safeTelegramUrl } from '../src/bot/snapshot.mjs';
+import { projectTelegramCandidate, projectTelegramFeedRow, createTelegramExport, safeTelegramUrl } from '../src/bot/snapshot.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { money, officialXUrl } from '../src/render/telegram.mjs';
 
 const now=1_800_000_000_000;
 function candidate(index=0,changes={}) { return projectTelegramCandidate({ chain:'sol',address:'A'.repeat(32)+index,symbol:'COIN'+index,name:'Research token',status:'X_REVIEW',marketCap:20000+index,liquidity:8000,holders:0,auditedAt:now-60_000,reviewRevision:'revision',deep:{chainPass:true,chartRisk:{version:CHART_RISK_VERSION,pass:true},checks:{openSource:true,ownerRenounced:false},failed:[],unknownFields:[],blockingUnknownFields:[]},...changes }); }
-function fixture() { return {at:now,control:{configured:true,paused:false,notifications:false,activeChain:'sol',enabledChains:['sol']},candidates:Array.from({length:13},(_,index)=>candidate(index)),annotations:[],marks:[],events:[],queue:[],delivery:[],metrics:{},sourceHealth:{},live:{},liveByChain:{},outcomes:[]}; }
+function fixture() { return {at:now,control:{configured:true,paused:false,notifications:false,activeChain:'sol',scanChain:'sol'},candidates:Array.from({length:13},(_,index)=>candidate(index)),annotations:[],marks:[],events:[],queue:[],delivery:[],metrics:{},sourceHealth:{},feedByChain:{},ave:{cuUsed:0,blockedUntil:0,readyAt:0},outcomes:[]}; }
 function session(panel='audits',query={}) { return {panel,viewChain:'sol',query,version:2}; }
 const actions=result=>result.keyboard.flat().filter(item=>item.action).map(item=>item.action);
 
@@ -27,7 +27,9 @@ test('audit filters use effective marks while overview keeps original on-chain c
   const snapshot=fixture();snapshot.marks=[{chain:'sol',address:snapshot.candidates[0].address,decision:'passed',at:now-1,reviewRevision:'revision'}];
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'chain'})).length,12);
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'passed'})).length,1);
-  assert.match(renderPanel(snapshot,session('radar'),'en').text,/13\/13\/1/);
+  snapshot.candidates[1]={...snapshot.candidates[1],status:'LIVE_READY'};snapshot.candidates[2]={...snapshot.candidates[2],status:'HARD_REJECT'};
+  assert.match(renderPanel(snapshot,session('radar'),'en').text,/leads\/vetoed: 1\/1/);
+  assert.equal(selectPanelRows(snapshot,session('audits',{filter:'lead'})).length,1);
 });
 
 test('audit and fresh cutoffs are inclusive and saved records survive evidence expiry',()=>{
@@ -40,18 +42,18 @@ test('audit and fresh cutoffs are inclusive and saved records survive evidence e
   assert.match(detail.text,/no longer retained/);assert.ok(!actions(detail).includes('mark.set_passed'));
 });
 
-test('the live feed states why collection is delayed, including a blocked key, in both locales',()=>{
-  for(const [reason,zh,en] of [['BLOCKED','密钥被临时封锁','Key temporarily blocked'],['RATE_LIMITED','请求额度受限','Rate limited'],['REQUEST_WAIT','等待采集窗口','Waiting for a collection slot']]) {
+test('the hot list states its read status, staleness and whether the chain is scanned, in both locales',()=>{
+  for(const [status,zh,en] of [['AVE_RATE_LIMITED','AVE限流','AVE rate limited'],['AVE_QUOTA','AVE额度用完','AVE credits exhausted']]) {
     const snapshot=fixture();
-    snapshot.live={subscribed:true,focusChain:'sol'};
-    snapshot.liveByChain={sol:{rows:[],status:reason,lastAttemptAt:now,lastSuccessAt:null,delayReason:reason}};
-    assert.match(renderPanel(snapshot,session('feed'),'zh').text,new RegExp(zh),reason);
-    assert.match(renderPanel(snapshot,session('feed'),'en').text,new RegExp(en),reason);
+    snapshot.feedByChain={sol:{rows:[],status,observedAt:now}};
+    assert.match(renderPanel(snapshot,session('feed'),'zh').text,new RegExp(zh),status);
+    assert.match(renderPanel(snapshot,session('feed'),'en').text,new RegExp(en),status);
   }
   const healthy=fixture();
-  healthy.live={subscribed:true,focusChain:'sol'};
-  healthy.liveByChain={sol:{rows:[],status:'READY',lastAttemptAt:now,lastSuccessAt:now,delayReason:null}};
-  assert.doesNotMatch(renderPanel(healthy,session('feed'),'en').text,/Feed status/);
+  healthy.feedByChain={sol:{rows:[],status:'READY',observedAt:now}};
+  assert.doesNotMatch(renderPanel(healthy,session('feed'),'en').text,/Read status|stale/);
+  healthy.feedByChain.sol.observedAt=now-120_001;assert.match(renderPanel(healthy,session('feed'),'en').text,/Data stale/);
+  healthy.control.scanChain='arc';assert.match(renderPanel(healthy,session('feed'),'en').text,/not being scanned/);
 });
 
 test('five-row pagination clamps after deletion and token buttons bind identities rather than ordinals',()=>{
@@ -62,10 +64,10 @@ test('five-row pagination clamps after deletion and token buttons bind identitie
 });
 
 test('search precedes sorting and live top-15 truncation, with stable volume ties',()=>{
-  const snapshot=fixture();snapshot.liveByChain.sol={rows:Array.from({length:25},(_,index)=>projectTelegramLiveRow({chain:'sol',address:'a'+index,symbol:index<20?'OTHER':'MATCH',priorityBand:true,volume1m:1,newAt:now-600_000}))};
+  const snapshot=fixture();snapshot.feedByChain.sol={rows:Array.from({length:25},(_,index)=>projectTelegramFeedRow({address:'a'+index,symbol:index<20?'OTHER':'MATCH',priorityBand:true,pass:index%2===0,volume5m:1,reasons:[]},'sol'))};
   const selected=selectPanelRows(snapshot,session('feed',{search:'match'}));
-  assert.equal(selected.length,5);assert.equal(selected[0].address,'a20');
-  assert.equal(selectPanelRows(snapshot,session('feed',{sort:'new'})).length,0);
+  assert.equal(selected.length,5);assert.deepEqual(selected.map(row=>row.address),['a20','a22','a24','a21','a23'],'screen passes first, stable ties');
+  assert.equal(selectPanelRows(snapshot,session('feed')).length,15);
 });
 
 test('projection preserves unknown, false and zero, including early-exit evidence',()=>{
@@ -87,9 +89,9 @@ test('every long finding remains reachable with valid escaped HTML pages',()=>{
 });
 
 test('malicious labels and credentials are escaped or redacted and unsafe links omitted',()=>{
-  const snapshot=fixture();snapshot.candidates=[candidate(0,{symbol:'<b>bad</b>',name:'gmgn_secret',info:{website:'https://user:password@example.com',twitter:'https://x.com/home'},gmgnUrl:'javascript:alert(1)'})];
+  const snapshot=fixture();snapshot.candidates=[candidate(0,{symbol:'<b>bad</b>',name:'api_key=secret',info:{website:'https://user:password@example.com',twitter:'https://x.com/home'},aveUrl:'javascript:alert(1)'})];
   const result=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
-  assert.ok(result.text.includes('&lt;b&gt;bad&lt;/b&gt;'));assert.ok(!result.text.includes('gmgn_secret'));
+  assert.ok(result.text.includes('&lt;b&gt;bad&lt;/b&gt;'));assert.ok(!result.text.includes('api_key=secret'));assert.ok(!result.keyboard.flat().some(item=>item.url?.startsWith('javascript')));
   assert.ok(!result.keyboard.flat().some(item=>item.url?.includes('password')));
   assert.equal(safeTelegramUrl('http://example.com'),'');assert.equal(officialXUrl('https://evil.com/user'),'');assert.equal(officialXUrl('https://x.com/home'),'');assert.equal(officialXUrl('@valid_user'),'https://x.com/valid_user');
 });
@@ -105,12 +107,21 @@ test('manual approval creation is unavailable for ignored, stale or revisionless
   snapshot.marks[0].decision='ignored';assert.ok(!actions(renderPanel(snapshot,session('detail',{selectedToken:selected}))).includes('mark.set_passed'));
 });
 
-test('live collection controls and audit queue actions do not alter viewed or enabled chains',()=>{
-  const snapshot=fixture();snapshot.live={subscribed:true,focusChain:'base'};snapshot.liveByChain.sol={lastSuccessAt:now,rows:[{...snapshot.candidates[0],auditEligible:true}]};
-  const feed=renderPanel(snapshot,session('feed'),'en');assert.match(feed.text,/Collecting Base/);
-  const collect=feed.keyboard.flat().find(item=>item.action==='live.set' && item.params.value);assert.equal(collect.params.chain,'sol');
-  const detail=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0],returnTo:{panel:'feed'}}),'en');assert.ok(actions(detail).includes('audit.enqueue'));
-  snapshot.liveByChain.sol.lastSuccessAt=now-60_001;assert.ok(!actions(renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0],returnTo:{panel:'feed'}}))).includes('audit.enqueue'));
+test('a lead offers its AVE trade link until a safety veto hides it',()=>{
+  const snapshot=fixture(),aveUrl='https://pro.ave.ai/token/'+'A'.repeat(32)+'0-solana?ref=0001';
+  snapshot.candidates=[candidate(0,{status:'LIVE_READY',aveUrl})];
+  const lead=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
+  assert.ok(lead.keyboard.flat().some(item=>item.url===aveUrl));assert.match(lead.text,/Market lead/);assert.ok(!actions(lead).includes('mark.set_passed'));
+  snapshot.candidates=[candidate(0,{status:'HARD_REJECT',aveUrl})];
+  const vetoed=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
+  assert.ok(!vetoed.keyboard.flat().some(item=>item.url===aveUrl));assert.match(vetoed.text,/trade link is hidden/);
+});
+
+test('the chain panel selects exactly one scan chain',()=>{
+  const snapshot=fixture(),result=renderPanel(snapshot,session('chains'),'en');
+  const choices=result.keyboard.flat().filter(item=>item.action==='chains.set');
+  assert.deepEqual(choices.map(item=>item.params.value),['arc','bsc','base','eth','sol','robinhood']);
+  assert.equal(choices.filter(item=>item.text.startsWith('✓')).length,1);
 });
 
 test('events split long logical pages without hiding events and link only resolvable tokens',()=>{
@@ -120,18 +131,18 @@ test('events split long logical pages without hiding events and link only resolv
   for(let index=0;index<15;index++) assert.ok(seen.join('').includes(`event-${index} `));
 });
 
-test('onboarding in both languages states residual chat risk and renders only public PEM',()=>{
+test('onboarding in both languages links AVE Cloud, asks for /setkey and states residual chat risk',()=>{
   for(const locale of ['zh','en']) {
-    const snapshot=fixture();snapshot.onboarding={publicKey:'-----BEGIN PUBLIC KEY-----\nYWJj\n-----END PUBLIC KEY-----'};
-    const result=renderPanel(snapshot,session('onboard'),locale);assert.ok(result.text.includes('PUBLIC KEY'));assert.ok(result.text.includes(locale==='en'?'cannot guarantee deletion':'无法保证删除'));
-    snapshot.onboarding.publicKey='-----BEGIN PRIVATE KEY-----\nYWJj\n-----END PRIVATE KEY-----';assert.throws(()=>renderPanel(snapshot,session('onboard'),locale),/Invalid public/);
+    const result=renderPanel(fixture(),session('onboard'),locale);
+    assert.ok(result.keyboard.flat().some(item=>item.url==='https://cloud.ave.ai/login'));
+    assert.ok(result.text.includes('/setkey'));assert.ok(result.text.includes(locale==='en'?'cannot guarantee deletion':'无法保证删除'));
   }
 });
 
 test('export is all-chain and whitelist-only with original manual revision and sanitized annotations',()=>{
-  const snapshot=fixture();snapshot.annotations=[{chain:'base',address:'0x'+'a'.repeat(40),favorite:true,note:'gmgn_secret',updatedAt:now,tenantId:'private'}];snapshot.marks=[{...snapshot.candidates[0],decision:'passed',at:now-1,reviewRevision:'revision',version:3}];snapshot.privateKey='private secret';
+  const snapshot=fixture();snapshot.annotations=[{chain:'base',address:'0x'+'a'.repeat(40),favorite:true,note:'api_key=secret',updatedAt:now,tenantId:'private'}];snapshot.marks=[{...snapshot.candidates[0],decision:'passed',at:now-1,reviewRevision:'revision',version:3}];snapshot.privateKey='private secret';
   const exported=createTelegramExport(snapshot),serialized=JSON.stringify(exported);
-  assert.equal(Object.keys(exported.chains).length,7);assert.equal(exported.chains.base.annotations.length,1);assert.equal(exported.chains.sol.manualMarks[0].reviewRevision,'revision');assert.ok(!serialized.includes('gmgn_secret'));assert.ok(!serialized.includes('tenantId'));assert.ok(!serialized.includes('privateKey'));
+  assert.equal(Object.keys(exported.chains).length,6);assert.equal(exported.chains.base.annotations.length,1);assert.equal(exported.chains.sol.manualMarks[0].reviewRevision,'revision');assert.ok(!serialized.includes('api_key=secret'));assert.ok(!serialized.includes('tenantId'));assert.ok(!serialized.includes('privateKey'));
 });
 
 test('statistics distinguish unavailable from empty and require all three windows for overall readiness',()=>{

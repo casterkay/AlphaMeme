@@ -1,0 +1,27 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "meme-radar-ave-egress-probe",
+  "main": "ave-egress-probe.mjs",
+  "compatibility_date": "2026-09-20",
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AVE_EGRESS_PROBE",
+        "class_name": "AveEgressProbe"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AveEgressProbe"]
+    }
+  ]
+}

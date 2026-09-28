@@ -1,5 +1,7 @@
 import { voiceEligible, voiceKey, VOICE_TTL } from '../../public/voice-alerts.mjs';
+import { DEFAULT_SCAN_CHAIN } from '../chains.mjs';
 import { CHART_RISK_VERSION } from '../scoring/chart-risk.mjs';
+import { readSchedulerStateInTransaction } from '../storage/scheduler-state.mjs';
 
 const STATE_KEY = 'notification.baseline';
 const EVENT_TTL = 30 * 60_000;
@@ -18,7 +20,8 @@ export class NotificationPolicy {
   write(value) { this.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json', this.tenantId, STATE_KEY, JSON.stringify(value)); }
   controls() {
     const preferences = Object.fromEntries(this.query('SELECT key,value_json FROM preferences WHERE tenant_id=?').map(row => [row.key, decode(row.value_json)]));
-    return { enabled: preferences['telegram.notifications'] === true, chains: preferences['telegram.scanChains'] ?? ['robinhood'] };
+    const scanChain = readSchedulerStateInTransaction(this.storage, this.tenantId).runtime.control.activeChain ?? DEFAULT_SCAN_CHAIN;
+    return { enabled: preferences['telegram.notifications'] === true, chains: [scanChain] };
   }
   candidates() {
     const excluded = new Set(this.query('SELECT chain,address FROM risk_exclusions WHERE tenant_id=?').map(voiceKey));
@@ -26,8 +29,11 @@ export class NotificationPolicy {
     const favorites = new Set(this.query('SELECT chain,address FROM annotations WHERE tenant_id=? AND favorite=1').map(voiceKey));
     return this.query('SELECT chain,address,symbol,status,audited_at,stale_at,review_revision,deep_json,audit_health_json,audit_error FROM candidates WHERE tenant_id=?').map(row => {
       const deep = decode(row.deep_json), health = decode(row.audit_health_json), key = voiceKey(row);
+      // An AVE market lead alerts as upstream's live lead does; a deep-audit pass needs its full evidence.
+      const lead = row.status === 'LIVE_READY';
       return { chain: row.chain, address: row.address, symbol: row.symbol, status: row.status, auditedAt: row.audited_at, staleAt: row.stale_at, revision: row.review_revision,
-        qualified: row.status === 'X_REVIEW' && deep?.chainPass === true && !row.audit_error && health?.complete !== false && deep?.chartRisk?.pass === true && deep?.chartRisk?.version === CHART_RISK_VERSION && !excluded.has(key),
+        ...(lead ? { source: 'live' } : {}),
+        qualified: lead ? !excluded.has(key) : row.status === 'X_REVIEW' && deep?.chainPass === true && !row.audit_error && health?.complete !== false && deep?.chartRisk?.pass === true && deep?.chartRisk?.version === CHART_RISK_VERSION && !excluded.has(key),
         ignored: marks.get(key) === 'ignored', approved: marks.get(key) === 'passed', favorite: favorites.has(key) };
     });
   }

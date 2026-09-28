@@ -20,7 +20,6 @@ test('Worker parity helpers preserve token normalization, manual social gating, 
     price_usd: '3.5',
     creation_timestamp: 123,
     twitter_username: 'Real_User',
-    link: { gmgn: 'https://gmgn.ai/token' },
     holder_count: '4',
     volume: '5',
     buys: '6',
@@ -46,7 +45,6 @@ test('Worker parity helpers preserve token normalization, manual social gating, 
     buys: 6,
     sells: 7,
     twitter: 'Real_User',
-    gmgnUrl: 'https://gmgn.ai/token',
     socialHints: { followerCount: 8, duplicateSocial: true }
   });
   assert.deepEqual(socialFrom(token), { twitter: 'Real_User', status: 'FAIL', score: 0, reason: '社媒链接疑似复用' });

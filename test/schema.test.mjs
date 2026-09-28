@@ -12,15 +12,9 @@ import {
   TenantRegistrySchemaError,
   initializeTenantRegistrySchema
 } from '../src/storage/tenant-registry-schema.mjs';
-import {
-  GmgnAdmissionStateError,
-  SqliteGmgnAdmissionStateStore,
-  defaultGmgnAdmissionState,
-  mergeGmgnAdmissionState,
-  normalizeTenantId,
-  readGmgnAdmissionState,
-  writeGmgnAdmissionState
-} from '../src/storage/gmgn-admission-state.mjs';
+import { defaultAveAdmission } from '../src/ave-admission.mjs';
+import { AveAdmissionStateError, readAveAdmissionState, writeAveAdmissionStateInTransaction } from '../src/storage/ave-admission-state.mjs';
+import { normalizeTenantId, TenantIdError } from '../src/storage/tenant-id.mjs';
 
 function cursor(rows) {
   return {
@@ -239,77 +233,25 @@ test('Radar schema rejects altered types, defaults, checks, uniqueness, and inde
     error instanceof SchemaError && error.code === 'SCHEMA_INDEX_CONTRACT_MISMATCH');
 });
 
-test('GMGN admission state persists every cross-restart field and rejects corrupt JSON', () => {
+test('AVE admission state persists every cross-restart field and rejects corrupt or invalid state', () => {
   const storage = new FakeStorage();
   initializeRadarSchema(storage);
   const tenantId = '-1001234567890';
-  const state = {
-    nextAllowedAt: 1_000,
-    backoffFactor: 2,
-    lastRequestAt: 900,
-    lastWeight: 5,
-    successStreak: 3,
-    spacingReadyAt: 950,
-    keyEpoch: 7
-  };
+  assert.deepEqual(readAveAdmissionState(storage, tenantId), defaultAveAdmission());
+  const state = { keyEpoch: 7, periodStartAt: 1_000, cuUsed: 605, lastRequestAt: 900, spacingReadyAt: 950,
+    blockedUntil: 2_000, blockReason: 'RATE_LIMITED', backoffFactor: 2, successStreak: 3 };
+  assert.deepEqual(writeAveAdmissionStateInTransaction(storage, tenantId, state), state);
+  assert.deepEqual(readAveAdmissionState(storage, tenantId), state);
+  assert.throws(() => writeAveAdmissionStateInTransaction(storage, tenantId, { ...state, blockReason: 'OTHER' }), error => error.code === 'AVE_ADMISSION_INVALID');
 
-  assert.deepEqual(writeGmgnAdmissionState(storage, tenantId, state), state);
-  assert.deepEqual(readGmgnAdmissionState(storage, tenantId), state);
-
-  storage.sql.schedulerState.set(`${tenantId}\u0000gmgn.admission.v1`, '{not json');
-  assert.throws(() => readGmgnAdmissionState(storage, tenantId), error => error instanceof GmgnAdmissionStateError && error.code === 'GMGN_ADMISSION_STATE_CORRUPT');
-});
-
-test('GMGN admission adapter matches the provider state-store boundary and refuses invalid weights', async () => {
-  const storage = new FakeStorage();
-  initializeRadarSchema(storage);
-  const adapter = new SqliteGmgnAdmissionStateStore(storage, '1001');
-
-  assert.deepEqual(await adapter.read(), defaultGmgnAdmissionState());
-  await adapter.write({
-    nextAllowedAt: 1_000,
-    backoffFactor: 2,
-    lastRequestAt: 900,
-    lastWeight: 5,
-    successStreak: 3,
-    spacingReadyAt: 950,
-    keyEpoch: 7
-  });
-  assert.equal((await adapter.read()).lastWeight, 5);
-  assert.throws(() => writeGmgnAdmissionState(storage, '1001', { ...defaultGmgnAdmissionState(), lastWeight: 0 }), error =>
-    error instanceof GmgnAdmissionStateError && error.code === 'GMGN_ADMISSION_STATE_INVALID');
-});
-
-test('GMGN admission merges stale responses without blocking current backoff recovery', () => {
-  const current = {
-    nextAllowedAt: 2_000,
-    backoffFactor: 2,
-    lastRequestAt: 1_500,
-    lastWeight: 1,
-    successStreak: 29,
-    spacingReadyAt: 2_000,
-    keyEpoch: 4
-  };
-  assert.deepEqual(mergeGmgnAdmissionState(current, {
-    ...current,
-    backoffFactor: 1.75,
-    successStreak: 0
-  }), { ...current, backoffFactor: 1.75, successStreak: 0 });
-  assert.deepEqual(mergeGmgnAdmissionState(current, {
-    ...current,
-    keyEpoch: 3,
-    nextAllowedAt: 0,
-    spacingReadyAt: 0,
-    backoffFactor: 1,
-    successStreak: 30
-  }), current);
+  storage.sql.schedulerState.set(`${tenantId}\u0000ave.admission.v1`, '{not json');
+  assert.throws(() => readAveAdmissionState(storage, tenantId), error => error instanceof AveAdmissionStateError && error.code === 'AVE_ADMISSION_STATE_CORRUPT');
 });
 
 test('tenant IDs use the canonical decimal String(chat_id) representation', () => {
   assert.equal(normalizeTenantId('-1001234567890'), '-1001234567890');
   assert.equal(normalizeTenantId(1001), '1001');
-  assert.throws(() => normalizeTenantId('001'), error =>
-    error instanceof GmgnAdmissionStateError && error.code === 'GMGN_ADMISSION_TENANT_INVALID');
+  assert.throws(() => normalizeTenantId('001'), error => error instanceof TenantIdError && error.code === 'TENANT_ID_INVALID');
 });
 
 test('tenant registry creates only version metadata and tenant routes', () => {

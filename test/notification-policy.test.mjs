@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
 import { NotificationPolicy } from '../src/bot/notification-policy.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
+import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 const START = 1800000000000;
 function fixture() {
   const db = new DatabaseSync(':memory:');
@@ -13,13 +14,15 @@ function fixture() {
   const create = () => new NotificationPolicy({ storage, tenantId: '123', now: () => now });
   const sql = (query, ...args) => storage.sql.exec(query, ...args);
   const pref = (key, value) => sql('INSERT INTO preferences (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json','123',key,JSON.stringify(value));
-  pref('telegram.notifications', true); pref('telegram.scanChains', ['bsc']);
+  pref('telegram.notifications', true);
+  const scanChain = chain => { const state = readSchedulerStateInTransaction(storage, '123'); writeSchedulerStateInTransaction(storage, '123', { ...state, runtime: { ...state.runtime, control: { ...state.runtime.control, activeChain: chain } } }); };
+  scanChain('bsc');
   const candidate = (address, options = {}) => {
     const { status = 'X_REVIEW', revision = 'r1', qualified = true, age = 0 } = options;
     sql('INSERT INTO candidates (tenant_id,chain,address,status,audited_at,stale_at,review_revision,deep_json,audit_health_json) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,chain,address) DO UPDATE SET status=excluded.status,audited_at=excluded.audited_at,stale_at=excluded.stale_at,review_revision=excluded.review_revision,deep_json=excluded.deep_json', '123','bsc',address,status,now-age,now+600000,revision,JSON.stringify({chainPass:qualified,chartRisk:{pass:qualified,version:CHART_RISK_VERSION}}),'{}');
   };
   const event = (id,type,address) => sql('INSERT INTO events (tenant_id,id,at,type,chain,address) VALUES (?,?,?,?,?,?)','123',id,now,type,'bsc',address);
-  return { sql, pref, candidate, event, policy: create(), create, advance: ms => { now += ms; } };
+  return { sql, pref, scanChain, candidate, event, policy: create(), create, advance: ms => { now += ms; } };
 }
 
 test('initial baseline stays quiet; newly eligible promotion produces one immutable batch and survives eviction', () => {
@@ -102,4 +105,21 @@ test('expired failed delivery cannot bypass transport retry limit by creating a 
   assert.equal(pending.length,2);
   f.advance(600001);f.candidate('a');
   assert.equal(f.policy.reconcileInTransaction({issues:[issue]}).notifications.length,0);
+});
+
+test('an AVE market lead alerts once as upstream live leads do, and a vetoed lead is no longer eligible', () => {
+  const f = fixture(); f.policy.baselineInTransaction(); f.advance(1);
+  f.candidate('lead', { status: 'LIVE_READY', qualified: false });
+  const [batch] = f.policy.reconcileInTransaction().notifications;
+  assert.equal(batch.actionReason, 'CANDIDATE_NEW');
+  assert.deepEqual(batch.members.map(member => member.address), ['lead']);
+  f.candidate('lead', { status: 'HARD_REJECT', revision: 'veto' });
+  assert.equal(f.policy.eligible({ delivery_class: 'ACTION_REQUIRED', action_reason: 'CANDIDATE_NEW' }, { notification: batch }), false);
+});
+
+test('only the selected scan chain alerts', () => {
+  const f = fixture(); f.policy.baselineInTransaction(); f.advance(1);
+  f.scanChain('arc');
+  f.candidate('lead', { status: 'LIVE_READY' });
+  assert.equal(f.policy.reconcileInTransaction().notifications.length, 0);
 });

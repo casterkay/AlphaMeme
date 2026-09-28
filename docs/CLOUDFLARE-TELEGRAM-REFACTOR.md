@@ -1,5 +1,13 @@
 # meme-radar → Cloudflare Worker + Telegram 重构计划
 
+> **Historical design.** This document was written for the GMGN data provider.
+> The Worker now uses AVE: one scan chain (Arc by default), AVE credit-paced
+> admission instead of GMGN request weights, `/setkey` onboarding without signing
+> keys, and alerts on AVE market leads vetoed by GoPlus/DexScreener instead of
+> GMGN deep-audit passes. The live-feed subscription and 1–3 chain selection are
+> gone. See [the operations guide](TELEGRAM-M3-OPERATIONS.md) for current behavior.
+
+
 > 本计划只改本仓库（meme-radar）。不涉及 MemeHarness。
 > 目标：把本地只读 Node web 应用，重构为 Cloudflare Worker 服务，Telegram bot 作为唯一用户界面。
 > 状态：设计稿，已纳入本轮评审修订；本次只更新计划，不代表实现或平台 spike 已通过。

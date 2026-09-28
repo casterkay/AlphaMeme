@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { backendDisposition, effectiveStatus, canPass } from '../src/scoring/manual-review.mjs';
 
 const now = 1_800_000_000_000;
@@ -36,15 +35,4 @@ test('an existing passed mark only enables its cancellation, never a new pass', 
   assert.equal(canPass({ status: 'HARD_REJECT' }, null, now), false);
   assert.equal(canPass(freshChainCandidate, null, now), true);
   assert.equal(canPass({ ...freshChainCandidate, auditedAt: now - 10 * 60_000 - 1 }, null, now), false);
-});
-
-test('the dashboard imports the extracted manual review decision module', () => {
-  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(html, /import\('\/manual-review\.mjs'\)/);
-  assert.doesNotMatch(html, /function backendDisposition\(row\)/);
-});
-
-test('a local-file launch initializes before the server-only module import', () => {
-  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(html, /if \(location\.protocol === 'file:'\) initializeDashboard\(\);\n    else import\('\/manual-review\.mjs'\)/);
 });

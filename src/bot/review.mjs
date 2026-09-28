@@ -1,3 +1,4 @@
+import { isScanChain } from '../chains.mjs';
 import { backendDisposition, effectiveStatus } from '../scoring/manual-review.mjs';
 
 export class ReviewConflict extends Error {
@@ -5,7 +6,7 @@ export class ReviewConflict extends Error {
 }
 
 export function tokenIdentity({ chain, address }) {
-  if (!['sol','eth','base','bsc','robinhood','arc','stable'].includes(chain) || typeof address !== 'string'
+  if (!isScanChain(chain) || typeof address !== 'string'
     || !(chain === 'sol' ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ : /^0x[0-9a-f]{40}$/i).test(address)) throw new ReviewConflict('invalid_token');
   return { chain, address: chain === 'sol' ? address : address.toLowerCase() };
 }
@@ -52,7 +53,7 @@ export function annotateInTransaction(storage, tenantId, { token, field, value, 
   if (version !== expectedVersion) throw new ReviewConflict('annotation_changed');
   if (field === 'favorite' && typeof value !== 'boolean') throw new ReviewConflict('invalid_favorite');
   if (field === 'note' && (typeof value !== 'string' || value.length > 500)) throw new ReviewConflict('note_too_long');
-  if (field === 'note' && /gmgn_|-----BEGIN .*PRIVATE KEY-----/i.test(value)) throw new ReviewConflict('sensitive_input');
+  if (field === 'note' && /-----BEGIN .*PRIVATE KEY-----/i.test(value)) throw new ReviewConflict('sensitive_input');
   const old = storage.sql.exec('SELECT favorite, note FROM annotations WHERE tenant_id = ? AND chain = ? AND address = ?', tenantId, chain, address).toArray()[0];
   const next = { favorite: Boolean(old?.favorite), note: old?.note ?? '', [field]: field === 'note' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '') : value };
   if (next.favorite && !old?.favorite && storage.sql.exec('SELECT COUNT(*) AS n FROM annotations WHERE tenant_id = ? AND favorite = 1', tenantId).toArray()[0].n >= 50) throw new ReviewConflict('favorite_limit');

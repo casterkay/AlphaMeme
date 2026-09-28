@@ -1,7 +1,8 @@
-import { normalizeTenantId } from '../storage/gmgn-admission-state.mjs';
+import { SCAN_CHAINS } from '../chains.mjs';
+import { normalizeTenantId } from '../storage/tenant-id.mjs';
 import { REQUIRED_CALIBRATION_WINDOWS, summarizeOutcomes } from '../scoring/outcomes.mjs';
 
-export const STATISTICS_CHAINS = Object.freeze(['sol', 'bsc', 'base', 'eth', 'robinhood', 'arc', 'stable']);
+export const STATISTICS_CHAINS = SCAN_CHAINS;
 const completionFields = Object.freeze({ m30: 'completed30m', h2: 'completed2h', h24: 'completed24h' });
 
 export class StatisticsError extends Error {

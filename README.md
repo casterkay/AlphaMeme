@@ -1,136 +1,89 @@
-# Meme雷达开源版
+# Meme雷达 · Cloudflare + Telegram 版
 
-作者：**DeFi狙击手** · X：[@bi_9527zx](https://x.com/bi_9527zx)
+基于 [Meme雷达开源版](https://github.com/nhovongoc0-max/meme-radar) v0.1.10 的云端版本：
+扫描器运行在 Cloudflare Workers（Durable Objects），通过 Telegram 机器人查看线索与接收提醒。
+行情数据来自 AVE Data API，与上游一致。只读研究：不持有钱包私钥，不签名、不下单。
 
-本地运行的多链 Meme 候选雷达。使用 GMGN 做发现与标签，GoPlus 做已支持链的合约风险复核，DexScreener 做市值、流动性与官网交叉校验。
+A cloud edition of Meme Radar v0.1.10: the scanner runs on Cloudflare Workers
+(Durable Objects) and you use it through a Telegram bot. Market data comes from
+the AVE Data API, as upstream. Read-only research: no wallet keys, signing or orders.
 
-这是从自用版本隔离出的开源版，只包含本地只读扫描、证据展示与人工复核能力。Windows 与 macOS 共用同一套扫描逻辑。
+## 工作方式 / How it works
 
-它不包含钱包私钥、链上交易签名、swap 或下单模块。系统只提供筛选证据，不构成投资建议，也不保证候选代币安全或上涨。
+- 一次扫描一条链，默认 **Arc**（可选 BNB Chain、Base、Ethereum、Solana、Robinhood）。
+  One chain is scanned at a time; **Arc** by default.
+- 每轮读取该链的 AVE 热榜（100 条，5 个额度单位），用上游的 AVE 行情筛选（报价新鲜度、市值 1–15 万美元、
+  流动性、币龄、5 分钟成交、已知风险字段）。通过筛选的代币立即成为**市场线索**并推送提醒。
+  Each cycle reads the chain's AVE hot list and applies upstream's AVE market screen;
+  every passing token becomes a **market lead** and alerts immediately.
+- 线索随后由 GoPlus 与 DexScreener 免费核验（Arc：GoPlus 链 5042、DexScreener `arc`）。
+  貔貅、异常税率等一票否决会撤销线索、隐藏交易入口并推送“风险恶化”。
+  Leads are then checked on GoPlus and DexScreener; a fatal finding vetoes the lead,
+  hides its trade link and sends a "risk worsened" follow-up.
+- AVE 不提供持有人、交易者或合约安全数据，因此线索只是行情观察，**安全性未核验不代表安全**。
+  AVE has no holder, trader or contract-security data: a lead is a market
+  observation, and unverified does not mean safe.
+- 代币详情提供“在AVE交易”链接；交易在 AVE 页面由你自己确认。
+  Token details link to AVE, where you confirm any trade yourself.
 
-## 功能介绍
+## 额度与节奏 / Credits and pacing
 
-- 支持 Solana、BNB 链、Base、以太坊、Robinhood Chain、Arc、Stable 七条扫描链，可选择 1–3 条链轮询。
-- “即时发现”读取 1 分钟活跃榜，目标约每 20 秒刷新；严格深度审计独立运行，不用即时热度冒充安全结论。
-- 综合查看合约权限、LP、税率/貔貅风险、持仓结构、普通钱包代理样本、聪明钱、5 分钟盘面与价格行为；未知字段不会假装通过。
-- GoPlus 与 DexScreener 在已支持链上补充合约风险、市值、流动性和官网交叉验证，并明确标记数据缺失或冲突。
-- 候选币可直接打开官网、GMGN 和 X，由使用者人工核验叙事与社区；雷达不会因社交热度自动下单。
-- 提供收藏、备注、桌面提醒、筛选记录导出，以及 5 分钟至 24 小时的影子表现跟踪。
-- 中文语音提醒新完成链上筛选的候选，优先使用设备上的中文女声；支持音量、关闭和跨标签去重，无需语音 API Key。
-- 排除已知低流动性、高税、DEV 集中持仓与已观测暴拉平台/持续暴跌；缺少行情证据继续等待，不补成安全。
-- API Key 和 Agent 认证私钥只保存在当前电脑；程序只扫描、只筛选、永不下单。
+目标节奏为每 15 秒一轮。每个 AVE 请求在发送前预留额度：请求间隔至少 15 秒，并按
+“剩余额度 ÷ 距离重置的时间”自动放慢，确保本期额度用到重置日。AVE 限流会指数退避，
+额度耗尽会暂停到下一期；不会自动购买额度。
 
-## 下载
+The target cadence is 15 seconds. Each AVE request reserves credits first: requests
+stay at least 15 s apart and slow down so the remaining allowance lasts until it
+resets. Rate limits back off; an exhausted quota pauses until the next period.
 
-- [Windows x64 一键便携版](https://github.com/nhovongoc0-max/meme-radar/releases/download/v0.1.7/MemeRadar-OpenSource-Windows-x64-0.1.7.zip)
-- [macOS 版](https://github.com/nhovongoc0-max/meme-radar/releases/download/v0.1.7/MemeRadar-OpenSource-macOS-0.1.7.zip)
+`wrangler.jsonc` 的 `vars` 设置额度 / Set the allowance in `wrangler.jsonc` `vars`:
 
-也可以在 [Releases](https://github.com/nhovongoc0-max/meme-radar/releases) 页面查看版本说明与文件校验值。
+- `AVE_MONTHLY_CU`：每月额度单位（免费版 1,000,000）/ monthly credit units.
+- `AVE_CU_RESET_DAY`：每月重置日（UTC，1–28）。免费版的重置日**未经核实**，默认按每月 1 日，请改成你账户的实际日期。
+  The UTC reset day; the free plan's day is unverified and defaults to the 1st.
 
-## 安全边界
+Telegram `/status` 显示本期已用额度与下一次请求时间（本地估算，以 AVE 账户为准）。
 
-- HTTP 服务只监听本机回环地址。
-- 设置接口仅用于扫描链、收藏备注、保存或断开本机 GMGN API Key；不提供任何交易接口。
-- GMGN API Key 只写入本项目 `state/gmgn-api-key`；创建 API 所需的 Ed25519 认证私钥只写入本项目的受限状态文件（目录 `0700`、文件 `0600`）。API Key 和私钥都不进入命令参数、状态 JSON、日志、HTTP 响应或浏览器存储，页面只会取得可公开上传的公钥。
-- 浏览器只获取经过字段白名单过滤的状态，不返回上游原始响应。
-- 未知或无法解析的风险字段不应被视为通过。
-- X 链接仅供人工查看；未完成真实性验证时不做自动背书。
-- 输出只有“拒绝 / 待复核 / 可看”三档，“可看”也只是进入人工研究清单，不代表可以买入。
-- 筛选结果会记录 30 分钟、2 小时与 24 小时的影子表现；当前链未积累满 50 个样本前，不据此调参或宣称有效。
+## 部署 / Deploy
 
-## 安装与使用
+需要 **Cloudflare Workers Paid**（$5/月）：实测每次读取与解析 AVE 热榜约用 11–26 ms CPU，
+超过 Free 计划的 10 ms 上限（见 [docs/spikes/AVE-EGRESS.md](docs/spikes/AVE-EGRESS.md)）。
+Requires Workers Paid: a hot-list read measured 11–26 ms CPU, above Free's 10 ms.
 
-### Windows 10/11 x64
-
-1. 下载 Windows 压缩包，右键选择 **全部解压**，不要直接在压缩软件里运行。
-2. 进入解压后的文件夹，双击 **MemeRadar-OpenSource.exe**；便携包已包含运行环境，不需要另外安装 Node.js。
-3. 若 Windows 显示“已保护你的电脑”，确认文件来自本仓库后点击 **更多信息 → 仍要运行**。
-4. 保留启动后的黑色窗口；关闭该窗口会停止本地雷达。浏览器未自动打开时，访问 `http://127.0.0.1:3791/`。
-
-### macOS
-
-1. 下载 macOS 压缩包并完整解压到可写文件夹。
-2. 双击 **安装并启动.command**。若系统首次阻止打开，请右键该文件选择 **打开**。
-3. 首次运行会检查 Node.js；缺少兼容环境时会从 nodejs.org 下载项目专用版本并校验 SHA-256，然后安装固定依赖并打开浏览器。
-
-### 连接 GMGN
-
-1. 页面打开后点击 **首次使用 / 创建 API**，雷达会在本机生成本次 Agent 公钥。
-2. 复制该公钥，按按钮打开 GMGN 创建 API 页面并粘贴公钥。
-3. GMGN 权限只开启 **允许读取**，务必关闭 **允许交易**。
-4. 创建后复制 API Key，回到雷达粘贴并点击 **✓**。验证成功后才会保存到本机并开始扫描。
-5. 每次新建 API Key 都必须重新完成这套 Agent 公钥绑定；不能复用另一个 Key 的配对步骤。
-
-以后继续双击同一个启动入口即可，Key 保存在本机，重启后不用重复填写。扫描到的代币可点击官网、GMGN 或 X 链接人工查看。若代理/VPN环境下 GMGN 连接超时，请先让浏览器能够访问 GMGN，并开启代理软件的“系统代理”，再完全关闭并重启雷达。
-
-## 扫描与日常管理
-
-- 默认每轮最多深审 6 个币，并受时间预算限制。按端点权重串行发送请求，明确的安全拒绝会提前结束审计。短期缓存最长 60 秒；遇到限流等待服务端冷却并降低速度，不绕过套餐限制。
-- 展开“扫描设置与记录”，可选择 1–3 条链轮询，共用请求预算。单链模式点击链标签会切换扫描链；多链模式标签只切换查看，不打断后台轮询。界面标出当前链的第二数据源接入范围；“已接入”不代表每次查询都成功。
-- 收藏与备注保存在本机 `state/preferences.json`，最多 50 个收藏、500 条备注。收藏币掉出发现范围后继续复查风险，不因此重新成为通过候选。关闭某条链的扫描后，该链的风险复查不再执行，但已有影子样本仍会排队补取历史价格。
-- 人工通过绑定审核版本并最长保留 24 小时；风险状态变化后须重新确认。Solana 地址保留大小写。人工通过/忽略记录仅保存在当前浏览器，收藏备注由本机服务保存。
-- 桌面提醒需手动开启并授权，且保持页面打开；只提醒新候选、风险恶化和长时间扫描失败。相同候选事件 30 分钟去重，静音不删除页面事件。未授权时不会影响扫描。
-- “导出记录”下载不含 Key 的 JSON，包含各链的审计、影子样本、收藏备注及当前浏览器人工标记。不要将含个人备注的导出文件直接公开。
-- “清除并断开 API”删除本项目 Key 并持久禁用旧 Key 回退；不会修改全局 GMGN 配置。只有重新验证并保存 Key 才恢复扫描。
-- 桌面安装启动入口自带本地进程守护，异常崩溃自动恢复；状态与设置文件各保留一份有效备份。电脑关机/休眠不能扫描；本版不安装系统开机自启。`npm start` 是前台调试模式，不带守护。
-
-## 即时发现窗口
-
-### 语音提醒与风险过滤
-
-页面点击“试听并开启”，浏览器允许声音后即可使用。台词为“亲爱的老板～我找到一枚不错的币，快来看看”。优先选择设备可用的中文女声，音色随系统语音而异；不附带系统声音录音，不需语音 API Key。支持提供 Web Speech、Web Locks 与本地存储的新版 Chrome、Edge、Safari；需要已安装的本地中文语音，缺少时请在系统语音设置中添加后重试。页面需保持打开，电脑休眠或浏览器节能可能延迟提醒。重开页面需要再次点击允许声音。
-
-提醒覆盖已启用的扫描链，仅对新进入 `X_REVIEW`、深审完成且未过期的候选播放；即时上榜、初筛、人工标记通过都不触发。首次打开、重新开启和断线恢复不追播旧候选；等待中的币经新审计晋级可以提醒。每批合并一句，最多每分钟一次，同一链＋合约地址24小时去重；连续处于候选状态不会按天重播。关闭与音量变化同步到同源其他标签页，其他页面不能替当前页面解锁声音。台词是提醒语，不是质量评级、诈骗鉴定或收益承诺。
-
-已知流动性不足8,000美元、DEV持仓超过1%、买卖税任一超过5%或相差超过2个百分点、明确近5分钟零成交，均不进入发现候选；未知值仍须在深审补齐。“已卖出”标签不能覆盖DEV的实际持仓数值，也不能把缺失的持仓当成零。
-
-形态过滤复用原有约20分钟的1分钟K线，不新增逐币API请求。已收盘有效成交样本中，单分钟实体上涨至少35%、随后至少3根收盘价保持15%以内窄幅平台，或较早收盘高点后连续2根收盘价回撤至少60%，会按风险偏好排除。全部成交为零、时间断档、显著跨分钟价格断层、重复冲突或过期数据只标记待核验，不据此断言诈骗。最近5分钟的成交/回撤检查仍保留。
-
-已确认的形态排除按链＋CA保存到本机 `state/radar.json` 的 `riskExclusions`，不因后续短暂横盘、切链、重启或候选列表到期自动取消。仅检查实际取得的窗口，无法追溯首次扫描前、窗口外或秒级走势；不保证挡住所有诈骗。无候选时不会放宽门槛补位。已有候选须重新通过新版规则才能提醒。
-
-### 发现流
-
-“即时发现 · 1分钟活跃榜”与深度审计分开展示，目标每20秒读取一次 GMGN 1分钟成交额榜（最多100条），不等待整轮深审。仅在页面可见并启用自动更新时续订，离开页面约30秒后不再发起新的即时请求；后台严格扫描照常继续。多个页面共享单一请求队列和全局20秒间隔，限流冷却与审计排队仍会延迟更新，界面展示实际更新时间，超过60秒标记陈旧。它不是 WebSocket 推送或抢跑工具；GMGN 上游也可能有延迟。
-
-窗口先排除已知貔貅、刷量、高风险、创建不足5分钟和基础流动性不足的记录；未知风险仍明确为未核验。展示范围为市值1万–50万美元，可按2万–8万美元优先、1分钟成交额或新进榜查看。新进榜指相对上次有效榜单新出现的代币（包括重新上榜），不代表刚发币；首屏不伪造“新币”，榜单缺失也不填充演示数据。两次快照价格变化使用真实间隔，不冒充1分钟K线涨幅。
-
-“排队核验”只对已启用扫描链、通过原初筛的最新线索开放；仍按原安全标准审查，不会下单、不改变扫描链。每轮最多占用一个优先位置，原总审计预算不增大。请求最多12个，10分钟过期，重启后临时队列清空；已完成审计保存方式不变。共享API意味着即时窗口仍消耗额度，不能承诺对审计速度完全无影响。
-
-## 筛选效果如何验证
-
-通过组按合约地址跟踪 5 分钟、15 分钟、30 分钟、1 小时、2 小时、6 小时、24 小时的价格。代币掉榜或切换查看链也不丢弃样本；缺失窗口会通过对应时刻附近的已收盘 1 分钟 K 线补取，保存实际时间与数据来源，不用当前价格冒充历史价格。
-
-深审拒绝组按合约地址哈希固定抽取约五分之一作对照，最多 200 条。两组分别展示到期数、完成数、缺失数与中位涨跌，不混成一个收益数字。缺失价格不是零收益；拒绝组抽样仅覆盖实际深审过的代币，不能代表所有新币。50 个样本只是最低观察门槛，不构成策略有效或盈利的证明。涨跌统计不含可成交性、滑点和手续费，不是模拟交易收益。
-
-若 macOS 首次阻止打开下载的脚本，可在确认文件来源后通过“右键 → 打开”启动。首次安装需要网络；窗口中的安装错误会指出未完成的步骤。
-
-## 命令行运行
-
-已有 Node.js 22.23+ 或 24.5+ 的用户，在项目目录运行：
-
-```bash
-npm run setup
-npm run open
+```sh
+npm ci
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+npx wrangler secret put MASTER_ENC_KEY        # long random string; see docs/development/ONBOARDING-CRYPTO.md
+npx wrangler secret put OPERATOR_TOKEN
+npx wrangler secret put TELEGRAM_BOT_USERNAME # without @
+npx wrangler deploy
+TELEGRAM_BOT_TOKEN=... node scripts/telegram-register.mjs
 ```
 
-`npm run setup` 自动执行锁文件对应的依赖安装，`npm run open` 在后台启动本机服务并打开 `http://127.0.0.1:3791/`。macOS 的自动安装路径已实测，Windows 与 Linux 仍需干净设备验证。
+然后把 Telegram webhook 指向 `https://<worker>/webhook/telegram`，并带上相同的 `secret_token`。
+Then point the Telegram webhook at `/webhook/telegram` with the same `secret_token`.
 
-前台运行用 `npm start`；检查环境用 `npm run doctor`；测试用 `npm test`。端口占用时可通过 `RADAR_PORT` 指定另一端口；启动器不会覆盖其他程序或另一份项目。
+曾部署过 GMGN 版本的，请先 `npx wrangler delete` 再部署：数据库结构已升级到 v2，旧数据不迁移。
+If you deployed the GMGN version, delete it first; the schema moved to v2 without a migration.
 
-GMGN 只读客户端在运行时使用原生 `fetch` 直连 OpenAPI，不依赖 GMGN CLI。端点参数形态源自官方 `GMGNAI/gmgn-skills` 的 `OpenApiClient` 源码，固定参考提交 `016535ffcf500f56f28aa8797b3c6bf6ebce794a`。开源版不会读取环境变量、旧的全局 GMGN 配置或项目 `.env`；只有在当前开源版页面完成 Agent 公钥创建步骤并通过读取权限验证的 Key 才会生效。连接验证和日常扫描都不向请求进程传递认证私钥或调试开关，也不会调用 `follow-wallet`、swap 或下单接口；任何网页响应都不会返回私钥。
+## 在 Telegram 中使用 / Using the bot
 
-运行记录在 `state/`、日志在 `logs/`、自动下载的运行环境在 `.runtime/`，这些本机目录不应加入版本库或发布包。`node_modules/` 不加入源码版本库；Windows 便携包附带运行所需依赖。不要把 API Key 放进截图、代码或日志。
+1. `/start`，然后 `/onboard`：登录 [AVE Cloud](https://cloud.ave.ai/login) 复制 Data API Key。
+2. 发送 `/setkey <key>`：验证读取一次（5 个额度）后开始扫描 Arc。含密钥的消息会尝试删除，请自行确认已删除。
+3. `/unmute` 开启线索提醒；`/chains` 切换扫描链；`/feed` 查看热榜；`/audits` 查看线索与核验；`/status` 查看运行与额度。
 
-## 许可
+`/help` 列出全部命令。运维细节见 [docs/TELEGRAM-M3-OPERATIONS.md](docs/TELEGRAM-M3-OPERATIONS.md)。
 
-源代码采用 [GNU Affero General Public License v3.0](LICENSE)（`AGPL-3.0-only`）。可以使用、研究、修改和再发布；若修改后通过网络向他人提供服务，须按许可证向这些用户提供对应源代码。`private: true` 仅用于防止误发 npm。第三方数据接口仍受各自服务条款约束。开源版与专业版边界见 `docs/EDITION-BOUNDARY.md`。
+## 开发 / Development
 
-### Telegram on Cloudflare (M3)
+```sh
+npm test            # node:test contracts and Workers runtime tests
+npx wrangler deploy --dry-run
+```
 
-The native Telegram interface, encrypted tenant onboarding, persistent live
-collection and statistics are described in
-[Telegram M3 operations](docs/TELEGRAM-M3-OPERATIONS.md). `/onboard` and `/help`
-explain that a submitted GMGN key passes through Telegram and may remain in chat
-history: automatic deletion is best-effort, so check and delete the original
-message yourself. Stored keys are encrypted and replies display only
-`gmgn_****`. Read-only research; no trades or investment advice.
+## 许可 / License
+
+源代码采用 [GNU Affero General Public License v3.0](LICENSE)（`AGPL-3.0-only`）。若修改后通过网络向他人提供服务，
+须按许可证向这些用户提供对应源代码。第三方数据接口仍受各自服务条款约束。候选仅为行情观察线索，
+不是安全保证、收益承诺或买入建议。

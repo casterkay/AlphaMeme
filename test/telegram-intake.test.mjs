@@ -34,8 +34,9 @@ test('private command receipts derive the tenant from chat and from while retain
   assert.equal(validateTelegramReceipt(result.receipt).payload.arguments, 'secret-argument');
 });
 
-test('credentials in commands, notes and malformed setkey input use only transient protected handoff', () => {
-  for (const text of ['/setkey gmgn_private_value', 'gmgn_private_value', '/note sol token has gmgn_private_value', '/setkey invalid']) {
+test('setkey arguments and pasted private keys use only transient protected handoff', () => {
+  const pem = '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----';
+  for (const text of ['/setkey ave-private-value-0123', '/setkey invalid', pem, `/note sol token has ${pem}`]) {
     const result = parseTelegramUpdate(privateMessage({ text }), { now: () => 1234 });
     assert.equal(result.kind, 'credential');
     assert.equal(result.credentialText, text);
@@ -87,7 +88,7 @@ test('durable receipt validation rejects unbounded message parameters and malfor
 });
 
 test('mentions match only the configured bot username', () => {
-  for (const text of ['/start@other_bot', '/setkey@other_bot gmgn_secret']) {
+  for (const text of ['/start@other_bot', '/setkey@other_bot ave-secret-value']) {
     assert.equal(parseTelegramUpdate(privateMessage({ text }), { botUsername: 'radar_bot' }).kind, 'ignored');
   }
   assert.equal(parseTelegramUpdate(privateMessage({ text: '/start@RADAR_bot' }), { botUsername: 'radar_bot' }).kind, 'accepted');
@@ -102,10 +103,10 @@ test('prompt replies preserve reply identity while commands take priority and em
   update.message.text = '/cancel';
   assert.equal(parseTelegramUpdate(update).receipt.commandType, 'command:cancel');
   assert.equal(parseTelegramUpdate(update).receipt.payload.replyToMessageId, '55');
-  update.message.text = 'note with gmgn_secret';
+  update.message.text = 'note with -----BEGIN PRIVATE KEY-----';
   assert.equal(parseTelegramUpdate(update).kind, 'credential');
   const receipt = parseTelegramUpdate(privateMessage()).receipt;
-  assert.throws(() => validateTelegramReceipt({ ...receipt, payload: { source: 'message', arguments: 'gmgn_secret' } }), /unsupported shape/);
+  assert.throws(() => validateTelegramReceipt({ ...receipt, payload: { source: 'message', arguments: '-----BEGIN PRIVATE KEY-----' } }), /unsupported shape/);
 });
 
 test('oversized messages and callbacks without acknowledgement identity are ignored', () => {

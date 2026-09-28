@@ -1,4 +1,4 @@
-export const RADAR_SCHEMA_VERSION = 1;
+export const RADAR_SCHEMA_VERSION = 2;
 
 const SCHEMA_TENANT_ID = '__schema__';
 const SCHEMA_VERSION_KEY = 'schema.version';
@@ -25,8 +25,7 @@ function table(name, columns, primaryKey, constraints = []) {
 
 export const RADAR_TABLES = Object.freeze([
   table('tenants', [
-    ['tenant_id', 'TEXT NOT NULL'], ['owner_user_id', 'TEXT NOT NULL'], ['gmgn_api_key_enc', 'TEXT'],
-    ['onboard_state', 'TEXT'], ['created_at', 'INTEGER NOT NULL']
+    ['tenant_id', 'TEXT NOT NULL'], ['owner_user_id', 'TEXT NOT NULL'], ['created_at', 'INTEGER NOT NULL']
   ], ['tenant_id']),
   table('candidates', [
     ['tenant_id', 'TEXT NOT NULL'], ['chain', 'TEXT NOT NULL'], ['address', 'TEXT NOT NULL'],
@@ -34,7 +33,7 @@ export const RADAR_TABLES = Object.freeze([
     ['status', 'TEXT NOT NULL'], ['priority_band', 'INTEGER'], ['discovery_score', 'REAL'],
     ['market_cap', 'REAL'], ['liquidity', 'REAL'], ['price', 'REAL'], ['created_at', 'INTEGER'],
     ['age_sec', 'INTEGER'], ['holders', 'INTEGER'], ['volume_1h', 'REAL'], ['buys', 'INTEGER'],
-    ['sells', 'INTEGER'], ['twitter', 'TEXT'], ['gmgn_url', 'TEXT'], ['audited_at', 'INTEGER'],
+    ['sells', 'INTEGER'], ['twitter', 'TEXT'], ['ave_url', 'TEXT'], ['audited_at', 'INTEGER'],
     ['stale_at', 'INTEGER'], ['review_revision', 'TEXT'], ['decision_reason', 'TEXT'],
     ['audit_error', 'TEXT'], ['deep_json', 'TEXT'], ['secondary_json', 'TEXT'], ['social_json', 'TEXT'],
     ['audit_health_json', 'TEXT'], ['metadata_json', 'TEXT']
@@ -129,8 +128,7 @@ export const JSON_CONTAINERS = Object.freeze({
   riskExclusions: Object.freeze(['codes_json', 'reasons_json', 'details_json']),
   events: Object.freeze(['data_json']),
   schedulerState: Object.freeze([
-    'gmgn.admission.v1', 'runtime.global', 'runtime.chains', 'runtime.sourceHealth',
-    'runtime.policy', 'runtime.requestMetrics', 'runtime.rejected', 'notification.baseline',
+    'ave.admission.v1', 'runtime.global', 'runtime.sourceHealth', 'notification.baseline',
     'scheduler.instance.v1', 'scheduler.runtime.v1', 'scheduler.tasks.v1'
   ])
 });

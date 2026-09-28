@@ -36,8 +36,8 @@ describe('Telegram first-contact intake', () => {
     expect(first.accepted).toBe(true);
     expect(duplicate).toMatchObject({ accepted: true, duplicate: true });
     await runInDurableObject(radar, async (_instance, state) => {
-      expect(state.storage.sql.exec('SELECT tenant_id, owner_user_id, onboard_state FROM tenants').toArray())
-        .toEqual([{ tenant_id: '18100', owner_user_id: '18100', onboard_state: 'none' }]);
+      expect(state.storage.sql.exec('SELECT tenant_id, owner_user_id FROM tenants').toArray())
+        .toEqual([{ tenant_id: '18100', owner_user_id: '18100' }]);
       expect(state.storage.sql.exec('SELECT update_id, command_type, payload_json, payload_enc, status, next_at FROM inbox').toArray())
         .toEqual([{ update_id: '1', command_type: 'command:start', payload_json: '{"source":"message","arguments":""}', payload_enc: null, status: 'RECEIVED', next_at: first.dueAt }]);
       expect(state.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', '18100', 'scheduler.tasks.v1').one())
@@ -51,11 +51,9 @@ describe('Telegram first-contact intake', () => {
     const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
     await runInDurableObject(radar, async (_instance, state) => {
       state.storage.sql.exec(
-        'INSERT INTO tenants (tenant_id, owner_user_id, gmgn_api_key_enc, onboard_state, created_at) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO tenants (tenant_id, owner_user_id, created_at) VALUES (?, ?, ?)',
         tenantId,
         'other-owner',
-        null,
-        'none',
         Date.now()
       );
     });
@@ -134,8 +132,8 @@ describe('Telegram first-contact intake', () => {
         get() {
           return {
             receiveTelegramCredential: async (receipt, secret) => {
-              expect(secret).toBe('/setkey gmgn_secret_value');
-              expect(JSON.stringify(receipt)).not.toContain('gmgn_secret_value');
+              expect(secret).toBe('/setkey ave-secret-value');
+              expect(JSON.stringify(receipt)).not.toContain('ave-secret-value');
               calls.push(`credential:${receipt.tenantId}`);
               return { accepted: true };
             },
@@ -158,7 +156,7 @@ describe('Telegram first-contact intake', () => {
     expect(calls).toEqual(['register:18102', 'id:radar:18102', 'receive:18102']);
 
     calls.length = 0;
-    const credential = { ...valid, update_id: 4, message: { ...valid.message, text: '/setkey gmgn_secret_value' } };
+    const credential = { ...valid, update_id: 4, message: { ...valid.message, text: '/setkey ave-secret-value' } };
     expect((await worker.fetch(webhookRequest(credential), fakeEnv)).status).toBe(200);
     expect(calls).toEqual(['register:18102', 'id:radar:18102', 'credential:18102']);
 
@@ -198,8 +196,12 @@ describe('Telegram first-contact intake', () => {
           getStatus: async () => ({
             tenantId: 'should-not-leak',
             lifecycle: 'SKELETON',
-            schemaVersion: 1,
-            gmgnAdmission: { nextAllowedAt: 1, spacingReadyAt: 2, backoffFactor: 1, keyEpoch: 0, lastRequestAt: 99 }
+            schemaVersion: 2,
+            aveAdmission: {
+              keyEpoch: 0, periodStartAt: 3, cuUsed: 10, lastRequestAt: 99, spacingReadyAt: 2,
+              blockedUntil: 4, blockReason: 'RATE_LIMITED', backoffFactor: 2, successStreak: 5
+            },
+            control: { activeChain: 'arc' }
           })
         })
       }
@@ -210,8 +212,8 @@ describe('Telegram first-contact intake', () => {
     }), fakeEnv);
     expect(await response.json()).toEqual({
       lifecycle: 'SKELETON',
-      schemaVersion: 1,
-      gmgnAdmission: { nextAllowedAt: 1, spacingReadyAt: 2, backoffFactor: 1, keyEpoch: 0 }
+      schemaVersion: 2,
+      aveAdmission: { cuUsed: 10, periodStartAt: 3, spacingReadyAt: 2, blockedUntil: 4, blockReason: 'RATE_LIMITED', keyEpoch: 0 }
     });
   });
 });

@@ -38,10 +38,8 @@ export class TelegramSessions {
       const token = button.token ?? button.params?.token ?? null;
       const review = token ? readReview(this.storage, this.tenantId, token) : null;
       const params = { ...(button.params ?? {}) };
-      if (button.action === 'live.set') params.expectedLiveGeneration = control.live.generation ?? 0;
-      if (['notifications.set','chains.save'].includes(button.action)) {
-        const key = button.action === 'notifications.set' ? 'telegram.notificationsVersion' : 'telegram.scanChainsVersion';
-        const row = this.storage.sql.exec('SELECT value_json FROM preferences WHERE tenant_id=? AND key=?', this.tenantId, key).toArray()[0];
+      if (button.action === 'notifications.set') {
+        const row = this.storage.sql.exec('SELECT value_json FROM preferences WHERE tenant_id=? AND key=?', this.tenantId, 'telegram.notificationsVersion').toArray()[0];
         params.expectedPreferenceVersion = row ? JSON.parse(row.value_json) : 0;
       }
       if (token && ['favorite.set', 'note.begin', 'note.clear'].includes(button.action)) params.expectedAnnotationVersion = annotationVersion(this.storage, this.tenantId, token, button.action === 'favorite.set' ? 'favorite' : 'note').version;

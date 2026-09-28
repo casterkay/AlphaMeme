@@ -1,7 +1,8 @@
-const TASK_KINDS = Object.freeze(['local-control', 'live', 'command', 'credential', 'scan', 'outbox']);
+import { aveReadyAt, reserveAveRequest, validateAveAdmission } from './ave-admission.mjs';
+
+const TASK_KINDS = Object.freeze(['local-control', 'command', 'credential', 'scan', 'outbox']);
 const TASK_PRIORITY = Object.freeze({
   'local-control': 0,
-  live: 1,
   command: 2,
   credential: 2,
   scan: 3,
@@ -74,16 +75,6 @@ function taskTimestamp(value) {
   return value;
 }
 
-function validateGmgnAdmission(value) {
-  if (!isPlainObject(value) || !isTimestamp(value.nextAllowedAt) || !isTimestamp(value.spacingReadyAt)
-    || !Number.isFinite(value.backoffFactor) || value.backoffFactor < 1
-    || !isTimestamp(value.lastRequestAt) || !positiveInteger(value.lastWeight)
-    || !isTimestamp(value.successStreak) || !isTimestamp(value.keyEpoch)) {
-    throw new SchedulerPolicyError('SCHEDULER_GMGN_ADMISSION_INVALID', 'GMGN admission state is invalid');
-  }
-  return value;
-}
-
 function runtimeEligibility(value) {
   if (!isPlainObject(value) || typeof value.paused !== 'boolean' || typeof value.configured !== 'boolean') {
     throw new SchedulerPolicyError('SCHEDULER_ELIGIBILITY_INVALID', 'scheduler eligibility must contain paused and configured booleans');
@@ -95,13 +86,6 @@ function runtimeControl(value) {
   if (!isPlainObject(value) || !isTimestamp(value.controlEpoch) || !isTimestamp(value.connectionGeneration)
     || (value.activeChain !== null && (typeof value.activeChain !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(value.activeChain)))) {
     throw new SchedulerPolicyError('SCHEDULER_CONTROL_STATE_INVALID', 'scheduler control state is invalid');
-  }
-  return value;
-}
-
-function runtimeLive(value) {
-  if (!isPlainObject(value) || typeof value.subscribed !== 'boolean' || !isTimestamp(value.leaseUntil)) {
-    throw new SchedulerPolicyError('SCHEDULER_LIVE_STATE_INVALID', 'scheduler live state is invalid');
   }
   return value;
 }
@@ -124,25 +108,14 @@ export function normalizeSchedulerRuntime(value) {
   if (!isPlainObject(value)) {
     throw new SchedulerPolicyError('SCHEDULER_RUNTIME_INVALID', 'scheduler runtime state has an unsupported shape');
   }
-  // `control` was added after the initial scheduler record. Existing persisted
-  // scheduler state remains valid and receives the deterministic zero state.
-  const normalized = {
-    ...value,
-    control: value.control === undefined
-      ? { controlEpoch: 0, connectionGeneration: 0, activeChain: null }
-      : value.control,
-    live: value.live === undefined
-      ? { subscribed: false, leaseUntil: 0 }
-      : value.live
-  };
+  const normalized = value;
   if (normalized.version !== 1 || !positiveInteger(normalized.nextLeaseEpoch)
     || !isPlainObject(normalized.eligibility) || !isPlainObject(normalized.fairness)
-    || !isPlainObject(normalized.control) || !isPlainObject(normalized.live) || !isPlainObject(normalized.retries) || !isPlainObject(normalized.checkpoints) || !isPlainObject(normalized.lowPriorityWaitMs)) {
+    || !isPlainObject(normalized.control) || !isPlainObject(normalized.retries) || !isPlainObject(normalized.checkpoints) || !isPlainObject(normalized.lowPriorityWaitMs)) {
     throw new SchedulerPolicyError('SCHEDULER_RUNTIME_INVALID', 'scheduler runtime state has an unsupported shape');
   }
   runtimeEligibility(normalized.eligibility);
   runtimeControl(normalized.control);
-  runtimeLive(normalized.live);
   retryState(normalized.retries);
   if (normalized.fairness.outbox !== null && typeof normalized.fairness.outbox !== 'string') {
     throw new SchedulerPolicyError('SCHEDULER_RUNTIME_INVALID', 'scheduler outbox fairness cursor is invalid');
@@ -165,7 +138,6 @@ export function defaultSchedulerRuntime() {
     inFlight: null,
     eligibility: { paused: false, configured: false },
     control: { controlEpoch: 0, connectionGeneration: 0, activeChain: null },
-    live: { subscribed: false, leaseUntil: 0 },
     fairness: { outbox: null },
     retries: {},
     checkpoints: {},
@@ -180,14 +152,14 @@ export function createTaskDescriptor(value) {
   const id = taskId(value.id);
   const kind = taskKind(value.kind);
   const dueAt = taskTimestamp(value.dueAt);
-  if (typeof value.enabled !== 'boolean' || typeof value.needsGmgn !== 'boolean') {
-    throw new SchedulerPolicyError('SCHEDULER_TASK_INVALID', 'scheduler task enabled and needsGmgn fields must be booleans');
+  if (typeof value.enabled !== 'boolean') {
+    throw new SchedulerPolicyError('SCHEDULER_TASK_INVALID', 'scheduler task enabled field must be a boolean');
   }
-  const gmgnWeight = value.gmgnWeight === undefined ? 1 : value.gmgnWeight;
-  if (!positiveInteger(gmgnWeight)) {
-    throw new SchedulerPolicyError('SCHEDULER_TASK_WEIGHT_INVALID', 'scheduler task GMGN weight must be a positive integer');
+  // The AVE credit units the task's next request costs; zero when it makes no AVE request.
+  if (!isTimestamp(value.aveCost)) {
+    throw new SchedulerPolicyError('SCHEDULER_TASK_COST_INVALID', 'scheduler task AVE cost must be a non-negative integer');
   }
-  return Object.freeze({ id, kind, dueAt, enabled: value.enabled, needsGmgn: value.needsGmgn, gmgnWeight });
+  return Object.freeze({ id, kind, dueAt, enabled: value.enabled, aveCost: value.aveCost });
 }
 
 function policyTask(value) {
@@ -209,23 +181,23 @@ function uniqueTasks(tasks) {
   return normalized;
 }
 
-export function providerReadyAt(gmgn) {
-  validateGmgnAdmission(gmgn);
-  return Math.max(gmgn.nextAllowedAt, gmgn.spacingReadyAt);
+// Credential tasks verify a candidate key, whose reads spend its own allowance.
+function isCandidateKeyRead(task) {
+  return task.kind === 'credential';
 }
 
-export function taskDueAt(now, task, gmgn) {
+export function taskDueAt(now, task, ave) {
   if (!isTimestamp(now)) throw new SchedulerPolicyError('SCHEDULER_NOW_INVALID', 'scheduler now must be a non-negative safe integer timestamp');
   const normalized = policyTask(task);
-  const admissionReadyAt = normalized.needsGmgn ? providerReadyAt(gmgn) : 0;
+  const admissionReadyAt = normalized.aveCost > 0 ? aveReadyAt(ave, { candidateKey: isCandidateKeyRead(normalized) }) : 0;
   return Math.max(now, normalized.dueAt, admissionReadyAt);
 }
 
-export function nextDue(now, tasks, gmgn) {
+export function nextDue(now, tasks, ave) {
   let next = null;
   for (const task of uniqueTasks(tasks)) {
     if (!task.enabled || task.running) continue;
-    const dueAt = taskDueAt(now, task, gmgn);
+    const dueAt = taskDueAt(now, task, ave);
     next = next === null ? dueAt : Math.min(next, dueAt);
   }
   return next;
@@ -235,7 +207,7 @@ export function schedulerEligibleTasks(tasks, eligibility) {
   const policy = runtimeEligibility(eligibility);
   return uniqueTasks(tasks).map(task => ({
     ...task,
-    enabled: task.enabled && (!['scan', 'live'].includes(task.kind) || (!policy.paused && policy.configured))
+    enabled: task.enabled && (task.kind !== 'scan' || (!policy.paused && policy.configured))
   }));
 }
 
@@ -245,10 +217,10 @@ function lowPriorityChoice(tasks, cursor) {
   return ordered.find(task => task.id > cursor) || ordered[0];
 }
 
-export function selectReadyTask(now, tasks, gmgn, fairness = { outbox: null }) {
+export function selectReadyTask(now, tasks, ave, fairness = { outbox: null }) {
   const ready = uniqueTasks(tasks)
     .filter(task => task.enabled && !task.running)
-    .map(task => ({ task, dueAt: taskDueAt(now, task, gmgn) }))
+    .map(task => ({ task, dueAt: taskDueAt(now, task, ave) }))
     .filter(entry => entry.dueAt <= now);
   if (!ready.length) return null;
 
@@ -261,7 +233,7 @@ export function selectReadyTask(now, tasks, gmgn, fairness = { outbox: null }) {
   return { task: clone(entry.task), dueAt: entry.dueAt, lowPriorityWaitMs };
 }
 
-function sourceTasks(rows, prefix, kind, defaults) {
+function sourceTasks(rows, prefix, kind) {
   if (!Array.isArray(rows)) throw new SchedulerPolicyError('SCHEDULER_SOURCE_INVALID', `${prefix} scheduler source must be an array`);
   return rows.map(row => {
     if (!isPlainObject(row)) throw new SchedulerPolicyError('SCHEDULER_SOURCE_INVALID', `${prefix} scheduler source row must be an object`);
@@ -270,21 +242,19 @@ function sourceTasks(rows, prefix, kind, defaults) {
       kind,
       dueAt: row.dueAt,
       enabled: row.enabled === undefined ? true : row.enabled,
-      needsGmgn: row.needsGmgn === undefined ? defaults.needsGmgn : row.needsGmgn,
-      gmgnWeight: row.gmgnWeight === undefined ? 1 : row.gmgnWeight
+      aveCost: row.aveCost === undefined ? 0 : row.aveCost
     });
   });
 }
 
-export function deriveTaskDescriptors({ localControl = [], live = [], command = [], scan = [], inbox = [], outbox = [], cardRefresh = [] } = {}) {
+export function deriveTaskDescriptors({ localControl = [], command = [], scan = [], inbox = [], outbox = [], cardRefresh = [] } = {}) {
   return uniqueTasks([
-    ...sourceTasks(localControl, 'control', 'local-control', { needsGmgn: false }),
-    ...sourceTasks(live, 'live', 'live', { needsGmgn: true }),
-    ...sourceTasks(command, 'command', 'command', { needsGmgn: false }),
-    ...sourceTasks(scan, 'scan', 'scan', { needsGmgn: true }),
-    ...sourceTasks(inbox, 'inbox', 'command', { needsGmgn: false }),
-    ...sourceTasks(outbox, 'outbox', 'outbox', { needsGmgn: false }),
-    ...sourceTasks(cardRefresh, 'card', 'outbox', { needsGmgn: false })
+    ...sourceTasks(localControl, 'control', 'local-control'),
+    ...sourceTasks(command, 'command', 'command'),
+    ...sourceTasks(scan, 'scan', 'scan'),
+    ...sourceTasks(inbox, 'inbox', 'command'),
+    ...sourceTasks(outbox, 'outbox', 'outbox'),
+    ...sourceTasks(cardRefresh, 'card', 'outbox')
   ]).map(({ running: _running, ...task }) => task);
 }
 
@@ -331,16 +301,9 @@ function successProgress(result, previousCheckpoint, now) {
   if (!result.complete && !hasDueAt && !hasCheckpoint) {
     throw new SchedulerStepError('SCHEDULER_STEP_NO_PROGRESS', 'successful scheduler step must advance a checkpoint or dueAt');
   }
-  const hasNextNeedsGmgn = result.nextNeedsGmgn !== undefined;
-  if (hasNextNeedsGmgn && typeof result.nextNeedsGmgn !== 'boolean') {
-    throw new SchedulerStepError('SCHEDULER_STEP_GMGN_ADMISSION_INVALID', 'successful scheduler GMGN admission must be a boolean');
-  }
-  const hasNextGmgnWeight = result.nextGmgnWeight !== undefined;
-  if (hasNextGmgnWeight && !positiveInteger(result.nextGmgnWeight)) {
-    throw new SchedulerStepError('SCHEDULER_STEP_GMGN_WEIGHT_INVALID', 'successful scheduler GMGN weight must be a positive integer');
-  }
-  if (hasNextGmgnWeight !== hasNextNeedsGmgn) {
-    throw new SchedulerStepError('SCHEDULER_STEP_GMGN_ADMISSION_INVALID', 'successful scheduler GMGN admission and weight must be supplied together');
+  const hasNextAveCost = result.nextAveCost !== undefined;
+  if (hasNextAveCost && !isTimestamp(result.nextAveCost)) {
+    throw new SchedulerStepError('SCHEDULER_STEP_COST_INVALID', 'successful scheduler AVE cost must be a non-negative integer');
   }
   const hasNextTask = result.nextTask !== undefined;
   const nextTask = hasNextTask ? createTaskDescriptor(result.nextTask) : null;
@@ -353,10 +316,8 @@ function successProgress(result, previousCheckpoint, now) {
     nextDueAt: result.nextDueAt,
     hasCheckpoint,
     checkpoint: result.checkpoint,
-    hasNextNeedsGmgn,
-    nextNeedsGmgn: result.nextNeedsGmgn,
-    hasNextGmgnWeight,
-    nextGmgnWeight: result.nextGmgnWeight,
+    hasNextAveCost,
+    nextAveCost: result.nextAveCost,
     hasNextTask,
     nextTask
   };
@@ -371,21 +332,7 @@ function schedulerSnapshot(value) {
   return {
     tasks: uniqueTasks(value.tasks).map(({ running: _running, ...task }) => task),
     runtime: normalizeSchedulerRuntime(value.runtime),
-    gmgn: clone(validateGmgnAdmission(value.gmgn))
-  };
-}
-
-export function reserveGmgnAdmission(now, gmgn, task, minGmgnGapMs) {
-  const normalizedTask = policyTask(task);
-  if (!normalizedTask.needsGmgn) return clone(validateGmgnAdmission(gmgn));
-  if (!positiveInteger(minGmgnGapMs) || providerReadyAt(gmgn) > now) {
-    throw new SchedulerPolicyError('SCHEDULER_GMGN_RESERVATION_INVALID', 'GMGN admission cannot be reserved before it is ready');
-  }
-  return {
-    ...gmgn,
-    lastRequestAt: Math.max(gmgn.lastRequestAt, now),
-    lastWeight: normalizedTask.gmgnWeight,
-    spacingReadyAt: Math.max(gmgn.spacingReadyAt, now + minGmgnGapMs * normalizedTask.gmgnWeight * gmgn.backoffFactor)
+    ave: clone(validateAveAdmission(value.ave))
   };
 }
 
@@ -393,18 +340,18 @@ export class OneAlarmScheduler {
   #handlers;
   #taskReconciler;
 
-  constructor({ store, alarms, handlers = {}, taskReconciler = null, now = Date.now, leaseMs = 60_000, minGmgnGapMs = 1_100, externalRequestTimeoutMs = 30_000, maxRetryAttempts = MAX_RETRY_ATTEMPTS } = {}) {
+  constructor({ store, alarms, handlers = {}, taskReconciler = null, now = Date.now, leaseMs = 60_000, aveBudget, externalRequestTimeoutMs = 30_000, maxRetryAttempts = MAX_RETRY_ATTEMPTS } = {}) {
     if (!store || typeof store.read !== 'function' || typeof store.update !== 'function' || typeof store.runLocalTransaction !== 'function') {
       throw new SchedulerPolicyError('SCHEDULER_STORE_INVALID', 'scheduler store must expose synchronous read, update, and local transaction methods');
     }
     if (!alarms || typeof alarms.setAlarm !== 'function' || typeof alarms.deleteAlarm !== 'function') {
       throw new SchedulerPolicyError('SCHEDULER_ALARMS_INVALID', 'scheduler alarms must expose setAlarm and deleteAlarm methods');
     }
-    if (typeof now !== 'function' || !positiveInteger(leaseMs) || !positiveInteger(minGmgnGapMs)
+    if (typeof now !== 'function' || !positiveInteger(leaseMs) || !positiveInteger(aveBudget?.monthlyCu) || !positiveInteger(aveBudget?.resetDay)
       || !positiveInteger(externalRequestTimeoutMs) || externalRequestTimeoutMs >= leaseMs
       || !positiveInteger(maxRetryAttempts) || maxRetryAttempts > MAX_RETRY_ATTEMPTS
       || (taskReconciler !== null && typeof taskReconciler !== 'function')) {
-      throw new SchedulerPolicyError('SCHEDULER_CONFIGURATION_INVALID', 'scheduler clock, lease, and GMGN spacing configuration are invalid');
+      throw new SchedulerPolicyError('SCHEDULER_CONFIGURATION_INVALID', 'scheduler clock, lease, and AVE budget configuration are invalid');
     }
     this.store = store;
     this.alarms = alarms;
@@ -412,7 +359,7 @@ export class OneAlarmScheduler {
     this.#taskReconciler = taskReconciler;
     this.now = now;
     this.leaseMs = leaseMs;
-    this.minGmgnGapMs = minGmgnGapMs;
+    this.aveBudget = aveBudget;
     this.externalRequestTimeoutMs = externalRequestTimeoutMs;
     this.maxRetryAttempts = maxRetryAttempts;
   }
@@ -456,7 +403,7 @@ export class OneAlarmScheduler {
     const dueAt = nextDue(
       now,
       schedulerEligibleTasks(withRunning(state.tasks, state.runtime.inFlight), state.runtime.eligibility),
-      state.gmgn
+      state.ave
     );
     try {
       if (dueAt === null) await this.alarms.deleteAlarm();
@@ -551,17 +498,21 @@ export class OneAlarmScheduler {
         ), now, { recovered: true });
       }
       const eligible = schedulerEligibleTasks(withRunning(state.tasks, null), state.runtime.eligibility);
-      const selected = selectReadyTask(now, eligible, state.gmgn, state.runtime.fairness);
+      const selected = selectReadyTask(now, eligible, state.ave, state.runtime.fairness);
       if (!selected) return { state, value: null };
       const handler = this.#handlers[selected.task.kind];
       if (handler !== undefined && (!isPlainObject(handler) || !['external-request', 'local-transaction'].includes(handler.mode) || typeof handler.run !== 'function')) {
         throw new SchedulerPolicyError('SCHEDULER_HANDLER_INVALID', 'scheduler handler has an invalid bounded-step contract');
       }
-      const usableHandler = selected.task.needsGmgn && handler?.mode !== 'external-request' ? undefined : handler;
+      const usableHandler = selected.task.aveCost > 0 && handler?.mode !== 'external-request' ? undefined : handler;
       const epoch = state.runtime.nextLeaseEpoch;
-      const gmgn = selected.task.needsGmgn && usableHandler?.mode === 'external-request'
-        ? reserveGmgnAdmission(now, state.gmgn, selected.task, this.minGmgnGapMs)
-        : state.gmgn;
+      let ave = state.ave;
+      if (selected.task.aveCost > 0 && usableHandler) {
+        const reservation = reserveAveRequest(now, state.ave, selected.task.aveCost, this.aveBudget, { candidateKey: isCandidateKeyRead(selected.task) });
+        // An allowance that cannot pay for the request blocks admission until it resets.
+        if (!reservation.reserved) return { state: { ...state, ave: reservation.state }, value: null };
+        ave = reservation.state;
+      }
       const runtime = {
         ...state.runtime,
         nextLeaseEpoch: epoch + 1,
@@ -577,15 +528,12 @@ export class OneAlarmScheduler {
           : { ...state.runtime.lowPriorityWaitMs, [selected.task.id]: selected.lowPriorityWaitMs }
       };
       return {
-        state: { tasks: state.tasks, runtime, gmgn },
+        state: { tasks: state.tasks, runtime, ave },
         value: {
           ...selected,
           epoch,
           handlerMode: usableHandler?.mode || 'unavailable',
-          unavailable: usableHandler === undefined,
-          gmgnReservation: selected.task.needsGmgn && usableHandler?.mode === 'external-request'
-            ? { requestAt: now, weight: selected.task.gmgnWeight, spacingReadyAt: gmgn.spacingReadyAt, keyEpoch: gmgn.keyEpoch }
-            : null
+          unavailable: usableHandler === undefined
         }
       };
     });
@@ -596,7 +544,7 @@ export class OneAlarmScheduler {
       throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', `no bounded handler is registered for ${claim.task.kind}`);
     }
     const handler = this.#handlers[claim.task.kind];
-    const context = { task: clone(claim.task), epoch: claim.epoch, gmgnReservation: clone(claim.gmgnReservation) };
+    const context = { task: clone(claim.task), epoch: claim.epoch };
     if (handler.mode === 'external-request') {
       let requestCount = 0;
       let requestOpen = true;
@@ -698,8 +646,7 @@ export class OneAlarmScheduler {
         : {
             ...currentTask,
             ...(progress.hasDueAt ? { dueAt: progress.nextDueAt } : {}),
-            ...(progress.hasNextNeedsGmgn ? { needsGmgn: progress.nextNeedsGmgn } : {}),
-            ...(progress.hasNextGmgnWeight ? { gmgnWeight: progress.nextGmgnWeight } : {})
+            ...(progress.hasNextAveCost ? { aveCost: progress.nextAveCost } : {})
           };
       const tasks = progress.complete
         ? state.tasks.filter(task => task.id !== claim.task.id)
@@ -725,7 +672,7 @@ export class OneAlarmScheduler {
           : state.runtime.fairness,
         checkpoints
       };
-      return { state: { tasks, runtime, gmgn: state.gmgn }, value: { status: 'succeeded', taskId: claim.task.id } };
+      return { state: { tasks, runtime, ave: state.ave }, value: { status: 'succeeded', taskId: claim.task.id } };
     });
   }
 
@@ -761,7 +708,7 @@ export class OneAlarmScheduler {
         }
       }
     };
-    return { state: { tasks, runtime, gmgn: state.gmgn }, value };
+    return { state: { tasks, runtime, ave: state.ave }, value };
   }
 
   #ownsLease(runtime, claim) {

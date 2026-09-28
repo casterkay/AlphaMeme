@@ -1,15 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { chartRiskScreen, applyRiskExclusion } from '../src/scoring/chart-risk.mjs';
-import { config } from '../src/config.mjs';
+import { chartRiskScreen } from '../src/scoring/chart-risk.mjs';
+import { classifyDeepResult } from '../src/scoring/classification.mjs';
+import { scannerSettings as config } from '../src/scanner-settings.mjs';
 import { deepScreen, knownRiskReasons, discoveryScreen, observeFiveMinutes } from '../src/scoring/index.mjs';
-import { normalizeLiveRows } from '../src/live-discovery.mjs';
-import { classifyDeepResult, Scanner } from '../src/scanner.mjs';
-import { toPublicStatus, voiceSnapshot } from '../src/server.mjs';
-import { RadarState } from '../src/state.mjs';
 
 const now = 1_800_000_000_000, address = '0x' + 'a'.repeat(40);
 const series = (closes, at = now) => closes.map((close, i) => {
@@ -64,42 +58,11 @@ test('DEV exit labels cannot override positive holdings or fill a missing balanc
   }
 });
 
-test('both discovery paths filter known low LP, high taxes, DEV and explicit zero 5m volume', () => {
+test('discovery screening filters known low LP, high taxes, DEV and explicit zero 5m volume', () => {
   for (const fields of [{ liquidity: 3310 }, { buy_tax: '10%', sell_tax: '15%' },
     { dev_team_hold_rate: .0803 }, { creator_balance_rate: .08 }, { volume_5m: 0 }]) {
     const row = { ...discovery(now), ...fields };
     assert.ok(knownRiskReasons(row, config).length);
     assert.equal(discoveryScreen(row, { ...config, chain: 'bsc' }, now / 1000).pass, false);
-    assert.equal(normalizeLiveRows([row], 'bsc', [], now).length, 0);
   }
-  assert.equal(normalizeLiveRows([{ ...discovery(now), volume: 0 }], 'bsc', [], now).length, 1);
-});
-
-test('risk memory survives restart, old snapshots and chain switching without another deep audit', async t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'community-risk-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  let state = new RadarState(dir), audits = 0;
-  state.value.activeChain = 'bsc';
-  const gmgn = { keyEpoch: 1, configured: async () => true, discover: async () => [discovery(Date.now())],
-    audit: async () => { audits++; return { candles: pump(Date.now()) }; } };
-  let scanner = new Scanner({ state, gmgn, settings: { ...config, chain: 'bsc', outcomeReadsPerCycle: 1 } });
-  await scanner.cycle();
-  assert.equal(audits, 1);
-  const key = 'bsc:' + address, hold = state.value.riskExclusions[key];
-  assert.ok(hold.codes.includes('VERTICAL_PLATEAU'));
-  assert.equal(state.value.candidates[0].status, 'HARD_REJECT');
-  // Reproduce a crash after exclusion persistence but before candidate replacement.
-  state.value.candidates[0] = { ...state.value.candidates[0], status: 'X_REVIEW',
-    deep: { chainPass: true, chartRisk: { version: 1, pass: true } } };
-  state.save(); state = new RadarState(dir);
-  assert.equal(toPublicStatus(state.value).candidates[0].status, 'HARD_REJECT');
-  assert.equal(voiceSnapshot(state.value, ['bsc']).chains.bsc[0].qualified, false);
-  scanner = new Scanner({ state, gmgn, settings: { ...config, chain: 'bsc' } });
-  await scanner.cycle(); assert.equal(audits, 1);
-  assert.equal(state.value.candidates[0].status, 'HARD_REJECT');
-  scanner.activateChain('arc', true); scanner.activateChain('bsc', true);
-  assert.ok(state.value.riskExclusions[key]);
-  assert.equal(scanner.enqueueReview('bsc', discovery(Date.now())).reason, 'risk_excluded');
-  assert.equal(applyRiskExclusion({ address: address.toUpperCase(), status: 'X_REVIEW' }, state.value.riskExclusions, 'bsc').status, 'HARD_REJECT');
-  assert.equal(applyRiskExclusion({ address, status: 'X_REVIEW' }, state.value.riskExclusions, 'arc').status, 'X_REVIEW');
 });

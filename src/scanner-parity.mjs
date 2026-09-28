@@ -62,15 +62,19 @@ export function publicToken(row, screen, chain) {
     liquidity: screen.liquidity,
     price: numberOrNull(first(row.price, row.price_usd, row.usd_price)),
     createdAt: createdAt(row),
+    ...(row.marketProvider === 'AVE' ? { marketProvider: 'AVE', ageBasis: screen.ageBasis || row.ageBasis || 'unknown',
+      capturedAt: row.capturedAt, sourceUpdatedAt: row.sourceUpdatedAt, expiresAt: row.expiresAt, stale: row.stale,
+      pairAddress: row.pairAddress, poolCreatedAt: row.poolCreatedAt, firstTradeAt: row.firstTradeAt,
+      volume5m: numberOrNull(row.volume_5m), buys5m: numberOrNull(row.buys_5m), sells5m: numberOrNull(row.sells_5m),
+      activityWindow: '5m', aveUrl: row.aveUrl } : {}),
     ageSec: screen.ageSec,
     priorityBand: screen.priorityBand,
     discoveryScore: screen.score,
-    holders: num(row.holder_count),
-    volume1h: num(first(row.volume_1h, row.volume)),
-    buys: num(first(row.buys_24h, row.buys)),
-    sells: num(first(row.sells_24h, row.sells)),
+    holders: row.marketProvider === 'AVE' ? numberOrNull(row.holder_count) : num(row.holder_count),
+    volume1h: row.marketProvider === 'AVE' ? numberOrNull(row.volume_1h) : num(first(row.volume_1h, row.volume)),
+    buys: row.marketProvider === 'AVE' ? numberOrNull(row.buys_5m) : num(first(row.buys_24h, row.buys)),
+    sells: row.marketProvider === 'AVE' ? numberOrNull(row.sells_5m) : num(first(row.sells_24h, row.sells)),
     twitter: twitterHandle(twitter),
-    gmgnUrl: String(row.link?.gmgn || ''),
     socialHints: {
       followerCount: num(first(row.x_user_follower, row.x_follower)),
       duplicateSocial
@@ -129,7 +133,7 @@ export function selectAuditQueue(queue, availableAddresses, now, cycleNumber, li
 
 export function nextAuditDelay(status, settings) {
   if (status === 'HARD_REJECT') return settings.hardRejectRecheckMs;
-  if (status === 'X_REVIEW') return settings.chainPassRecheckMs;
+  if (status === 'X_REVIEW' || status === 'LIVE_READY') return settings.chainPassRecheckMs;
   return settings.dynamicRecheckMs;
 }
 
