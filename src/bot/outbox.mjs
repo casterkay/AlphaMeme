@@ -203,7 +203,8 @@ export class TelegramOutbox {
 
   /** Drop the encrypted secret from every secret row that can no longer be sent. */
   scrubSecretsInTransaction() {
-    for (const row of this.storage.sql.exec("SELECT id FROM outbox WHERE tenant_id = ? AND status NOT IN ('PENDING','SENDING')", this.tenantId).toArray()) this.forgetSecretInTransaction(row.id);
+    const rows = this.storage.sql.exec("SELECT id FROM outbox WHERE tenant_id = ? AND substr(id,1,14) = 'wallet-export:' AND status NOT IN ('PENDING','SENDING') AND instr(payload_json, '\"secret\":\"') > 0", this.tenantId).toArray();
+    for (const row of rows) this.forgetSecretInTransaction(row.id);
   }
 
   forgetSecretInTransaction(id) {
