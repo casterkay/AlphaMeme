@@ -66,19 +66,28 @@ PROBE=https://meme-radar-ave-egress-probe.<your-subdomain>.workers.dev
 RUN=$(node -e 'console.log(crypto.randomUUID())')
 curl -X POST -H "Authorization: Bearer $PROBE_TOKEN" \
   -d '{"chain":"bsc","samples":120,"intervalMs":15000}' "$PROBE/runs/$RUN/start"
+```
 
-# Any time; the run stops itself:
+Wait for the run to finish (about 30 minutes; `summary.stopReason` becomes
+non-null). Do not paste the next block together with the one above: the run
+would be stopped after its first read.
+
+```sh
 curl -H "Authorization: Bearer $PROBE_TOKEN" "$PROBE/runs/$RUN/result" > ave-egress-result.json
-curl -X POST -H "Authorization: Bearer $PROBE_TOKEN" "$PROBE/runs/$RUN/stop"   # early stop
 
-# CPU per invocation (ms). This also includes the few start/result/stop
-# requests, which are trivial; the alarms are the bulk of the entries.
-grep -o '"cpuTime": *[0-9]*' ave-egress-tail.json | sort -t: -k2 -n | uniq -c
-# Invocation outcomes; anything other than "ok" (e.g. exceededCpu) fails the CPU question.
-grep -o '"outcome": *"[A-Za-z]*"' ave-egress-tail.json | sort | uniq -c
+# Per invocation: kind, CPU ms, wall ms and outcome. Alarm rows are the reads.
+node -e '
+const text = require("fs").readFileSync("ave-egress-tail.json", "utf8");
+for (const e of JSON.parse("[" + text.trim().replace(/\}\s*\{/g, "},{") + "]")) {
+  const kind = e.event?.request ? e.event.request.method + " " + new URL(e.event.request.url).pathname
+    : Object.keys(e.event ?? {}).join(",") || "alarm";
+  console.log(e.executionModel, kind, "cpu=" + e.cpuTime, "wall=" + e.wallTime, e.outcome);
+}'
 
 npx wrangler delete -c $CONFIG   # afterwards
 ```
+
+To end a run early: `curl -X POST -H "Authorization: Bearer $PROBE_TOKEN" "$PROBE/runs/$RUN/stop"`.
 
 Options: `chain` is `bsc`, `eth`, `base`, `sol`, `robinhood` or `arc`;
 `samples` 1–240; `intervalMs` 15,000–600,000. Each run id is single-use.
