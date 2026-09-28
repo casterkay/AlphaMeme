@@ -66,7 +66,7 @@ export function publicToken(row, screen, chain) {
       capturedAt: row.capturedAt, sourceUpdatedAt: row.sourceUpdatedAt, expiresAt: row.expiresAt, stale: row.stale,
       pairAddress: row.pairAddress, poolCreatedAt: row.poolCreatedAt, firstTradeAt: row.firstTradeAt,
       volume5m: numberOrNull(row.volume_5m), buys5m: numberOrNull(row.buys_5m), sells5m: numberOrNull(row.sells_5m),
-      activityWindow: '5m', aveUrl: row.aveUrl } : {}),
+      activityWindow: '5m' } : {}),
     ageSec: screen.ageSec,
     priorityBand: screen.priorityBand,
     discoveryScore: screen.score,

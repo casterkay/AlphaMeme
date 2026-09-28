@@ -89,7 +89,7 @@ test('every long finding remains reachable with valid escaped HTML pages',()=>{
 });
 
 test('malicious labels and credentials are escaped or redacted and unsafe links omitted',()=>{
-  const snapshot=fixture();snapshot.candidates=[candidate(0,{symbol:'<b>bad</b>',name:'api_key=secret',info:{website:'https://user:password@example.com',twitter:'https://x.com/home'},aveUrl:'javascript:alert(1)'})];
+  const snapshot=fixture();snapshot.candidates=[candidate(0,{symbol:'<b>bad</b>',name:'api_key=secret',info:{website:'https://user:password@example.com',twitter:'https://x.com/home'}})];
   const result=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
   assert.ok(result.text.includes('&lt;b&gt;bad&lt;/b&gt;'));assert.ok(!result.text.includes('api_key=secret'));assert.ok(!result.keyboard.flat().some(item=>item.url?.startsWith('javascript')));
   assert.ok(!result.keyboard.flat().some(item=>item.url?.includes('password')));
@@ -107,14 +107,12 @@ test('manual approval creation is unavailable for ignored, stale or revisionless
   snapshot.marks[0].decision='ignored';assert.ok(!actions(renderPanel(snapshot,session('detail',{selectedToken:selected}))).includes('mark.set_passed'));
 });
 
-test('a lead offers its AVE trade link until a safety veto hides it',()=>{
-  const snapshot=fixture(),aveUrl='https://pro.ave.ai/token/'+'A'.repeat(32)+'0-solana?ref=0001';
-  snapshot.candidates=[candidate(0,{status:'LIVE_READY',aveUrl})];
+test('a lead detail links no external trading page and offers no manual approval',()=>{
+  const snapshot=fixture();
+  snapshot.candidates=[candidate(0,{status:'LIVE_READY',aveUrl:'https://pro.ave.ai/token/'+'A'.repeat(32)+'0-solana?ref=0001'})];
   const lead=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
-  assert.ok(lead.keyboard.flat().some(item=>item.url===aveUrl));assert.match(lead.text,/Market lead/);assert.ok(!actions(lead).includes('mark.set_passed'));
-  snapshot.candidates=[candidate(0,{status:'HARD_REJECT',aveUrl})];
-  const vetoed=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
-  assert.ok(!vetoed.keyboard.flat().some(item=>item.url===aveUrl));assert.match(vetoed.text,/trade link is hidden/);
+  assert.ok(!lead.keyboard.flat().some(item=>String(item.url).includes('ave.ai')));assert.doesNotMatch(lead.text,/Trade on AVE/);
+  assert.match(lead.text,/Market lead/);assert.ok(!actions(lead).includes('mark.set_passed'));
 });
 
 test('the chain panel selects exactly one scan chain',()=>{
