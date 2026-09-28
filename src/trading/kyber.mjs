@@ -2,9 +2,11 @@
 // https://docs.kyberswap.com/kyberswap-solutions/kyberswap-aggregator/aggregator-api-specification/evm-swaps
 // The router address is pinned; transactions are always sent to the pinned
 // address, never to anything a response names, and no response URL is followed.
-import { getAddress } from 'viem';
+import { BaseError, decodeFunctionData, getAddress } from 'viem';
 import { TradingError, requestJson } from './http.mjs';
 import { KYBER_NATIVE_TOKEN } from './config.mjs';
+import { KYBER_ROUTER_SWAP_ABI } from './router-abi.mjs';
+import { minimumOut } from './amounts.mjs';
 
 export const KYBER_API_ORIGIN = 'https://aggregator-api.kyberswap.com';
 // MetaAggregationRouterV2, the same address on every supported chain (EIP-55 checksummed).
@@ -16,6 +18,35 @@ const address = /^0x[0-9a-fA-F]{40}$/;
 const sameAddress = (left, right) => typeof left === 'string' && typeof right === 'string' && address.test(left) && left.toLowerCase() === right.toLowerCase();
 const usd = value => typeof value === 'string' && decimal.test(value) ? value : typeof value === 'number' && Number.isFinite(value) && value >= 0 ? String(value) : null;
 const fail = (code, message) => new TradingError(code, message);
+
+/**
+ * Decode router calldata and refuse anything but a plain swap of exactly the
+ * requested tokens and amount, paying at least minAmountOut to the recipient,
+ * with no fee receivers, flags or permit. Fails closed on any other shape.
+ * The router takes no deadline; Kyber's deadline lives in opaque executor data,
+ * so minReturnAmount is the enforced bound.
+ */
+export function verifySwapCalldata(data, { tokenIn, tokenOut, amountIn, recipient, minAmountOut }) {
+  const refuse = field => new TradingError('KYBER_CALLDATA_REFUSED', `KyberSwap calldata is unacceptable: ${field}`, { detail: field });
+  let decoded;
+  try {
+    decoded = decodeFunctionData({ abi: KYBER_ROUTER_SWAP_ABI, data });
+  } catch (error) {
+    if (!(error instanceof BaseError)) throw error;
+    throw refuse('entry point');
+  }
+  const desc = decoded.functionName === 'swap' ? decoded.args[0].desc : decoded.args[1];
+  if (decoded.functionName === 'swapSimpleMode' && sameAddress(tokenIn, KYBER_NATIVE_TOKEN)) throw refuse('entry point');
+  if (!sameAddress(desc.srcToken, tokenIn)) throw refuse('srcToken');
+  if (!sameAddress(desc.dstToken, tokenOut)) throw refuse('dstToken');
+  if (desc.amount !== amountIn) throw refuse('amount');
+  if (!sameAddress(desc.dstReceiver, recipient)) throw refuse('dstReceiver');
+  if (desc.minReturnAmount < minAmountOut) throw refuse('minReturnAmount');
+  if (desc.feeReceivers.length || desc.feeAmounts.length) throw refuse('fee');
+  if (desc.flags !== 0n) throw refuse('flags');
+  if (desc.permit !== '0x') throw refuse('permit');
+  return { functionName: decoded.functionName, minReturnAmount: desc.minReturnAmount };
+}
 
 function envelope(result) {
   if (result.status === 429) throw new TradingError('KYBER_RATE_LIMITED', 'KyberSwap rate limited the request', { transient: true });
@@ -75,8 +106,8 @@ export class KyberClient {
   }
 
   /** Build the swap for a route; the result is checked against what was requested. */
-  async build({ slug, routeSummary, tokenIn, amountIn, sender, slippageBps, deadline, signal }) {
-    if (!/^[a-z]{2,20}$/.test(slug) || !address.test(sender) || !address.test(tokenIn) || typeof amountIn !== 'bigint'
+  async build({ slug, routeSummary, tokenIn, tokenOut, amountIn, sender, slippageBps, deadline, signal }) {
+    if (!/^[a-z]{2,20}$/.test(slug) || !address.test(sender) || !address.test(tokenIn) || !address.test(tokenOut) || typeof amountIn !== 'bigint'
       || !Number.isSafeInteger(slippageBps) || slippageBps < 1 || slippageBps > 5000 || !Number.isSafeInteger(deadline)) {
       throw new TypeError('KyberSwap build request is invalid');
     }
@@ -89,11 +120,16 @@ export class KyberClient {
     const nativeIn = sameAddress(tokenIn, KYBER_NATIVE_TOKEN);
     if (value !== (nativeIn ? amountIn : 0n)) throw fail('KYBER_VALUE_MISMATCH', 'KyberSwap transaction value does not match the swap input');
     if (typeof data.data !== 'string' || !/^0x(?:[0-9a-fA-F]{2}){4,65536}$/.test(data.data)) throw fail('KYBER_SCHEMA', 'KyberSwap calldata is invalid');
+    const amountOut = positive(data.amountOut, 'KYBER_SCHEMA');
+    // The minimum shown on the confirm screen; the calldata must guarantee at least it.
+    const minAmountOut = minimumOut(amountOut, slippageBps);
+    verifySwapCalldata(data.data, { tokenIn, tokenOut, amountIn, recipient: sender, minAmountOut });
     return {
       to: KYBER_ROUTER,
       data: data.data,
       value,
-      amountOut: positive(data.amountOut, 'KYBER_SCHEMA'),
+      amountOut,
+      minAmountOut,
       amountInUsd: usd(data.amountInUsd),
       amountOutUsd: usd(data.amountOutUsd),
       gasUsd: usd(data.gasUsd)

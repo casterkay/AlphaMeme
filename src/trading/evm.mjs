@@ -16,15 +16,30 @@ export class RpcAnswerError extends TradingError {
   }
 }
 
-// Classify only; node prose is never stored or shown.
+// Classify only; node prose is never stored or shown. Order matters: the more
+// specific phrase wins.
+const ANSWER_KINDS = [
+  ['KNOWN', /already known|known transaction|already imported|alreadyexists|already exists/i],
+  ['NONCE_TOO_LOW', /nonce too low|nonce is too low|nonce_expired|nonce has already been used/i],
+  ['INSUFFICIENT_FUNDS', /insufficient funds/i],
+  ['INTRINSIC_GAS_TOO_LOW', /intrinsic gas too low/i],
+  ['REPLACEMENT_UNDERPRICED', /replacement transaction underpriced|replacement fee too low/i],
+  ['UNDERPRICED', /transaction underpriced/i],
+  ['FEE_TOO_LOW', /max fee per gas less than block base fee|fee cap less than block base fee/i],
+  ['INVALID_SENDER', /invalid sender/i],
+  ['INVALID_CHAIN_ID', /invalid chain ?id|chain ?id mismatch|incorrect chain ?id/i],
+  ['GAS_LIMIT_EXCEEDED', /exceeds block gas limit/i],
+  ['FEE_CAP_EXCEEDED', /exceeds the configured cap/i],
+  ['REVERTED', /revert/i]
+];
 function answerKind(message) {
   const text = typeof message === 'string' ? message : '';
-  if (/already known|known transaction|already imported|alreadyexists|already exists/i.test(text)) return 'KNOWN';
-  if (/nonce too low|nonce is too low|nonce_expired|nonce has already been used/i.test(text)) return 'NONCE_TOO_LOW';
-  if (/insufficient funds/i.test(text)) return 'INSUFFICIENT_FUNDS';
-  if (/revert/i.test(text)) return 'REVERTED';
-  return 'OTHER';
+  return ANSWER_KINDS.find(([, pattern]) => pattern.test(text))?.[0] ?? 'OTHER';
 }
+
+/** Refusals that prove a node did not accept a raw transaction; every other answer is ambiguous. */
+export const DEFINITE_REFUSALS = Object.freeze(new Set(['NONCE_TOO_LOW', 'INSUFFICIENT_FUNDS', 'INTRINSIC_GAS_TOO_LOW', 'REPLACEMENT_UNDERPRICED',
+  'UNDERPRICED', 'FEE_TOO_LOW', 'INVALID_SENDER', 'INVALID_CHAIN_ID', 'GAS_LIMIT_EXCEEDED', 'FEE_CAP_EXCEEDED']));
 
 export function hexQuantity(value) {
   if (typeof value !== 'string' || !quantity.test(value)) throw new TradingError('RPC_SCHEMA', 'node returned an invalid quantity');

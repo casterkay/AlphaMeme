@@ -58,13 +58,15 @@ export function validateTrade(trade) {
   check(q === null || (isObject(q) && units(q.amountOut) && units(q.minAmountOut) && usd(q.amountInUsd) && usd(q.amountOutUsd) && usd(q.gasUsd)
     && hex(q.data) && units(q.value) && time(q.deadline) && time(q.quotedAt) && time(q.expiresAt)), 'quote');
   check(trade.confirmedAt === null || time(trade.confirmedAt), 'confirmedAt');
+  check(trade.confirmedMinAmountOut === null || units(trade.confirmedMinAmountOut), 'confirmed minimum');
+  check(trade.recheckAt === null || (trade.state === 'UNKNOWN' && time(trade.recheckAt)), 'recheck');
   if (trade.approval !== null) checkTransaction(trade.approval, 'approval');
   if (trade.swap !== null) checkTransaction(trade.swap, 'swap');
   check(trade.result === null || (isObject(trade.result) && (trade.result.reason === null || typeof trade.result.reason === 'string')
     && [trade.result.received, trade.result.spent, trade.result.needed].every(value => value === null || units(value))), 'result');
   const after = states => states.includes(trade.state);
   if (after(['QUOTED', 'CONFIRMED', 'APPROVE_SIGNED', 'APPROVE_SENT', 'APPROVED', 'SWAP_SIGNED', 'SWAP_SENT', 'FILLED'])) check(q !== null && trade.tokenMeta !== null && trade.amountIn !== null, 'quoted state without quote');
-  if (EXECUTING_STATES.has(trade.state) || trade.state === 'FILLED') check(trade.confirmedAt !== null, 'executing state without confirmation');
+  if (EXECUTING_STATES.has(trade.state) || trade.state === 'FILLED') check(trade.confirmedAt !== null && trade.confirmedMinAmountOut !== null, 'executing state without confirmation');
   if (after(['APPROVE_SIGNED', 'APPROVE_SENT'])) check(trade.approval !== null, 'approval state without approval');
   if (trade.state === 'APPROVE_SENT') check(trade.approval.sentAt !== null && trade.approval.deadlineAt !== null, 'approval not sent');
   if (after(['SWAP_SIGNED', 'SWAP_SENT', 'FILLED'])) check(trade.swap !== null, 'swap state without swap');

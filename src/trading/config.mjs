@@ -28,6 +28,9 @@ export const TRADING_SETTINGS = Object.freeze({
   buyButtonsUsd: Object.freeze([10, 20, 50]),
   sellButtonsPercent: Object.freeze([25, 50, 100]),
   quoteTtlMs: 30_000,
+  // A native price probe spends 10^-3 of a coin; a native buy's routed USD value may exceed the cap by this much.
+  priceProbeDecimalsBelowCoin: 3,
+  capTolerancePercent: 2,
   swapDeadlineMs: 10 * 60_000,
   receiptPollMs: 3_000,
   receiptDeadlineMs: 10 * 60_000,

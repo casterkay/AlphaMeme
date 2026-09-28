@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { KyberClient, KYBER_ROUTER, KYBER_API_ORIGIN } from '../src/trading/kyber.mjs';
-import { EvmRpc, rpc, feeFields, transferredAmount } from '../src/trading/evm.mjs';
+import { KyberClient, KYBER_ROUTER, KYBER_API_ORIGIN, verifySwapCalldata } from '../src/trading/kyber.mjs';
+import { swapCalldata } from './fixtures/kyber-calldata.mjs';
+import { EvmRpc, rpc, feeFields, transferredAmount, approveCalldata, DEFINITE_REFUSALS } from '../src/trading/evm.mjs';
 import { parseTradingConfig, TRADE_CHAINS, KYBER_NATIVE_TOKEN, ARC_USDC_ERC20 } from '../src/trading/config.mjs';
 import { TradingError } from '../src/trading/http.mjs';
 import { parseUsdCents, parsePercent, withinBuyCap, usdCentsToStableUnits, nativePriceMicroUsd, usdCentsToNativeUnits, percentOf, minimumOut, displayUnits } from '../src/trading/amounts.mjs';
@@ -11,7 +12,8 @@ const WALLET = '0x' + '12'.repeat(20);
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json', ...headers } });
 const routeBody = (overrides = {}, summary = {}) => ({ code: 0, message: 'successfully', data: { routerAddress: KYBER_ROUTER.toLowerCase(),
   routeSummary: { tokenIn: KYBER_NATIVE_TOKEN, tokenOut: TOKEN, amountIn: '1000', amountOut: '5000', amountInUsd: '612.5', amountOutUsd: '600', gasUsd: '0.12', route: [], ...summary }, ...overrides } });
-const buildBody = (overrides = {}) => ({ code: 0, data: { routerAddress: KYBER_ROUTER, amountIn: '1000', amountOut: '5000', amountInUsd: '612.5', amountOutUsd: '600', gasUsd: '0.1', transactionValue: '1000', data: '0x12345678abcd', ...overrides } });
+const plain = { tokenIn: KYBER_NATIVE_TOKEN, tokenOut: TOKEN, amountIn: 1000n, recipient: WALLET, minReturnAmount: 4750n };
+const buildBody = (overrides = {}) => ({ code: 0, data: { routerAddress: KYBER_ROUTER, amountIn: '1000', amountOut: '5000', amountInUsd: '612.5', amountOutUsd: '600', gasUsd: '0.1', transactionValue: '1000', data: swapCalldata(plain), ...overrides } });
 
 // A hand-written fetch stub: records each request, answers from a queue.
 function stub(...answers) {
@@ -38,7 +40,7 @@ test('chain slugs map to KyberSwap network names', () => {
 
 test('build posts the route with sender, recipient, slippage and deadline and returns the pinned router', async () => {
   const network = stub(json(buildBody()));
-  const built = await kyber(network.fetch).build({ slug: 'bsc', routeSummary: { amountIn: '1000' }, tokenIn: KYBER_NATIVE_TOKEN, amountIn: 1000n, sender: WALLET, slippageBps: 500, deadline: 1_900_000_000 });
+  const built = await kyber(network.fetch).build({ slug: 'bsc', routeSummary: { amountIn: '1000' }, tokenIn: KYBER_NATIVE_TOKEN, tokenOut: TOKEN, amountIn: 1000n, sender: WALLET, slippageBps: 500, deadline: 1_900_000_000 });
   assert.equal(network.calls[0].url, `${KYBER_API_ORIGIN}/bsc/api/v1/route/build`);
   assert.equal(network.calls[0].init.method, 'POST');assert.equal(network.calls[0].init.headers['x-client-id'], 'meme-radar-test');
   assert.deepEqual(JSON.parse(network.calls[0].init.body), { routeSummary: { amountIn: '1000' }, sender: WALLET, recipient: WALLET, slippageTolerance: 500, deadline: 1_900_000_000 });
@@ -48,11 +50,11 @@ test('build posts the route with sender, recipient, slippage and deadline and re
 test('any router other than the pinned MetaAggregationRouterV2 is rejected', async () => {
   const other = '0x' + '99'.repeat(20);
   await assert.rejects(kyber(stub(json(routeBody({ routerAddress: other }))).fetch).route({ slug: 'bsc', tokenIn: KYBER_NATIVE_TOKEN, tokenOut: TOKEN, amountIn: 1000n }), { code: 'KYBER_ROUTER_MISMATCH' });
-  await assert.rejects(kyber(stub(json(buildBody({ routerAddress: other }))).fetch).build({ slug: 'bsc', routeSummary: {}, tokenIn: KYBER_NATIVE_TOKEN, amountIn: 1000n, sender: WALLET, slippageBps: 500, deadline: 1 }), { code: 'KYBER_ROUTER_MISMATCH' });
+  await assert.rejects(kyber(stub(json(buildBody({ routerAddress: other }))).fetch).build({ slug: 'bsc', routeSummary: {}, tokenIn: KYBER_NATIVE_TOKEN, tokenOut: TOKEN, amountIn: 1000n, sender: WALLET, slippageBps: 500, deadline: 1 }), { code: 'KYBER_ROUTER_MISMATCH' });
 });
 
 test('value and amount mismatches are rejected for native and token inputs', async () => {
-  const build = (body, tokenIn = KYBER_NATIVE_TOKEN) => kyber(stub(json(buildBody(body))).fetch).build({ slug: 'arc', routeSummary: {}, tokenIn, amountIn: 1000n, sender: WALLET, slippageBps: 500, deadline: 1 });
+  const build = (body, tokenIn = KYBER_NATIVE_TOKEN) => kyber(stub(json(buildBody({ data: swapCalldata({ ...plain, tokenIn }), ...body }))).fetch).build({ slug: 'arc', routeSummary: {}, tokenIn, tokenOut: TOKEN, amountIn: 1000n, sender: WALLET, slippageBps: 500, deadline: 1 });
   await assert.rejects(build({ transactionValue: '999' }), { code: 'KYBER_VALUE_MISMATCH' });
   await assert.rejects(build({ transactionValue: '1000' }, ARC_USDC_ERC20), { code: 'KYBER_VALUE_MISMATCH' });
   assert.equal((await build({ transactionValue: '0' }, ARC_USDC_ERC20)).value, 0n);
@@ -127,4 +129,44 @@ test('trading config enables exactly the chains with an RPC URL and fails loudly
   assert.throws(() => parseTradingConfig({ ARC_RPC_URL: 'https://arc.example' }), error => error instanceof TradingError && error.code === 'TRADING_CONFIG_INVALID');
   assert.throws(() => parseTradingConfig({ KYBER_CLIENT_ID: 'radar', ETH_RPC_URL: 'http://insecure.example' }), { code: 'TRADING_CONFIG_INVALID' });
   assert.throws(() => parseTradingConfig({ KYBER_CLIENT_ID: 'radar', ETH_RPC_URL: 'https://x.example', ETH_EXPLORER_URL: 'nope' }), { code: 'TRADING_CONFIG_INVALID' });
+});
+
+test('router calldata is decoded and refused unless it is the confirmed plain swap to the wallet', () => {
+  const other = '0x' + '77'.repeat(20);
+  const refused = (data, field) => assert.throws(() => verifySwapCalldata(data, { ...plain, minAmountOut: 4750n }), error => error.code === 'KYBER_CALLDATA_REFUSED' && error.detail === field, field);
+  assert.equal(verifySwapCalldata(swapCalldata(plain), { ...plain, minAmountOut: 4750n }).functionName, 'swap');
+  assert.equal(verifySwapCalldata(swapCalldata(plain, { minReturnAmount: 4800n }), { ...plain, minAmountOut: 4750n }).minReturnAmount, 4800n);
+  refused(swapCalldata(plain, { dstReceiver: other }), 'dstReceiver');
+  refused(swapCalldata(plain, { minReturnAmount: 4749n }), 'minReturnAmount');
+  refused(swapCalldata(plain, { srcToken: other }), 'srcToken');
+  refused(swapCalldata(plain, { dstToken: other }), 'dstToken');
+  refused(swapCalldata(plain, { amount: 1001n }), 'amount');
+  refused(swapCalldata(plain, { feeReceivers: [other], feeAmounts: [1n] }), 'fee');
+  refused(swapCalldata(plain, { feeAmounts: [1n] }), 'fee');
+  refused(swapCalldata(plain, { flags: 1n }), 'flags');
+  refused(swapCalldata(plain, { permit: '0x01' }), 'permit');
+  refused(approveCalldata(other, 1000n), 'entry point');
+  refused('0x59e50fed' + '00'.repeat(64), 'entry point');
+  refused(swapCalldata(plain, {}, 'swapSimpleMode'), 'entry point');
+  const tokenInput = { ...plain, tokenIn: ARC_USDC_ERC20 };
+  assert.equal(verifySwapCalldata(swapCalldata(tokenInput, {}, 'swapSimpleMode'), { ...tokenInput, minAmountOut: 4750n }).functionName, 'swapSimpleMode');
+});
+
+test('a build whose calldata pays someone else or less than the shown minimum is refused', async () => {
+  const build = data => kyber(stub(json(buildBody({ data }))).fetch).build({ slug: 'bsc', routeSummary: {}, tokenIn: KYBER_NATIVE_TOKEN, tokenOut: TOKEN, amountIn: 1000n, sender: WALLET, slippageBps: 500, deadline: 1 });
+  assert.equal((await build(swapCalldata(plain))).minAmountOut, 4750n);
+  await assert.rejects(build(swapCalldata(plain, { dstReceiver: '0x' + '77'.repeat(20) })), { code: 'KYBER_CALLDATA_REFUSED' });
+  await assert.rejects(build(swapCalldata(plain, { minReturnAmount: 1n })), { code: 'KYBER_CALLDATA_REFUSED' });
+});
+
+test('only allowlisted node refusals are definite; unknown answers stay ambiguous', async () => {
+  const answer = async message => {
+    const node = stub(async (_url, init) => json(JSON.parse(init.body).map(call => call.method === 'eth_chainId' ? { jsonrpc: '2.0', id: call.id, result: '0x1' } : { jsonrpc: '2.0', id: call.id, error: { code: -32000, message } })));
+    return (await new EvmRpc({ url: 'https://rpc.example', chainId: 1, fetchImpl: node.fetch }).batch([rpc.sendRaw('0x01')]))[0].error.kind;
+  };
+  for (const [message, kind] of [['insufficient funds for gas * price + value', 'INSUFFICIENT_FUNDS'], ['intrinsic gas too low', 'INTRINSIC_GAS_TOO_LOW'],
+    ['replacement transaction underpriced', 'REPLACEMENT_UNDERPRICED'], ['invalid sender', 'INVALID_SENDER'], ['nonce too low', 'NONCE_TOO_LOW']]) {
+    assert.equal(await answer(message), kind);assert.ok(DEFINITE_REFUSALS.has(kind));
+  }
+  for (const message of ['internal error', 'request timed out', 'header not found', '']) assert.equal(DEFINITE_REFUSALS.has(await answer(message)), false, message);
 });

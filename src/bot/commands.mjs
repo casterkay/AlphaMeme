@@ -20,7 +20,9 @@ const REFUSALS = {
   VETOED: ['安全核验未通过，已拒绝买入。卖出不受影响。', 'Safety check failed; the buy was refused. Selling is not affected.'],
   INVALID_AMOUNT: ['金额无效。', 'The amount is invalid.'],
   STATE_CHANGED: ['交易状态已变化，未执行旧操作。', 'The trade changed; the old action was not applied.'],
-  BUSY: ['另一笔交易正在执行，请等待它完成后再确认。', 'Another trade is executing; confirm again after it finishes.']
+  BUSY: ['另一笔交易正在执行，请等待它完成后再确认。', 'Another trade is executing; confirm again after it finishes.'],
+  TRADES_OPEN: ['仍有进行中或结果未知的交易，暂不能移除钱包。请打开钱包点击刷新，待回执确认结果后再试。', 'A trade is still open or its outcome unknown, so the wallet cannot be removed yet. Refresh the wallet until the receipts resolve it, then try again.'],
+  EXPORT_FIRST: ['钱包仍有余额且私钥从未导出，请先导出私钥。', 'The wallet still holds funds and its key was never exported; export it first.']
 };
 
 export class TelegramCommands {
@@ -227,9 +229,10 @@ export class TelegramCommands {
         this.beginInputInTransaction(session, params.side === 'buy' ? 'trade_usd' : 'trade_percent', token);
         return null;
       }
-      if (action === 'trade.confirm') return show(this.trading.confirmInTransaction(params.tradeId).trade);
+      if (action === 'trade.confirm') return show(this.trading.confirmInTransaction(params.tradeId, this.tradingSettings()).trade);
       if (action === 'trade.cancel') { this.trading.cancelInTransaction(params.tradeId); return {}; }
-      if (action === 'trade.requote') return show(this.trading.requoteInTransaction(params.tradeId));
+      if (action === 'trade.requote') return show(this.trading.requoteInTransaction(params.tradeId, this.tradingSettings()));
+      if (action === 'trade.recheck') { this.trading.recheckUnknownInTransaction(); return {}; }
       if (action === 'trading.slippage.set' || action === 'trading.cap.set') {
         const [key, choices] = action === 'trading.slippage.set' ? ['tradingSlippageBps', TRADING_SETTINGS.slippageChoicesBps] : ['tradingBuyCapUsd', TRADING_SETTINGS.buyCapChoicesUsd];
         if (!choices.includes(params.value)) throw new ReviewConflict('invalid_setting');
@@ -244,7 +247,7 @@ export class TelegramCommands {
         this.trading.requestBalancesInTransaction(session.id);
         return wallet;
       }
-      if (action === 'wallet.refresh') { this.trading.requestBalancesInTransaction(session.id); return {}; }
+      if (action === 'wallet.refresh') { this.trading.requestBalancesInTransaction(session.id); this.trading.recheckUnknownInTransaction(); return {}; }
       if (action === 'wallet.export') {
         const envelope = tradingWalletEnvelope(this.storage, this.tenantId);
         if (!envelope) throw new TradeRefusal('NO_WALLET');
@@ -253,7 +256,8 @@ export class TelegramCommands {
         return wallet;
       }
       if (action === 'wallet.remove') {
-        this.trading.closeQuotesForRemovalInTransaction();
+        this.trading.assertRemovableInTransaction();
+        if (this.trading.exportRequiredBeforeRemoval()) throw new TradeRefusal('EXPORT_FIRST');
         this.outbox.cancelPendingSecretsInTransaction();
         removeTradingWalletInTransaction(this.storage, this.tenantId);
         return wallet;
