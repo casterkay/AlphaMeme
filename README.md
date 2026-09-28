@@ -1,151 +1,89 @@
-# Meme雷达开源版
+# Meme雷达 · Cloudflare + Telegram 版
 
-作者：**DeFi狙击手** · X：[@bi_9527zx](https://x.com/bi_9527zx)
+基于 [Meme雷达开源版](https://github.com/nhovongoc0-max/meme-radar) v0.1.10 的云端版本：
+扫描器运行在 Cloudflare Workers（Durable Objects），通过 Telegram 机器人查看线索与接收提醒。
+行情数据来自 AVE Data API，与上游一致。只读研究：不持有钱包私钥，不签名、不下单。
 
-本地运行的多链 Meme 候选雷达。AVE 负责热榜发现与已返回的池行情；代码保留受支持链的二次数据核对能力，但默认快速扫描不会为每枚币自动发起 GoPlus、DexScreener 或 K 线深审。当前公开版本为 **v0.1.10**。
+A cloud edition of Meme Radar v0.1.10: the scanner runs on Cloudflare Workers
+(Durable Objects) and you use it through a Telegram bot. Market data comes from
+the AVE Data API, as upstream. Read-only research: no wallet keys, signing or orders.
 
-使用与配置教程请查看 X：[@bi_9527zx](https://x.com/bi_9527zx) 的置顶内容。
+## 工作方式 / How it works
 
-这是从自用版本隔离出的开源版，只包含本地只读扫描、自动筛选与证据展示。Windows 与 macOS 共用同一套扫描逻辑。
+- 一次扫描一条链，默认 **Arc**（可选 BNB Chain、Base、Ethereum、Solana、Robinhood）。
+  One chain is scanned at a time; **Arc** by default.
+- 每轮读取该链的 AVE 热榜（100 条，5 个额度单位），用上游的 AVE 行情筛选（报价新鲜度、市值 1–15 万美元、
+  流动性、币龄、5 分钟成交、已知风险字段）。通过筛选的代币立即成为**市场线索**并推送提醒。
+  Each cycle reads the chain's AVE hot list and applies upstream's AVE market screen;
+  every passing token becomes a **market lead** and alerts immediately.
+- 线索随后由 GoPlus 与 DexScreener 免费核验（Arc：GoPlus 链 5042、DexScreener `arc`）。
+  貔貅、异常税率等一票否决会撤销线索、隐藏交易入口并推送“风险恶化”。
+  Leads are then checked on GoPlus and DexScreener; a fatal finding vetoes the lead,
+  hides its trade link and sends a "risk worsened" follow-up.
+- AVE 不提供持有人、交易者或合约安全数据，因此线索只是行情观察，**安全性未核验不代表安全**。
+  AVE has no holder, trader or contract-security data: a lead is a market
+  observation, and unverified does not mean safe.
+- 代币详情提供“在AVE交易”链接；交易在 AVE 页面由你自己确认。
+  Token details link to AVE, where you confirm any trade yourself.
 
-它不包含钱包私钥、链上交易签名、swap 或下单模块。系统只提供筛选证据，不构成投资建议，也不保证候选代币安全或上涨。
+## 额度与节奏 / Credits and pacing
 
-## 功能介绍
+目标节奏为每 15 秒一轮。每个 AVE 请求在发送前预留额度：请求间隔至少 15 秒，并按
+“剩余额度 ÷ 距离重置的时间”自动放慢，确保本期额度用到重置日。AVE 限流会指数退避，
+额度耗尽会暂停到下一期；不会自动购买额度。
 
-- 提供 BSC、Solana、Base、以太坊和 Robinhood 五条链入口，可选择 1–3 条链共享额度轮询。界面会如实显示二次来源的代码覆盖范围，但默认快速扫描不自动逐币深审；Robinhood 仅作 AVE-only 行情观察。Arc、Stable 暂不作为可用链展示。
-- AVE 热榜发现共享全局单请求队列：每轮只读取 1 页，首页有效线索较少时在后续轮次中轮换后续页，不连续翻页形成请求突发。缺失与过期数据不会被当作安全结论。
-- 在对应上游数据可用时，综合查看合约权限、LP、税率/貔貅风险、持仓结构、普通钱包代理样本、聪明钱、5 分钟盘面与价格行为；未知字段不会假装通过。
-- GoPlus 与 DexScreener 模块可在受支持链的深审流程中补充合约风险、市值、流动性和官网交叉验证；开源版默认关闭自动逐币深审，未取得的字段始终标为未知。
-- AVE 单 Key 配置用于只读行情扫描和连接检测。候选币可打开详细行情；实际交易在 AVE 页面由用户确认。
-- 提供收藏、备注、桌面提醒与筛选记录导出；已有影子表现记录可继续查看，默认快速模式不自动新增或回补样本。
-- 语音提醒可独立手动切换中文 / English，优先使用设备上对应语言的本机声音；支持音量、关闭和跨标签去重，无需语音 API Key。
-- 诈骗盘风险过滤：排除已知低流动性、高税、DEV 集中持仓与已观测暴拉平台/持续暴跌，辅助减少高风险代币进入候选；不保证识别所有诈骗盘。
-- 只需一把 AVE API Key，保存在当前电脑；不使用 GMGN API，不需 Agent 公钥或钱包。旧配置保留但不再加载。
+The target cadence is 15 seconds. Each AVE request reserves credits first: requests
+stay at least 15 s apart and slow down so the remaining allowance lasts until it
+resets. Rate limits back off; an exhausted quota pauses until the next period.
 
-## 下载
+`wrangler.jsonc` 的 `vars` 设置额度 / Set the allowance in `wrangler.jsonc` `vars`:
 
-- [Windows x64 一键便携版](https://github.com/nhovongoc0-max/meme-radar/releases/download/v0.1.10/MemeRadar-OpenSource-Windows-x64-0.1.10.zip)
-- [macOS 版](https://github.com/nhovongoc0-max/meme-radar/releases/download/v0.1.10/MemeRadar-OpenSource-macOS-0.1.10.zip)
-- [SHA-256 校验文件](https://github.com/nhovongoc0-max/meme-radar/releases/download/v0.1.10/SHA256SUMS-0.1.10.txt)
+- `AVE_MONTHLY_CU`：每月额度单位（免费版 1,000,000）/ monthly credit units.
+- `AVE_CU_RESET_DAY`：每月重置日（UTC，1–28）。免费版的重置日**未经核实**，默认按每月 1 日，请改成你账户的实际日期。
+  The UTC reset day; the free plan's day is unverified and defaults to the 1st.
 
-也可以在 [Releases](https://github.com/nhovongoc0-max/meme-radar/releases) 页面查看版本说明与文件校验值。
+Telegram `/status` 显示本期已用额度与下一次请求时间（本地估算，以 AVE 账户为准）。
 
-## 安全边界
+## 部署 / Deploy
 
-- HTTP 服务只监听本机回环地址。
-- 设置接口仅处理本机扫描配置、收藏备注与 AVE Key；无签名或下单接口。
-- AVE Key 仅保存到本项目受限状态文件，不进入参数、日志、HTTP 响应或浏览器存储。
-- 浏览器只获取经过字段白名单过滤的状态，不返回上游原始响应。
-- 未知或无法解析的风险字段不应被视为通过。
-- X 链接仅供人工查看；未完成真实性验证时不做自动背书。
-- 首页展示自动筛选后的观察线索，缺失资料、过期行情仍会标明；展示不等于安全或买入建议。
-- 已有筛选记录可保留 30 分钟、2 小时与 24 小时的影子表现；默认快速模式不自动新增或回补样本，也不据此宣称策略有效。
+需要 **Cloudflare Workers Paid**（$5/月）：实测每次读取与解析 AVE 热榜约用 11–26 ms CPU，
+超过 Free 计划的 10 ms 上限（见 [docs/spikes/AVE-EGRESS.md](docs/spikes/AVE-EGRESS.md)）。
+Requires Workers Paid: a hot-list read measured 11–26 ms CPU, above Free's 10 ms.
 
-## 安装与使用
-
-### Windows 10/11 x64
-
-1. 下载 Windows 压缩包，右键选择 **全部解压**，不要直接在压缩软件里运行。
-2. 进入解压后的文件夹，双击 **MemeRadar-OpenSource.exe**；便携包已包含运行环境，不需要另外安装 Node.js。
-3. 若 Windows 显示“已保护你的电脑”，确认文件来自本仓库后点击 **更多信息 → 仍要运行**。
-4. 保留启动后的黑色窗口；关闭该窗口会停止本地雷达。浏览器未自动打开时，访问 `http://127.0.0.1:3791/`。
-
-### macOS
-
-1. 下载 macOS 压缩包并完整解压到可写文件夹。
-2. 双击 **安装并启动.command**。若系统首次阻止打开，请右键该文件选择 **打开**。
-3. 首次运行会检查 Node.js；缺少兼容环境时会从 nodejs.org 下载项目专用版本并校验 SHA-256，然后安装固定依赖并打开浏览器。
-
-### 连接 AVE
-
-展开 **设置与运行记录 → AVE API**，填入自己的 AVE API Key，点击 **保存 / 测试**。验证成功后保存并开始只读扫描；以后重启不需重复填写。无需公钥、私钥或连接钱包。所有行情请求共用限流与本机预算；实际消耗以 AVE 账户为准。
-
-默认本机累计预算 1,000,000 CU，每日最多 30,000 CU，每个 UTC 整点小时最多 1,250 CU。所有 AVE 请求共用全局队列和缓存；生产扫描在全局范围内每 5 分钟最多发起一条链的热榜请求，启用多链时轮询各链，不是每条链各自每 5 分钟请求一次。这是本机消费保护，不是 AVE 账户余额或套餐周期承诺；账户其他软件用量、迁移前未知历史均不在本机估算内。
-
-遇到 HTTP 429 后，全局热榜间隔自动退到 8 分钟；如果仍然限流，必要时放慢到 15 分钟，并遵守更长的 `Retry-After`。稳定恢复后才会谨慎试探 5 分钟档；如果该试探再次收到 429，会立即回到 8 分钟，并在接下来 24 小时内不再试探 5 分钟档，但仍按当前安全间隔轮询。限流恢复期只用单页热榜作为探针，不开启额外分页、逐币补充、深审或历史采样。退避状态随账本保留，重启不清除；明确的额度耗尽会单独显示为配额问题。“连接诊断”只显示接口类别、HTTP 状态与原因分类，不保存原始错误正文或 Key。
-
-只有本机每日计数在北京时间 08:00 换日，小时计数在整点刷新；累计预算不会自动清零。总预算用完须先核对账户额度，再人工调整，不会自动购买。升级保留旧账本可见的消费，重启、换 Key、跨日均不清除累计用量。
-
-开源版默认不自动读取代币详情或池行情进行逐币补充，也不自动深审。额外收费的历史 K 线回补默认关闭，已有记录保留，热榜中已带的价格仍可用于跟踪；不使用 AVE 给旧 GMGN 基准补算收益。每日预留 3,000 CU 给热榜发现，小时或每日预算耗尽则等待对应窗口，不降低安全标准。接口统计是本次运行的本机估算，不等于账户账单。
-
-点击 **详细行情查看** 打开对应代币页面。此版本不签名、不自动下单。
-
-### 下载最新版
-
-顶部 **下载最新版** 只会打开官方 GitHub 的 [最新版本页面](https://github.com/nhovongoc0-max/meme-radar/releases/latest)。程序不会自动下载发布包，不会覆盖当前目录，也不会自动退出、重启或安装新版本。
-
-请在 GitHub 页面手动选择 Windows x64 或 macOS 压缩包，并使用同一版本的 `SHA256SUMS-<version>.txt` 核对 SHA-256。升级时先关闭旧版本，将新包完整解压到新的可写目录并确认能够启动；旧目录请先保留作为备份。本机配置与记录的迁移兼容性会在发布前用旧版包验证，但下载、替换及是否迁移数据均由用户手动决定。
-
-## 扫描与日常管理
-
-- 生产环境全局每 5 分钟最多发起一条链的热榜请求；多链时逐链轮询，因此单条链的实际更新间隔会随启用链数和限流状态增加。每轮只读取 1 页热榜（最多 100 条）；首页有效线索不足时，后续轮次会在首页和后续页之间轮换，但不会在同一轮次中连续续页。这是热榜样本，不是全链新币覆盖。页面复用后台结果，多开标签页不增加 AVE 请求。
-- 展开“扫描设置与记录”，可选择 1–3 条链轮询，共用请求预算。点击已启用链只切换查看；点击未启用链会修改轮询配置：少于 3 条时加入，已满 3 条时替换当前查看链。修改后等待后台调度，不会立即发起额外扫描。界面标出当前链的第二数据源接入范围；“已接入”不代表每次查询都成功。
-- 收藏与备注保存在本机 `state/preferences.json`，最多 50 个收藏、500 条备注。默认快速模式下，收藏币掉出发现范围后不会因此触发额外风险复查或历史补查，也不会重新成为通过候选；已有记录保留。关闭某条链的扫描后同样不会再为该链发起这些额外请求。
-- 主界面按最近发现展示代币卡片，语音播报后在顶部突出显示；筛选自动进行，不再需要人工通过。设置与筛选详情默认折叠，缺失和过期证据不会视为安全。旧人工标记仅保留兼容，不增加新人工审批步骤。
-- 桌面提醒需手动开启并授权，且保持页面打开；只提醒新候选、风险恶化和长时间扫描失败。相同候选事件 30 分钟去重，静音不删除页面事件。未授权时不会影响扫描。
-- “导出记录”下载不含 Key 的 JSON，包含各链的审计、影子样本、收藏备注及当前浏览器人工标记。不要将含个人备注的导出文件直接公开。
-- “清除并断开 API”只清除本项目 AVE Key 并停止新请求；不修改或删除旧 GMGN 配置。
-- 桌面安装启动入口自带本地进程守护，异常崩溃自动恢复；状态与设置文件各保留一份有效备份。电脑关机/休眠不能扫描；本版不安装系统开机自启。`npm start` 是前台调试模式，不带守护。
-
-## 即时发现窗口
-
-### 语音提醒与风险过滤
-
-每次实际播报开始时，顶部显示本次提醒币卡片与批次选择；当前列表中的有效提醒币置顶高亮。跨链可点击定位，过期或被排除后会取消置顶，试听不会制造提醒币。
-
-AVE 行情初选不等于安全审计。缺失、过期或已命中明确风险排除的线索不会进入语音提醒。
-
-页面点击“试听并开启”，浏览器允许声音后即可使用。“播报语言”可在中文与 English 之间手动切换，该选择与页面界面语言独立保存；切换后会立即试听，正式提醒也使用所选语言。中文台词为“亲爱的老板～我找到一枚不错的币，快来看看”，英文台词为“A new meme candidate was found. Take a look.”。仅选择设备可用的对应语言本机声音，不回退为错误语言或云端声音；不附带系统声音录音，不需语音 API Key。支持提供 Web Speech、Web Locks 与本地存储的新版 Chrome、Edge、Safari；缺少所选语言声音时，请在系统语音设置中添加后重试。页面需保持打开，电脑休眠或浏览器节能可能延迟提醒。重开页面需要再次点击允许声音。
-
-提醒覆盖已启用的扫描链，仅对最近 10 分钟内首次通过快速筛选、行情仍有效且未命中已知风险排除的新候选播放。首次打开、重新开启和断线恢复不追播旧候选。每批合并一句，最多每分钟一次，同一链＋合约地址 7 天去重；换页、行情刷新或播报被打断都不会让同一币重复播报。关闭与音量变化同步到同源其他标签页，其他页面不能替当前页面解锁声音。台词是提醒语，不是质量评级、诈骗鉴定或收益承诺。
-
-发现初选中，已知流动性不足3,000美元、DEV持仓超过1%、买卖税任一超过5%或相差超过2个百分点、明确近5分钟零成交，均不进入候选；8,000美元是更严格的深审流动性参考线，不会被冒充为初选门槛。未知值不会被包装成已确认安全。“已卖出”标签不能覆盖DEV的实际持仓数值，也不能把缺失的持仓当成零。
-
-形态过滤复用原有约20分钟的1分钟K线，不新增逐币API请求。已收盘有效成交样本中，单分钟实体上涨至少35%、随后至少3根收盘价保持15%以内窄幅平台，或较早收盘高点后连续2根收盘价回撤至少60%，会按风险偏好排除。全部成交为零、时间断档、显著跨分钟价格断层、重复冲突或过期数据只标记待核验，不据此断言诈骗。最近5分钟的成交/回撤检查仍保留。
-
-已确认的形态排除按链＋CA保存到本机 `state/radar.json` 的 `riskExclusions`，不因后续短暂横盘、切链、重启或候选列表到期自动取消。仅检查实际取得的窗口，无法追溯首次扫描前、窗口外或秒级走势；不保证挡住所有诈骗。无候选时不会放宽门槛补位。已有候选须重新通过新版规则才能提醒。
-
-### 发现流
-
-“候选雷达”复用后台最近一次 AVE 单页热榜结果，不另外订阅 20 秒榜单，也不会因页面开启自动更新而增加 AVE 请求。后台在全局范围内每 5 分钟最多发起一条链的热榜请求，多链轮询；限流时更新会按 8 或 15 分钟退避继续延后。界面展示实际采样时间，旧数据不会被改写成实时数据。它不是 WebSocket 推送或抢跑工具，也不是全链新币覆盖。
-
-窗口先排除已知貔貅、刷量、高风险、创建不足5分钟和基础流动性不足的记录；未知风险仍明确为未核验。展示范围为市值1万–15万美元，可按2万–8万美元优先、5分钟成交额或最近出现排序。最近出现指首次进入当前有效候选窗口，不代表刚发币。新候选的语音资格仅保留 10 分钟；已通过筛选的线索因热榜轮换页暂时掉出时，可以“最近线索”最多展示 30 分钟，但会标为旧证据，不语音、不进入核验。当前数据出现筛选失败或硬风险时会立即移除；重新上榜也不会反复播报。首屏不伪造“新币”，榜单缺失也不填充演示数据。
-
-## 筛选效果如何验证
-
-通过组按合约地址跟踪 5 分钟、15 分钟、30 分钟、1 小时、2 小时、6 小时、24 小时的价格。代币掉榜或切换查看链也不丢弃样本；缺失窗口会通过对应时刻附近的已收盘 1 分钟 K 线补取，保存实际时间与数据来源，不用当前价格冒充历史价格。
-
-深审拒绝组按合约地址哈希固定抽取约五分之一作对照，最多 200 条。两组分别展示到期数、完成数、缺失数与中位涨跌，不混成一个收益数字。缺失价格不是零收益；拒绝组抽样仅覆盖实际深审过的代币，不能代表所有新币。50 个样本只是最低观察门槛，不构成策略有效或盈利的证明。涨跌统计不含可成交性、滑点和手续费，不是模拟交易收益。
-
-若 macOS 首次阻止打开下载的脚本，可在确认文件来源后通过“右键 → 打开”启动。首次安装需要网络；窗口中的安装错误会指出未完成的步骤。
-
-## 命令行运行
-
-已有 Node.js 22.23+ 或 24.5+ 的用户，在项目目录运行：
-
-```bash
-npm run setup
-npm run open
+```sh
+npm ci
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+npx wrangler secret put MASTER_ENC_KEY        # long random string; see docs/development/ONBOARDING-CRYPTO.md
+npx wrangler secret put OPERATOR_TOKEN
+npx wrangler secret put TELEGRAM_BOT_USERNAME # without @
+npx wrangler deploy
+TELEGRAM_BOT_TOKEN=... node scripts/telegram-register.mjs
 ```
 
-`npm run setup` 按锁文件安装依赖，`npm run open` 在后台启动本机服务并打开 `http://127.0.0.1:3791/`。macOS 的安装与启动流程已实测，Windows 与 Linux 仍需干净设备验证。
+然后把 Telegram webhook 指向 `https://<worker>/webhook/telegram`，并带上相同的 `secret_token`。
+Then point the Telegram webhook at `/webhook/telegram` with the same `secret_token`.
 
-前台运行用 `npm start`；检查环境用 `npm run doctor`；测试用 `npm test`。端口占用时可通过 `RADAR_PORT` 指定另一端口；启动器不会覆盖其他程序或另一份项目。
+曾部署过 GMGN 版本的，请先 `npx wrangler delete` 再部署：数据库结构已升级到 v2，旧数据不迁移。
+If you deployed the GMGN version, delete it first; the schema moved to v2 without a migration.
 
-开源版仅从本项目的受限状态文件读取 AVE API Key，不会读取环境变量、旧的 GMGN 全局配置或项目 `.env`。连接验证和日常扫描不使用钱包、认证私钥、swap 或下单接口；任何网页响应都不会返回 Key。
+## 在 Telegram 中使用 / Using the bot
 
-运行记录在 `state/`、日志在 `logs/`、项目专用运行环境在 `.runtime/`，这些本机目录不应加入版本库或发布包。`node_modules/` 不加入源码版本库；Windows 便携包附带运行所需依赖。不要把 API Key 放进截图、代码或日志。
+1. `/start`，然后 `/onboard`：登录 [AVE Cloud](https://cloud.ave.ai/login) 复制 Data API Key。
+2. 发送 `/setkey <key>`：验证读取一次（5 个额度）后开始扫描 Arc。含密钥的消息会尝试删除，请自行确认已删除。
+3. `/unmute` 开启线索提醒；`/chains` 切换扫描链；`/feed` 查看热榜；`/audits` 查看线索与核验；`/status` 查看运行与额度。
 
-## 许可
+`/help` 列出全部命令。运维细节见 [docs/TELEGRAM-M3-OPERATIONS.md](docs/TELEGRAM-M3-OPERATIONS.md)。
 
-源代码采用 [GNU Affero General Public License v3.0](LICENSE)（`AGPL-3.0-only`）。可以使用、研究、修改和再发布；若修改后通过网络向他人提供服务，须按许可证向这些用户提供对应源代码。`private: true` 仅用于防止误发 npm。第三方数据接口仍受各自服务条款约束。开源版与专业版边界见 `docs/EDITION-BOUNDARY.md`。
+## 开发 / Development
 
-### Telegram on Cloudflare (M3)
+```sh
+npm test            # node:test contracts and Workers runtime tests
+npx wrangler deploy --dry-run
+```
 
-The native Telegram interface, encrypted tenant onboarding, persistent live
-collection and statistics are described in
-[Telegram M3 operations](docs/TELEGRAM-M3-OPERATIONS.md). `/onboard` and `/help`
-explain that a submitted GMGN key passes through Telegram and may remain in chat
-history: automatic deletion is best-effort, so check and delete the original
-message yourself. Stored keys are encrypted and replies display only
-`gmgn_****`. Read-only research; no trades or investment advice.
+## 许可 / License
+
+源代码采用 [GNU Affero General Public License v3.0](LICENSE)（`AGPL-3.0-only`）。若修改后通过网络向他人提供服务，
+须按许可证向这些用户提供对应源代码。第三方数据接口仍受各自服务条款约束。候选仅为行情观察线索，
+不是安全保证、收益承诺或买入建议。

@@ -1,5 +1,13 @@
 # Telegram interface — implementable M3 design
 
+> **Historical design.** This document was written for the GMGN data provider.
+> The Worker now uses AVE: one scan chain (Arc by default), AVE credit-paced
+> admission instead of GMGN request weights, `/setkey` onboarding without signing
+> keys, and alerts on AVE market leads vetoed by GoPlus/DexScreener instead of
+> GMGN deep-audit passes. The live-feed subscription and 1–3 chain selection are
+> gone. See [the operations guide](TELEGRAM-M3-OPERATIONS.md) for current behavior.
+
+
 Status: implementation contract, 2026-09-22. M3 implementation includes the
 formerly M4 dependencies; acceptance criteria remain required. See
 [implementation and validation status](TELEGRAM-M3-OPERATIONS.md). Deployed timing

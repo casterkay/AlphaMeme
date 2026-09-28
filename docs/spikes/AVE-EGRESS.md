@@ -1,6 +1,6 @@
 # AVE egress probe from Cloudflare Workers
 
-**Status: egress and rate limit pass; CPU per alarm still to be read from the tail.** This decides whether the AVE migration
+**Status: decided. AVE works from Workers egress at a 15-second cadence; the deployment needs Workers Paid for CPU.** This decides whether the AVE migration
 stays on Cloudflare Workers or falls back to the Fly.io host in #51.
 
 GMGN banned the shared Workers egress IP (`docs/spikes/LIVE-TIMING.md`), so the
@@ -127,13 +127,17 @@ the default moved to `arc`):
   requests went through `SJC`.
 - The top trending token did not change for the whole 30 minutes.
 - No run stopped as `invocation_lost`, so no read was killed on the CPU limit.
-  The per-invocation CPU times from the tail are still to be recorded.
+- CPU per invocation from a later tail capture (80 invocations, all `ok`): 16 used
+  0–3 ms (requests and routing) and 64 used 11–26 ms (the reads, which fetch and
+  parse a 234–328 KB hot list), above Workers Free's nominal 10 ms.
 
 **Arc, 3 samples, the same day:** trending returned HTTP 200, body `status` 1 and
 100 rows (234 KB) in 961 ms, and one token-details read was `ok`, all from the
-same egress address.
+same egress address. A later Arc start was stopped by the operator after one read,
+with the same result; a full-length Arc run was not captured.
 
 **Verdict:** AVE answers Workers egress and allows one trending read every 15
-seconds, so the migration stays on Cloudflare Workers rather than Fly.io. The
-account is on Workers Free, so the production alarm's CPU still has to fit the
-10 ms limit; that needs the tail breakdown.
+seconds, so the migration stays on Cloudflare Workers rather than Fly.io. Almost
+every read exceeds Workers Free's 10 ms CPU limit; Cloudflare tolerated it here but
+does not guarantee that, and the production scanner does more work per step. The
+deployment therefore uses **Workers Paid** (30 s CPU per invocation).

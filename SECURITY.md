@@ -5,12 +5,12 @@ Meme雷达开源版是只读研究工具，不包含钱包私钥、链上交易�
 ## API Key
 
 - 只使用 AVE 行情 API Key；本工具不接收钱包或交易密钥。
-- Key 仅保存在运行本工具的电脑上，不应提交到 Git、截图或问题报告。
+- Key 通过 Telegram `/setkey` 提交，只以加密形式保存在你的 Cloudflare Durable Object 中；不应提交到 Git、截图或问题报告。明文会经过 Telegram，请确认含 Key 的消息已删除。
 - 发布问题报告前，请删除日志、合约备注和任何可能识别个人的信息。
 
 ## 报告漏洞
 
-涉及密钥泄露、任意文件读取、远程请求伪造或本机权限的问题，请使用 GitHub 仓库的 **Security → Report a vulnerability** 私密报告入口，不要先创建公开 Issue。一般缺陷可提交公开 Issue，但务必先删除 API Key、日志、合约备注和个人路径。
+涉及密钥泄露、越权访问其他 Telegram 用户数据、远程请求伪造或 Worker 机密泄露的问题，请使用 GitHub 仓库的 **Security → Report a vulnerability** 私密报告入口，不要先创建公开 Issue。一般缺陷可提交公开 Issue，但务必先删除 API Key、日志、合约备注和个人路径。
 
 ## 风险边界
 
