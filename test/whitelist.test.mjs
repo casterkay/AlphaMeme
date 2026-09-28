@@ -8,7 +8,7 @@ import {
 } from '../src/render/whitelist.mjs';
 
 test('render whitelist retains exact redaction and secondary field allowlists', () => {
-  for (const message of ['api key=secret', 'Bearer secret', 'private-key=secret', 'passphrase=secret', `gmgn_${'a'.repeat(8)}`]) {
+  for (const message of ['api key=secret', 'Bearer secret', 'private-key=secret', 'passphrase=secret']) {
     assert.equal(publicMessage(message, 'safe'), 'safe');
   }
   assert.equal(publicMessage('ordinary state', 'safe'), 'ordinary state');

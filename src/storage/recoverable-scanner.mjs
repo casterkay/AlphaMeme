@@ -1,13 +1,14 @@
-import { normalizeTenantId } from './gmgn-admission-state.mjs';
+import { AVE_CU } from '../providers/ave.mjs';
 import { assertCheckpointGeneration, SqliteControlStateStore } from './control-state.mjs';
 import {
   readSchedulerStateInTransaction,
   scheduleRecoverableScanTaskInTransaction,
   writeSchedulerStateInTransaction
 } from './scheduler-state.mjs';
+import { normalizeTenantId } from './tenant-id.mjs';
 
 export const SCAN_PHASES = Object.freeze([
-  'DISCOVER', 'SCREEN', 'BUILD_QUEUE', 'AUDIT', 'SECONDARY',
+  'DISCOVER', 'SCREEN', 'BUILD_QUEUE', 'SECONDARY',
   'CLASSIFY_AND_COMMIT', 'OUTCOMES_SAMPLE', 'SUMMARIZE'
 ]);
 
@@ -252,7 +253,7 @@ export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch,
       tenantId, checkpoint.cycleId, checkpoint.chain, checkpoint.keyEpoch, checkpoint.controlEpoch, checkpoint.deadlineAt,
       checkpoint.phase, checkpoint.tokenIndex, checkpoint.endpointIndex, JSON.stringify(checkpoint.partial), checkpoint.updatedAt
     );
-    scheduleRecoverableScanTaskInTransaction(storage, tenantId, checkpoint.cycleId, now, 3, activeTasks.get(selected.cycleId).enabled);
+    scheduleRecoverableScanTaskInTransaction(storage, tenantId, checkpoint.cycleId, now, AVE_CU.trending, activeTasks.get(selected.cycleId).enabled);
     return Object.freeze({ tenantId, ...checkpoint });
   });
 }
@@ -359,14 +360,6 @@ function queueInput(value, tenantId, chainName) {
   return { ...json(value, 'audit queue'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
 }
 
-function exclusionInput(value, tenantId, chainName) {
-  if (value === null || value === undefined) return null;
-  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.address !== 'string' || !value.address) {
-    throw new RecoverableScannerError('RISK_EXCLUSION_INVALID', 'risk exclusion address is required');
-  }
-  return { ...json(value, 'risk exclusion'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
-}
-
 function outcomeInput(value, tenantId, chainName, { allowCrossChain = false } = {}) {
   if (value === null || value === undefined) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.address !== 'string' || !value.address) {
@@ -380,14 +373,6 @@ function outcomeInput(value, tenantId, chainName, { allowCrossChain = false } = 
     throw new RecoverableScannerError('OUTCOME_INVALID', 'classification outcomes must remain on the checkpoint chain');
   }
   return { ...json(value, 'outcome'), address: canonicalAddress(outcomeChain, value.address), tenantId, chain: outcomeChain };
-}
-
-function screenDowngradeInput(value, chainName) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.address !== 'string' || !value.address.trim()
-    || typeof value.reason !== 'string' || !value.reason.trim()) {
-    throw new RecoverableScannerError('SCREEN_DOWNGRADE_INVALID', 'screen downgrade requires an address and reason');
-  }
-  return { address: canonicalAddress(chainName, value.address), reason: value.reason.trim() };
 }
 
 function stringOrNull(value) {
@@ -538,6 +523,13 @@ export class SqliteRecoverableScannerStore {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
       const retentionBoundary = next.updatedAt - candidateRetentionMs;
+      // A lead is shown until its last confirmation's display window ends.
+      this.storage.sql.exec(
+        `DELETE FROM candidates
+         WHERE tenant_id = ? AND chain = ? AND status = 'LIVE_READY' AND stale_at < ?
+           AND address NOT IN (SELECT address FROM annotations WHERE tenant_id = ? AND chain = ? AND favorite = 1)`,
+        this.tenantId, next.chain, next.updatedAt, this.tenantId, next.chain
+      );
       this.storage.sql.exec(
         `DELETE FROM candidates
          WHERE tenant_id = ? AND chain = ?
@@ -550,7 +542,7 @@ export class SqliteRecoverableScannerStore {
          WHERE tenant_id = ? AND chain = ? AND address NOT IN (
            SELECT address FROM candidates
            WHERE tenant_id = ? AND chain = ?
-           ORDER BY CASE status WHEN 'X_REVIEW' THEN 3 WHEN 'WAIT_RECHECK' THEN 2 WHEN 'HARD_REJECT' THEN 1 ELSE 0 END DESC,
+           ORDER BY CASE status WHEN 'LIVE_READY' THEN 3 WHEN 'X_REVIEW' THEN 3 WHEN 'WAIT_RECHECK' THEN 2 WHEN 'HARD_REJECT' THEN 1 ELSE 0 END DESC,
                     priority_band DESC, discovery_score DESC, address ASC
            LIMIT ?
          )`,
@@ -584,67 +576,40 @@ export class SqliteRecoverableScannerStore {
     });
   }
 
+  /**
+   * Commit one screened hot list atomically: upsert passing tokens as leads
+   * (keeping any earlier security check), drop leads that now fail the screen,
+   * record new-lead events, outcome baselines and samples, and the feed.
+   */
   commitScreen(value) {
     const next = checkpointInput(value.next);
     const expected = value.expected || {};
-    if (!Array.isArray(value.downgrades)) {
-      throw new RecoverableScannerError('SCREEN_DOWNGRADE_INVALID', 'screen downgrades must be an array');
+    if (!Array.isArray(value.leads) || !Array.isArray(value.eliminated) || !Array.isArray(value.events) || !Array.isArray(value.outcomes)
+      || !value.feed || typeof value.feed !== 'object' || !value.sourceHealth || typeof value.sourceHealth !== 'object') {
+      throw new RecoverableScannerError('SCREEN_COMMIT_INVALID', 'screen commit requires leads, eliminations, events, outcomes, feed and source health');
     }
-    const downgrades = [...new Map(value.downgrades
-      .map(item => screenDowngradeInput(item, next.chain))
-      .map(item => [item.address, item])).values()];
+    const leads = value.leads.map(item => candidateInput(item, this.tenantId, next.chain));
+    const eliminated = [...new Set(value.eliminated.map(address => canonicalAddress(next.chain, address)))];
+    const outcomes = value.outcomes.map(item => outcomeInput(item, this.tenantId, next.chain));
+    const events = value.events.map(item => ({ address: canonicalAddress(next.chain, item.address),
+      event: eventInput(item, this.tenantId, next.cycleId, next.chain, canonicalAddress(next.chain, item.address), next.updatedAt) }));
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
       assertCurrent(this.storage, this.tenantId, current, expected);
       if (!checkpointEqual(current, next)) {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
-      for (const downgrade of downgrades) {
-        const row = atMostOne(this.storage.sql.exec(
-          'SELECT deep_json FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ? AND status = ?',
-          this.tenantId, next.chain, downgrade.address, 'X_REVIEW'
-        ).toArray(), 'screen downgrade candidate');
-        if (!row) continue;
-        const deep = parseJson(row.deep_json, 'candidate deep state');
-        this.storage.sql.exec(
-          'UPDATE candidates SET status = ?, deep_json = ?, decision_reason = ? WHERE tenant_id = ? AND chain = ? AND address = ? AND status = ?',
-          'WAIT_RECHECK', JSON.stringify({ ...deep, chainPass: false }), downgrade.reason,
-          this.tenantId, next.chain, downgrade.address, 'X_REVIEW'
-        );
-        this.storage.sql.exec(
-          'UPDATE audit_queue SET status = ? WHERE tenant_id = ? AND chain = ? AND address = ?',
-          'WAIT_RECHECK', this.tenantId, next.chain, downgrade.address
-        );
+      for (const lead of leads) this.#upsertCandidate(lead, { keepEvidence: true });
+      for (const address of eliminated) {
+        this.storage.sql.exec("DELETE FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ? AND status = 'LIVE_READY'", this.tenantId, next.chain, address);
       }
-      this.storage.sql.exec(
-        'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
-        next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
-      );
+      for (const outcome of outcomes) this.#upsertOutcome(outcome);
+      for (const { address, event } of events) this.#recordEvent(event, next.chain, address);
+      this.#writeState(`feed.snapshot:${next.chain}`, value.feed);
+      this.#mergeSourceHealth(value.sourceHealth);
+      this.#writeCheckpoint(next);
       return Object.freeze({ tenantId: this.tenantId, ...next });
     });
-  }
-
-  readRiskExclusions(chainName) {
-    return this.storage.sql.exec(
-      'SELECT address, version, codes_json, reasons_json, at, details_json FROM risk_exclusions WHERE tenant_id = ? AND chain = ?',
-      this.tenantId, chain(chainName)
-    ).toArray().map(row => ({
-      chain: chainName,
-      address: row.address,
-      version: row.version,
-      codes: parseJson(row.codes_json, 'risk exclusion codes'),
-      reasons: parseJson(row.reasons_json, 'risk exclusion reasons'),
-      at: row.at,
-      ...parseJson(row.details_json, 'risk exclusion details')
-    }));
-  }
-
-  readRequestedReviews(chainName, keyEpoch, now) {
-    const record = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, 'live.requestedReviews').toArray()[0];
-    const requests = record ? parseJson(record.value_json, 'live review requests') : [];
-    if (!Array.isArray(requests)) throw new RecoverableScannerError('LIVE_REVIEW_REQUESTS_INVALID', 'live review requests must be an array');
-    return requests.filter(item => item.chain === chainName && item.keyEpoch === keyEpoch && item.row?.address
-      && item.at <= now && now - item.at <= 600_000);
   }
 
   readAuditQueue(chainName) {
@@ -666,46 +631,24 @@ export class SqliteRecoverableScannerStore {
     }));
   }
 
-  readCandidateReview(chainName, address) {
+  /** The stored candidate as the scanner wrote it, or null. */
+  readCandidate(chainName, address) {
     const normalizedChain = chain(chainName);
-    const rows = this.storage.sql.exec(
-      'SELECT review_evidence, review_revision, status FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ?',
+    const row = atMostOne(this.storage.sql.exec(
+      'SELECT * FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ?',
       this.tenantId, normalizedChain, canonicalAddress(normalizedChain, address)
-    ).toArray();
-    const row = atMostOne(rows, 'candidate review');
-    return row ? { reviewEvidence: row.review_evidence, reviewRevision: row.review_revision, status: row.status } : null;
-  }
-
-  readMonitorCandidates(chainName, candidateRetentionMs = null, now = null) {
-    const normalizedChain = chain(chainName);
-    const hasRetentionBoundary = Number.isSafeInteger(candidateRetentionMs) && candidateRetentionMs > 0
-      && Number.isSafeInteger(now) && now >= candidateRetentionMs;
-    const retentionBoundary = hasRetentionBoundary ? now - candidateRetentionMs : 0;
-    return this.storage.sql.exec(
-      `SELECT c.address, c.symbol, c.name, c.price, c.market_cap, c.liquidity, c.created_at, c.age_sec
-       FROM candidates c
-       LEFT JOIN annotations a
-         ON a.tenant_id = c.tenant_id AND a.chain = c.chain AND a.address = c.address
-       WHERE c.tenant_id = ? AND c.chain = ?
-         AND ((c.status = 'X_REVIEW' AND (? = 0 OR c.audited_at >= ?)) OR a.favorite = 1)
-       UNION ALL
-       SELECT a.address, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-       FROM annotations a
-       LEFT JOIN candidates c
-         ON c.tenant_id = a.tenant_id AND c.chain = a.chain AND c.address = a.address
-       WHERE a.tenant_id = ? AND a.chain = ? AND a.favorite = 1 AND c.address IS NULL
-       ORDER BY 1`,
-      this.tenantId, normalizedChain, hasRetentionBoundary ? 1 : 0, retentionBoundary, this.tenantId, normalizedChain
-    ).toArray().map(row => ({
-      address: row.address,
-      symbol: row.symbol,
-      name: row.name,
-      price: row.price,
-      marketCap: row.market_cap,
-      liquidity: row.liquidity,
-      createdAt: row.created_at,
-      ageSec: row.age_sec
-    }));
+    ).toArray(), 'candidate');
+    if (!row) return null;
+    return {
+      address: row.address, chain: row.chain, symbol: row.symbol, name: row.name, status: row.status,
+      info: parseJson(row.info_json, 'candidate info'), reviewEvidence: row.review_evidence, reviewRevision: row.review_revision,
+      priorityBand: row.priority_band === 1, discoveryScore: row.discovery_score, marketCap: row.market_cap, liquidity: row.liquidity,
+      price: row.price, createdAt: row.created_at, ageSec: row.age_sec, holders: row.holders, volume1h: row.volume_1h,
+      buys: row.buys, sells: row.sells, twitter: row.twitter, aveUrl: row.ave_url, auditedAt: row.audited_at, staleAt: row.stale_at,
+      decisionReason: row.decision_reason, auditError: row.audit_error, deep: parseJson(row.deep_json, 'candidate deep state'),
+      secondary: JSON.parse(row.secondary_json), social: parseJson(row.social_json, 'candidate social state'),
+      auditHealth: parseJson(row.audit_health_json, 'candidate audit health'), metadata: parseJson(row.metadata_json, 'candidate metadata')
+    };
   }
 
   readOutcomes(chainName = null) {
@@ -742,9 +685,11 @@ export class SqliteRecoverableScannerStore {
     const next = checkpointInput(value.next);
     const candidate = candidateInput(value.candidate, this.tenantId, next.chain);
     const auditQueue = queueInput(value.auditQueue, this.tenantId, next.chain);
-    const exclusion = exclusionInput(value.riskExclusion, this.tenantId, next.chain);
     const outcome = outcomeInput(value.outcome, this.tenantId, next.chain);
-    let event = eventInput(value.event, this.tenantId, next.cycleId, next.chain, candidate.address, next.updatedAt);
+    const event = eventInput(value.event, this.tenantId, next.cycleId, next.chain, candidate.address, next.updatedAt);
+    if (!value.sourceHealth || typeof value.sourceHealth !== 'object') {
+      throw new RecoverableScannerError('CLASSIFICATION_INVALID', 'classification requires source health');
+    }
 
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
@@ -752,30 +697,7 @@ export class SqliteRecoverableScannerStore {
       if (!checkpointEqual(current, next)) {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
-
-      this.storage.sql.exec(
-        `INSERT INTO candidates (tenant_id, chain, address, symbol, name, info_json, review_evidence, status, priority_band, discovery_score, market_cap, liquidity, price, created_at, age_sec, holders, volume_1h, buys, sells, twitter, gmgn_url, audited_at, stale_at, review_revision, decision_reason, audit_error, deep_json, secondary_json, social_json, audit_health_json, metadata_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
-           symbol = excluded.symbol, name = excluded.name, info_json = excluded.info_json, review_evidence = excluded.review_evidence,
-           status = excluded.status, priority_band = excluded.priority_band, discovery_score = excluded.discovery_score,
-           market_cap = excluded.market_cap, liquidity = excluded.liquidity, price = excluded.price, created_at = excluded.created_at,
-           age_sec = excluded.age_sec, holders = excluded.holders, volume_1h = excluded.volume_1h, buys = excluded.buys,
-           sells = excluded.sells, twitter = excluded.twitter, gmgn_url = excluded.gmgn_url, audited_at = excluded.audited_at,
-           stale_at = excluded.stale_at, review_revision = excluded.review_revision, decision_reason = excluded.decision_reason,
-           audit_error = excluded.audit_error, deep_json = excluded.deep_json, secondary_json = excluded.secondary_json,
-           social_json = excluded.social_json, audit_health_json = excluded.audit_health_json, metadata_json = excluded.metadata_json`,
-        candidate.tenantId, candidate.chain, candidate.address, stringOrNull(candidate.symbol), stringOrNull(candidate.name),
-        JSON.stringify(candidate.info || {}), stringOrNull(candidate.reviewEvidence), candidate.status, candidate.priorityBand ? 1 : 0,
-        numberOrNull(candidate.discoveryScore), numberOrNull(candidate.marketCap), numberOrNull(candidate.liquidity), numberOrNull(candidate.price),
-        integerOrNull(candidate.createdAt), numberOrNull(candidate.ageSec), integerOrNull(candidate.holders), numberOrNull(candidate.volume1h),
-        integerOrNull(candidate.buys), integerOrNull(candidate.sells), stringOrNull(candidate.twitter), stringOrNull(candidate.gmgnUrl),
-        integerOrNull(candidate.auditedAt), integerOrNull(candidate.staleAt), stringOrNull(candidate.reviewRevision),
-        stringOrNull(candidate.decisionReason), stringOrNull(candidate.auditError), JSON.stringify(candidate.deep || {}),
-        JSON.stringify(candidate.secondary || null), JSON.stringify(candidate.social || {}), JSON.stringify(candidate.auditHealth || {}),
-        JSON.stringify(candidate.metadata || {})
-      );
-
+      this.#upsertCandidate(candidate, { keepEvidence: false });
       this.storage.sql.exec(
         `INSERT INTO audit_queue (tenant_id, chain, address, first_seen_at, last_seen_at, last_audited_at, next_audit_at, attempts, status, priority_band, score, watched, details_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -788,68 +710,90 @@ export class SqliteRecoverableScannerStore {
         stringOrNull(auditQueue.status), auditQueue.priorityBand ? 1 : 0, numberOrNull(auditQueue.score), auditQueue.watched ? 1 : 0,
         JSON.stringify(auditQueue.details || {})
       );
-
-      if (exclusion) {
-        this.storage.sql.exec(
-          `INSERT INTO risk_exclusions (tenant_id, chain, address, version, codes_json, reasons_json, at, details_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
-             version = excluded.version, codes_json = excluded.codes_json, reasons_json = excluded.reasons_json,
-             at = excluded.at, details_json = excluded.details_json`,
-          exclusion.tenantId, exclusion.chain, exclusion.address, integerOrNull(exclusion.version), JSON.stringify(exclusion.codes || []),
-          JSON.stringify(exclusion.reasons || []), integerOrNull(exclusion.at), JSON.stringify(exclusion.details || {})
-        );
-      }
-
-      if (outcome) {
-        this.storage.sql.exec(
-          `INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
-             latest_decision = excluded.latest_decision, last_audited_at = excluded.last_audited_at, symbol = excluded.symbol,
-             latest_failed_json = excluded.latest_failed_json, samples_json = excluded.samples_json,
-             sample_retries_json = excluded.sample_retries_json, cohort_metadata_json = excluded.cohort_metadata_json`,
-          outcome.tenantId, outcome.chain, outcome.address, outcome.initialDecision, stringOrNull(outcome.latestDecision),
-          integerOrNull(outcome.baselineAt), numberOrNull(outcome.baselinePrice), integerOrNull(outcome.lastAuditedAt),
-          stringOrNull(outcome.symbol), JSON.stringify(outcome.latestFailed || []), stringOrNull(outcome.sampling),
-          stringOrNull(outcome.strategyVersion), JSON.stringify(outcome.samples || {}), JSON.stringify(outcome.sampleRetries || {}),
-          JSON.stringify(outcome.cohortMetadata || {})
-        );
-      }
-
-      if (event && NOTIFICATION_EFFECT_TYPES.has(event.type)) {
-        const recent = this.storage.sql.exec(
-          'SELECT 1 FROM events WHERE tenant_id = ? AND type = ? AND chain = ? AND address = ? AND at > ? LIMIT 1',
-          this.tenantId, event.type, next.chain, candidate.address, event.at - NOTIFICATION_DEDUP_WINDOW_MS
-        ).toArray()[0];
-        if (recent) event = null;
-      }
-
-      if (event) {
-        this.storage.sql.exec(
-          'INSERT INTO events (tenant_id, id, at, type, chain, address, message, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, id) DO NOTHING',
-          this.tenantId, event.id, event.at, event.type, next.chain, candidate.address, event.message, JSON.stringify(event.data)
-        );
-
-      }
-
-      this.storage.sql.exec(
-        'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
-        next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
-      );
-      const consumed = (current.partial.liveReviewRequests || []).find(item => item.chain === next.chain && item.address === candidate.address);
-      if (consumed) {
-        const record = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, 'live.requestedReviews').toArray()[0];
-        if (record) {
-          const pending = parseJson(record.value_json, 'live review requests');
-          const remaining = pending.filter(item => !(item.chain === consumed.chain && item.address === consumed.address && item.at === consumed.at && item.keyEpoch === consumed.keyEpoch));
-          this.storage.sql.exec('UPDATE scheduler_state SET value_json = ? WHERE tenant_id = ? AND key = ?', JSON.stringify(remaining), this.tenantId, 'live.requestedReviews');
-        }
-      }
+      if (outcome) this.#upsertOutcome(outcome);
+      const recorded = this.#recordEvent(event, next.chain, candidate.address);
+      this.#mergeSourceHealth(value.sourceHealth);
+      this.#writeCheckpoint(next);
       const completion = this.afterClassification?.();
       if (completion && typeof completion.then === 'function') throw new TypeError('Classification hook must be synchronous');
-      return Object.freeze({ checkpoint: { tenantId: this.tenantId, ...next }, effectId: event?.id || null });
+      return Object.freeze({ checkpoint: { tenantId: this.tenantId, ...next }, effectId: recorded?.id || null });
     });
+  }
+
+  // A lead refresh keeps the security evidence and revision of an earlier check.
+  #upsertCandidate(candidate, { keepEvidence }) {
+    const evidenceUpdate = keepEvidence ? '' : `, review_evidence = excluded.review_evidence, review_revision = excluded.review_revision,
+           decision_reason = excluded.decision_reason, audit_error = excluded.audit_error, deep_json = excluded.deep_json,
+           secondary_json = excluded.secondary_json, audit_health_json = excluded.audit_health_json`;
+    this.storage.sql.exec(
+      `INSERT INTO candidates (tenant_id, chain, address, symbol, name, info_json, review_evidence, status, priority_band, discovery_score, market_cap, liquidity, price, created_at, age_sec, holders, volume_1h, buys, sells, twitter, ave_url, audited_at, stale_at, review_revision, decision_reason, audit_error, deep_json, secondary_json, social_json, audit_health_json, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
+         symbol = excluded.symbol, name = excluded.name, info_json = excluded.info_json, status = excluded.status,
+         priority_band = excluded.priority_band, discovery_score = excluded.discovery_score,
+         market_cap = excluded.market_cap, liquidity = excluded.liquidity, price = excluded.price, created_at = excluded.created_at,
+         age_sec = excluded.age_sec, holders = excluded.holders, volume_1h = excluded.volume_1h, buys = excluded.buys,
+         sells = excluded.sells, twitter = excluded.twitter, ave_url = excluded.ave_url, audited_at = excluded.audited_at,
+         stale_at = excluded.stale_at, social_json = excluded.social_json, metadata_json = excluded.metadata_json${evidenceUpdate}`,
+      candidate.tenantId, candidate.chain, candidate.address, stringOrNull(candidate.symbol), stringOrNull(candidate.name),
+      JSON.stringify(candidate.info || {}), stringOrNull(candidate.reviewEvidence), candidate.status, candidate.priorityBand ? 1 : 0,
+      numberOrNull(candidate.discoveryScore), numberOrNull(candidate.marketCap), numberOrNull(candidate.liquidity), numberOrNull(candidate.price),
+      integerOrNull(candidate.createdAt), numberOrNull(candidate.ageSec), integerOrNull(candidate.holders), numberOrNull(candidate.volume1h),
+      integerOrNull(candidate.buys), integerOrNull(candidate.sells), stringOrNull(candidate.twitter), stringOrNull(candidate.aveUrl),
+      integerOrNull(candidate.auditedAt), integerOrNull(candidate.staleAt), stringOrNull(candidate.reviewRevision),
+      stringOrNull(candidate.decisionReason), stringOrNull(candidate.auditError), JSON.stringify(candidate.deep || {}),
+      JSON.stringify(candidate.secondary || null), JSON.stringify(candidate.social || {}), JSON.stringify(candidate.auditHealth || {}),
+      JSON.stringify(candidate.metadata || {})
+    );
+  }
+
+  #upsertOutcome(outcome) {
+    this.storage.sql.exec(
+      `INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
+         latest_decision = excluded.latest_decision, last_audited_at = excluded.last_audited_at, symbol = excluded.symbol,
+         latest_failed_json = excluded.latest_failed_json, samples_json = excluded.samples_json,
+         sample_retries_json = excluded.sample_retries_json, cohort_metadata_json = excluded.cohort_metadata_json`,
+      outcome.tenantId, outcome.chain, outcome.address, outcome.initialDecision, stringOrNull(outcome.latestDecision),
+      integerOrNull(outcome.baselineAt), numberOrNull(outcome.baselinePrice), integerOrNull(outcome.lastAuditedAt),
+      stringOrNull(outcome.symbol), JSON.stringify(outcome.latestFailed || []), stringOrNull(outcome.sampling),
+      stringOrNull(outcome.strategyVersion), JSON.stringify(outcome.samples || {}), JSON.stringify(outcome.sampleRetries || {}),
+      JSON.stringify(outcome.cohortMetadata || {})
+    );
+  }
+
+  // Notification events are deduplicated per token and type within a window.
+  #recordEvent(event, chainName, address) {
+    if (!event) return null;
+    if (NOTIFICATION_EFFECT_TYPES.has(event.type) && this.storage.sql.exec(
+      'SELECT 1 FROM events WHERE tenant_id = ? AND type = ? AND chain = ? AND address = ? AND at > ? LIMIT 1',
+      this.tenantId, event.type, chainName, address, event.at - NOTIFICATION_DEDUP_WINDOW_MS
+    ).toArray()[0]) return null;
+    this.storage.sql.exec(
+      'INSERT INTO events (tenant_id, id, at, type, chain, address, message, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, id) DO NOTHING',
+      this.tenantId, event.id, event.at, event.type, chainName, address, event.message, JSON.stringify(event.data)
+    );
+    return event;
+  }
+
+  #writeState(key, value) {
+    this.storage.sql.exec(
+      'INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json',
+      this.tenantId, key, JSON.stringify(value)
+    );
+  }
+
+  #mergeSourceHealth(update) {
+    const row = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, 'runtime.sourceHealth').toArray()[0];
+    this.#writeState('runtime.sourceHealth', { ...(row ? parseJson(row.value_json, 'source health') : {}), ...json(update, 'source health') });
+  }
+
+  #writeCheckpoint(next) {
+    this.storage.sql.exec(
+      'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
+      next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
+    );
   }
 
   commitOutcomeProgress(value) {

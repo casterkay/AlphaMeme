@@ -1,4 +1,4 @@
-import { normalizeTenantId } from '../storage/gmgn-admission-state.mjs';
+import { normalizeTenantId } from '../storage/tenant-id.mjs';
 import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } from '../storage/scheduler-state.mjs';
 
 const INPUT_TTL = 15 * 60_000;
@@ -31,7 +31,7 @@ export class TelegramInbox {
       this.reconcileInTransaction();
       return { accepted: true, duplicate: true, status: existing.status };
     }
-    if (!owner) this.storage.sql.exec('INSERT INTO tenants (tenant_id, owner_user_id, onboard_state, created_at) VALUES (?, ?, ?, ?)', this.tenantId, receipt.actorUserId, 'none', now);
+    if (!owner) this.storage.sql.exec('INSERT INTO tenants (tenant_id, owner_user_id, created_at) VALUES (?, ?, ?)', this.tenantId, receipt.actorUserId, now);
     const command = receipt.commandType.replace(/^command:/, '');
     const sensitive = command === 'credential';
     if (sensitive && (typeof payloadEnc !== 'string' || !payloadEnc)) throw new TypeError('Credential intake requires ciphertext');
@@ -83,7 +83,7 @@ export class TelegramInbox {
     // Only the oldest runnable command is exposed. Safety controls execute during intake.
     const runnable = rows[0];
     const tasks = state.tasks.filter(task => !task.id.startsWith('inbox:'));
-    if (runnable) tasks.push({ id: `inbox:${runnable.update_id}`, kind: 'command', dueAt: runnable.next_at ?? runnable.received_at, enabled: true, needsGmgn: false, gmgnWeight: 1 });
+    if (runnable) tasks.push({ id: `inbox:${runnable.update_id}`, kind: 'command', dueAt: runnable.next_at ?? runnable.received_at, enabled: true, aveCost: 0 });
     writeSchedulerStateInTransaction(this.storage, this.tenantId, { ...state, tasks });
     return tasks;
   }

@@ -1,7 +1,7 @@
 import { safeTelegramText, safeTelegramUrl } from '../bot/snapshot.mjs';
 
 export const TELEGRAM_TEXT_BUDGET = 3500;
-export const CHAIN_LABELS = Object.freeze({ sol: 'Solana', bsc: 'BNB Chain', base: 'Base', eth: 'Ethereum', robinhood: 'Robinhood', arc: 'Arc', stable: 'Stable' });
+export const CHAIN_LABELS = Object.freeze({ arc: 'Arc', bsc: 'BNB Chain', base: 'Base', eth: 'Ethereum', sol: 'Solana', robinhood: 'Robinhood' });
 export const localize = (locale, zh, en) => locale === 'en' ? en : zh;
 export const escapeHtml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 export const userText = (value, max = 500) => escapeHtml(safeTelegramText(value, max));

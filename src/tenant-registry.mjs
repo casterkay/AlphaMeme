@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { normalizeTenantId } from './storage/gmgn-admission-state.mjs';
+import { normalizeTenantId } from './storage/tenant-id.mjs';
 import { initializeTenantRegistrySchema } from './storage/tenant-registry-schema.mjs';
 import { settleTenantWakes } from './tenant-watchdog.mjs';
 

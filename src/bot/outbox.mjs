@@ -130,7 +130,7 @@ export class TelegramOutbox {
     return entries.filter(entry => entry.payload
       && (entry.row.status === 'PENDING' || (entry.row.status === 'UNKNOWN' && entry.row.ambiguous_retries < 1 && this.valid(entry.row, entry.payload)))
       && !this.blocked(entry, blocking))
-      .map(({ row }) => createTaskDescriptor({ id: `outbox:${row.id}`, kind: 'outbox', dueAt: row.next_at ?? this.now(), enabled: true, needsGmgn: false, gmgnWeight: 1 }));
+      .map(({ row }) => createTaskDescriptor({ id: `outbox:${row.id}`, kind: 'outbox', dueAt: row.next_at ?? this.now(), enabled: true, aveCost: 0 }));
   }
 
   bind(row, payload, result) {

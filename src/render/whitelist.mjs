@@ -22,7 +22,7 @@ function text(value, maxLength = 160) {
 
 export function publicMessage(value, fallback, maxLength = 160) {
   const message = text(value, maxLength);
-  return /command failed|api[_ -]?key|authorization|bearer\s|private[_ -]?key|passphrase|secret|gmgn_[a-z0-9]{8,}/i.test(message)
+  return /command failed|api[_ -]?key|authorization|bearer\s|private[_ -]?key|passphrase|secret/i.test(message)
     ? fallback
     : message;
 }
@@ -126,7 +126,7 @@ export function publicCandidate(row = {}) {
     buys: finite(row.buys),
     sells: finite(row.sells),
     twitter: text(row.twitter, 80),
-    gmgnUrl: externalUrl(row.gmgnUrl),
+    aveUrl: externalUrl(row.aveUrl),
     status: ['X_REVIEW', 'QUALIFIED'].includes(row.status) && !currentRules ? 'WAIT_RECHECK' : text(row.status, 32),
     auditedAt: finite(row.auditedAt),
     staleAt: finite(row.staleAt),

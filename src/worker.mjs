@@ -1,7 +1,7 @@
 import { RadarAgent } from './radar-agent.mjs';
 import { TenantRegistry } from './tenant-registry.mjs';
 import { isAuthorizedBearer, isAuthorizedTelegramWebhookSecret } from './worker-auth.mjs';
-import { normalizeTenantId } from './storage/gmgn-admission-state.mjs';
+import { normalizeTenantId } from './storage/tenant-id.mjs';
 import { parseTelegramUpdate } from './telegram-intake.mjs';
 import { callWorkerRpc } from './worker-rpc.mjs';
 
@@ -22,21 +22,23 @@ function methodNotAllowed() {
 
 function operatorStatus(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.lifecycle !== 'string' || !Number.isSafeInteger(value.schemaVersion)
-    || !value.gmgnAdmission || typeof value.gmgnAdmission !== 'object' || Array.isArray(value.gmgnAdmission)) {
+    || !value.aveAdmission || typeof value.aveAdmission !== 'object' || Array.isArray(value.aveAdmission)) {
     throw new Error('Radar status has an unsupported shape');
   }
-  const admission = value.gmgnAdmission;
-  if (!Number.isSafeInteger(admission.nextAllowedAt) || !Number.isSafeInteger(admission.spacingReadyAt)
-    || !Number.isFinite(admission.backoffFactor) || !Number.isSafeInteger(admission.keyEpoch)) {
+  const admission = value.aveAdmission;
+  if (!Number.isSafeInteger(admission.cuUsed) || !Number.isSafeInteger(admission.spacingReadyAt)
+    || !Number.isSafeInteger(admission.blockedUntil) || !Number.isSafeInteger(admission.keyEpoch)) {
     throw new Error('Radar admission status has an unsupported shape');
   }
   return {
     lifecycle: value.lifecycle,
     schemaVersion: value.schemaVersion,
-    gmgnAdmission: {
-      nextAllowedAt: admission.nextAllowedAt,
+    aveAdmission: {
+      cuUsed: admission.cuUsed,
+      periodStartAt: admission.periodStartAt,
       spacingReadyAt: admission.spacingReadyAt,
-      backoffFactor: admission.backoffFactor,
+      blockedUntil: admission.blockedUntil,
+      blockReason: admission.blockReason,
       keyEpoch: admission.keyEpoch
     }
   };

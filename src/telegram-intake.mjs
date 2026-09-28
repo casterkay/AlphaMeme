@@ -1,9 +1,11 @@
 const MAX_CALLBACK_DATA_BYTES = 64;
 const MAX_MESSAGE_LENGTH = 4096;
 
-// Divert credentials before interpreting commands or prompt replies.
+// Divert credentials before interpreting commands or prompt replies. AVE keys
+// have no recognizable prefix, so only /setkey carries one; a pasted private
+// key is diverted too, so it is deleted rather than stored.
 export function containsTelegramCredential(text) {
-  return typeof text === 'string' && /gmgn_|-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----/i.test(text);
+  return typeof text === 'string' && /-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----/i.test(text);
 }
 
 function plainObject(value) {

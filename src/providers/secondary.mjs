@@ -1,12 +1,13 @@
 import { validTokenAddress } from '../address.mjs';
 import { verifiedAvePoolEvidence } from '../pool-identity.mjs';
 
-const DEX_CHAIN_IDS = Object.freeze({ sol: 'solana', bsc: 'bsc', base: 'base', eth: 'ethereum' });
+const DEX_CHAIN_IDS = Object.freeze({ sol: 'solana', bsc: 'bsc', base: 'base', eth: 'ethereum', arc: 'arc' });
 // Fast overlays must use the same verified chain map as deep validation.
 // Robinhood Chain currently has no verified DexScreener chain id here; a
 // speculative request only wastes time and makes the UI overstate coverage.
 const DEX_BATCH_CHAIN_IDS = DEX_CHAIN_IDS;
-const GOPLUS_EVM_CHAIN_IDS = Object.freeze({ eth: '1', bsc: '56', base: '8453' });
+// Arc ids as DexScreener (dexscreener.com/arc) and GoPlus (chain 5042) publish them.
+const GOPLUS_EVM_CHAIN_IDS = Object.freeze({ eth: '1', bsc: '56', base: '8453', arc: '5042' });
 
 const NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 const DEFAULT_MAX_BYTES = 1_000_000;

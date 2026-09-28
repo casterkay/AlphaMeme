@@ -4,15 +4,15 @@ import { TelegramInbox } from './inbox.mjs';
 import { TelegramOutbox } from './outbox.mjs';
 import { createTelegramTransport } from './telegram-transport.mjs';
 import { TelegramCommands } from './commands.mjs';
-import { PersistentLive } from './live.mjs';
 import { annotationVersion, nextReviewExpiry, reviewProjectionRevision } from './review.mjs';
 import { createTelegramExport, readTelegramSnapshot } from './snapshot.mjs';
 import { readTelegramStatistics } from './statistics.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
-import { normalizeGmgnApiKey } from '../gmgn-api-key.mjs';
+import { parseAveBudget } from '../ave-admission.mjs';
+import { DEFAULT_SCAN_CHAIN } from '../chains.mjs';
+import { AVE_CU, normalizeAveApiKey, verifyAveApiKey } from '../providers/ave.mjs';
 import { encryptSecret, decryptSecret } from '../util/crypto.mjs';
-import { ensurePendingSigningKey, regeneratePendingSigningKey, signingSetupSnapshot, SigningKeyError } from '../auth/key-store.mjs';
-import { prepareOnboardingVerification, verifyAndActivateOnboardingCredential, failOnboardingVerification, ConnectionError } from '../auth/connection.mjs';
+import { CONNECTION_KEY_NAMES, prepareOnboardingVerification, verifyAndActivateOnboardingCredential, failOnboardingVerification, ConnectionError } from '../auth/connection.mjs';
 import { SqliteControlStateStore } from '../storage/control-state.mjs';
 import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction, scheduleRecoverableScanTaskInTransaction } from '../storage/scheduler-state.mjs';
 import { SqliteRecoverableScannerStore, restartRecoverableScanInTransaction, resumeRecoverableCheckpointsInTransaction } from '../storage/recoverable-scanner.mjs';
@@ -22,7 +22,6 @@ export class TelegramRuntime {
   constructor({ storage, env, tenantId, now = Date.now }) {
     Object.assign(this, { storage, env, tenantId, now });
     this.inbox = new TelegramInbox({ storage, tenantId, now });
-    this.live = new PersistentLive({ storage, tenantId, settings: scannerSettings, now });
     this.control = new SqliteControlStateStore(storage, tenantId);
     this.notifications = new NotificationPolicy({ storage, tenantId, now });
     this.outbox = new TelegramOutbox({ storage, tenantId, now,
@@ -34,10 +33,10 @@ export class TelegramRuntime {
         if (value.payload.token && value.payload.purpose !== 'prompt') this.saveRenderedProjection(value);
       }
     });
-    this.commands = new TelegramCommands({ storage, tenantId, inbox: this.inbox, outbox: this.outbox, live: this.live, now,
-      snapshot: (storage, tenant, at) => ({ ...readTelegramSnapshot(storage, tenant, at), stats: readTelegramStatistics(storage, tenant, at) }),
+    this.commands = new TelegramCommands({ storage, tenantId, inbox: this.inbox, outbox: this.outbox, now,
+      snapshot: (storage, tenant, at) => ({ ...readTelegramSnapshot(storage, tenant, at), stats: readTelegramStatistics(storage, tenant, at), aveBudget: parseAveBudget(env) }),
       controls: {
-        snapshot: () => this.control.snapshot(), pause: () => this.control.pause(), disconnect: () => this.disconnect(), resume: () => this.resume(), setScanChains: chains => this.setScanChains(chains),
+        snapshot: () => this.control.snapshot(), pause: () => this.control.pause(), disconnect: () => this.disconnect(), resume: () => this.resume(), selectScanChain: chain => this.selectScanChain(chain),
         annotationVersion: (token, field) => annotationVersion(storage, tenantId, token, field).version,
         exportRecords: () => createTelegramExport(this.commands.snapshot(storage, tenantId, now())),
         resetNotificationBaseline: () => this.resetNotificationBaseline(), initializeNotificationBaseline: () => this.resetNotificationBaseline(false)
@@ -69,7 +68,7 @@ export class TelegramRuntime {
   }
 
   async receiveCredential(receipt, text) {
-    const key = normalizeGmgnApiKey(text.replace(/^\/setkey(?:@[A-Za-z0-9_]+)?\s*/i, ''));
+    const key = normalizeAveApiKey(text.replace(/^\/setkey(?:@[A-Za-z0-9_]+)?\s*/i, ''));
     // Even invalid sensitive submissions are encrypted before durable intake.
     const encrypted = await encryptSecret(this.masterKey, this.tenantId, `telegram-inbox:${receipt.updateId}`, key || 'invalid');
     return this.storage.transactionSync(() => {
@@ -83,24 +82,15 @@ export class TelegramRuntime {
     if (!this.inbox.get(updateId)) throw Object.assign(new Error('Command task has no durable receipt'), { code: 'SCHEDULER_HANDLER_UNAVAILABLE' });
     const row = this.storage.transactionSync(() => this.inbox.beginInTransaction(updateId));
     if (!row) return { status: 'success', complete: true };
-    let onboarding = null;
     try {
       if (row.command_type === 'credential') return await this.prepareCredential(row);
-      if (row.command_type === 'command:onboard' && !JSON.parse(row.payload_json).arguments) onboarding = await ensurePendingSigningKey(this.keyOptions());
-      if (row.command_type === 'callback') {
-        const payload = JSON.parse(row.payload_json);
-        const link = this.commands.sessions.resolveInTransaction({ tenantId: this.tenantId, actorUserId: row.actor_user_id, sourceMessageId: row.source_message_id, payload });
-        if (link.action === 'onboard.regenerate') onboarding = await regeneratePendingSigningKey({ ...this.keyOptions(), expectedGeneration: link.params.generation, expectedConnectionGeneration: link.expectedConnectionGeneration });
-        else if (link.action === 'panel.open' && link.params.panel === 'onboard') onboarding = await ensurePendingSigningKey(this.keyOptions());
-        else if (['onboard','regenerate'].includes(link.session.panel) || ['onboard','regenerate'].includes(link.session.query.returnTo?.panel)) onboarding = await signingSetupSnapshot(this.keyOptions());
-      }
       this.storage.transactionSync(() => {
         const current = this.inbox.get(updateId);
         if (!current || !['RECEIVED','RUNNING'].includes(current.status)) return;
-        this.commands.processInTransaction(current, { onboarding });
+        this.commands.processInTransaction(current);
       });
     } catch (error) {
-      if (!(error instanceof ConnectionError) && !(error instanceof SigningKeyError) && error?.name !== 'ReviewConflict') throw error;
+      if (!(error instanceof ConnectionError) && error?.name !== 'ReviewConflict') throw error;
       this.storage.transactionSync(() => {
         this.commands.noticeInTransaction(updateId, this.commands.language === 'en' ? 'The action expired or changed. Reopen /radar.' : '操作已过期或发生变化，请重新打开 /radar。');
         this.inbox.finishInTransaction(updateId, 'FAILED', { reason: error.code });
@@ -113,32 +103,32 @@ export class TelegramRuntime {
 
   async prepareCredential(row) {
     const key = await decryptSecret(this.masterKey, this.tenantId, `telegram-inbox:${row.update_id}`, row.payload_enc);
-    const signing = await signingSetupSnapshot(this.keyOptions());
-    if (!signing || !normalizeGmgnApiKey(key)) {
+    if (!normalizeAveApiKey(key)) {
       this.storage.transactionSync(() => {
-        this.commands.noticeInTransaction(row.update_id, this.commands.language === 'en' ? 'Use /onboard first, then submit a valid GMGN key. Check and delete the original message; deletion is not guaranteed.' : '请先使用 /onboard，再提交有效GMGN密钥。请检查并删除原消息；无法保证自动删除。');
-        this.inbox.finishInTransaction(row.update_id, 'FAILED', { reason: !signing ? 'onboard_required' : 'invalid_key' });
+        this.commands.noticeInTransaction(row.update_id, this.commands.language === 'en' ? 'Submit a valid AVE API key with /setkey <key>. Check and delete the original message; deletion is not guaranteed.' : '请用 /setkey <key> 提交有效的AVE API Key。请检查并删除原消息；无法保证自动删除。');
+        this.inbox.finishInTransaction(row.update_id, 'FAILED', { reason: 'invalid_key' });
       });
     } else {
-      await prepareOnboardingVerification({ ...this.keyOptions(), updateId: row.update_id, apiKey: key, expectedSigningGeneration: signing.generation });
+      await prepareOnboardingVerification({ ...this.keyOptions(), updateId: row.update_id, apiKey: key, aveCost: AVE_CU.details });
       // Verification has its own task. Do not keep preparing the same inbox command.
       this.storage.sql.exec('UPDATE inbox SET next_at = ? WHERE tenant_id=? AND update_id=?', row.expires_at, this.tenantId, row.update_id);
     }
     return { status: 'success', complete: true };
   }
 
-  async verifyCredential(connectionGeneration, { request, gmgn }) {
+  async verifyCredential(connectionGeneration, { request, fetchImpl }) {
     try {
-      await verifyAndActivateOnboardingCredential({ ...this.keyOptions(), connectionGeneration, request, verify: (key, options) => gmgn.verifyApiKey(key, options), afterActivate: state => {
+      await verifyAndActivateOnboardingCredential({ ...this.keyOptions(), connectionGeneration, request, verify: (key, { signal }) => verifyAveApiKey(key, { fetchImpl, now: this.now, signal }), afterActivate: state => {
         restartRecoverableScanInTransaction(this.storage, this.tenantId, { keyEpoch: state.keyEpoch, controlEpoch: state.controlEpoch, now: this.now() });
-        this.startInitialScans();
+        this.startScan();
         this.resetNotificationBaseline();
         this.inbox.finishInTransaction(state.updateId, 'DONE');
-        this.commands.noticeInTransaction(state.updateId, this.commands.language === 'en' ? 'GMGN connected: gmgn_****. Read-only; no trades. Check and delete your key message. Notifications remain under your control: /unmute.' : 'GMGN已连接：gmgn_****。只读，不执行交易。请检查并删除密钥消息。可使用 /unmute 开启提醒。', 'connected');
+        this.commands.noticeInTransaction(state.updateId, this.commands.language === 'en' ? 'AVE connected. Read-only; no trades. Check and delete your key message. Notifications remain under your control: /unmute.' : 'AVE已连接。只读，不执行交易。请检查并删除密钥消息。可使用 /unmute 开启提醒。', 'connected');
       } });
     } catch (error) {
-      if (['GMGN_RATE_LIMITED','GMGN_REQUEST_DEFERRED','GMGN_TIMEOUT','GMGN_NETWORK_ERROR','SCHEDULER_REQUEST_TIMEOUT'].includes(error.code)) throw error;
-      if (!(error instanceof ConnectionError) && !(error instanceof SigningKeyError) && !['GMGN_AUTH_FAILED','GMGN_PERMISSION_DENIED','GMGN_REQUEST_FAILED'].includes(error.code)) throw error;
+      // A transient failure retries the verification; a refusal ends it.
+      if (['AVE_RATE_LIMITED','AVE_TIMEOUT','AVE_NETWORK','AVE_UPSTREAM','AVE_ABORTED','SCHEDULER_REQUEST_TIMEOUT'].includes(error.code)) throw error;
+      if (!(error instanceof ConnectionError) && !['AVE_AUTH','AVE_QUOTA','AVE_SCHEMA','AVE_SIZE','AVE_CONFIG','AVE_INPUT'].includes(error.code)) throw error;
       this.storage.transactionSync(() => {
         const row = this.storage.sql.exec("SELECT update_id FROM inbox WHERE tenant_id=? AND command_type='credential' AND generation=? AND status IN ('RECEIVED','RUNNING')", this.tenantId, connectionGeneration).toArray()[0];
         if (row) {
@@ -150,36 +140,29 @@ export class TelegramRuntime {
     return { status: 'success', complete: true };
   }
 
-  startInitialScans(chains = null) {
-    const preferred = this.commands.preference('scanChains', [scannerSettings.chain]);
-    const enabled = chains ?? preferred;
-    const state = this.control.snapshot();
-    const store = new SqliteRecoverableScannerStore(this.storage, this.tenantId);
-    for (const chain of enabled) {
-      const scheduler = readSchedulerStateInTransaction(this.storage, this.tenantId);
-      const current = this.storage.sql.exec('SELECT cycle_id,key_epoch FROM cycle_checkpoint WHERE tenant_id=? AND chain=? ORDER BY updated_at DESC', this.tenantId, chain).toArray().find(row => row.key_epoch === state.keyEpoch && scheduler.tasks.some(task => task.id === `scan:${row.cycle_id}`));
-      if (current) continue;
-      const scanner = new RecoverableScanner({ store, settings: scannerSettings, now: this.now });
-      const cycleId = `telegram:${chain}:${state.keyEpoch}:${this.now()}`;
-      scanner.begin({ cycleId, chain, keyEpoch: state.keyEpoch, controlEpoch: state.controlEpoch, deadlineAt: this.now() + scannerSettings.auditCycleBudgetMs, afterBegin: () => scheduleRecoverableScanTaskInTransaction(this.storage, this.tenantId, cycleId, this.now(), 3) });
-    }
-    this.control.ensureActiveChain(enabled[0]);
+  /** Start the scan chain's cycle unless one already runs for the current key. */
+  startScan() {
+    const control = this.control.selectScanChainInTransaction(this.control.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN);
+    const chain = control.activeChain;
+    const scheduler = readSchedulerStateInTransaction(this.storage, this.tenantId);
+    const current = this.storage.sql.exec('SELECT cycle_id,key_epoch FROM cycle_checkpoint WHERE tenant_id=? AND chain=? ORDER BY updated_at DESC', this.tenantId, chain).toArray()
+      .find(row => row.key_epoch === control.keyEpoch && scheduler.tasks.some(task => task.id === `scan:${row.cycle_id}`));
+    if (current) return;
+    const scanner = new RecoverableScanner({ store: new SqliteRecoverableScannerStore(this.storage, this.tenantId), settings: scannerSettings, now: this.now });
+    const cycleId = `telegram:${chain}:${control.keyEpoch}:${this.now()}`;
+    scanner.begin({ cycleId, chain, keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch, deadlineAt: this.now() + scannerSettings.auditCycleBudgetMs,
+      afterBegin: () => scheduleRecoverableScanTaskInTransaction(this.storage, this.tenantId, cycleId, this.now(), AVE_CU.trending) });
   }
 
   resume() {
     const scheduled = readSchedulerStateInTransaction(this.storage, this.tenantId).tasks.filter(task => task.kind === 'scan').map(task => task.id.slice(5));
     this.control.resumeWith(control => resumeRecoverableCheckpointsInTransaction(this.storage, this.tenantId, { cycleIds: scheduled, control, now: this.now() }), () => []);
-    if (this.control.snapshot().configured) this.startInitialScans();
+    if (this.control.snapshot().configured) this.startScan();
   }
 
-  setScanChains(chains) {
-    if (!Array.isArray(chains) || chains.length < 1 || chains.length > 3 || new Set(chains).size !== chains.length || chains.some(chain => !scannerSettings.supportedChains.includes(chain))) throw new TypeError('Invalid scan chain selection');
-    this.commands.setPreference('scanChains', chains);
-    this.commands.setPreference('scanChainsVersion', this.commands.preference('scanChainsVersion', 0) + 1);
-    if (this.control.snapshot().configured) {
-      this.startInitialScans(chains);
-      this.control.setScanChains(chains, ({ control, cycleIds }) => resumeRecoverableCheckpointsInTransaction(this.storage, this.tenantId, { cycleIds, control, now: this.now(), allowPaused: true }));
-    }
+  selectScanChain(chain) {
+    this.control.selectScanChainInTransaction(chain);
+    if (this.control.snapshot().configured) this.startScan();
   }
 
   disconnect() {
@@ -196,9 +179,8 @@ export class TelegramRuntime {
     const issues = [];
     if (this.outbox.issueRows().some(row => row.status === 'UNKNOWN' && row.ambiguous_retries >= 1 && row.delivery_class !== 'ACTION_REQUIRED')) issues.push({ key: 'delivery-uncertain', reason: 'DELIVERY_UNCERTAIN', nextAction: '/status' });
     const control = this.control.snapshot();
-    const live = this.live.snapshot(control.live.focusChain ?? control.activeChain ?? 'robinhood');
     const auth = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, 'telegram.providerAuth').toArray()[0];
-    if (live.status === 'AUTH_REQUIRED' || (auth && JSON.parse(auth.value_json).keyEpoch === control.keyEpoch && JSON.parse(auth.value_json).unusable)) issues.push({ key: 'gmgn-unusable', reason: 'KEY_UNUSABLE', nextAction: '/onboard' });
+    if (auth && JSON.parse(auth.value_json).keyEpoch === control.keyEpoch && JSON.parse(auth.value_json).unusable) issues.push({ key: 'ave-unusable', reason: 'KEY_UNUSABLE', nextAction: '/onboard' });
     return issues;
   }
 
@@ -211,14 +193,14 @@ export class TelegramRuntime {
     const { notifications } = this.notifications.reconcileInTransaction({ issues: this.actionableIssues() });
     for (const notification of notifications) {
       if (this.outbox.has(notification.id)) continue;
-      const session = this.commands.sessions.createInTransaction('audits', this.control.snapshot().activeChain ?? 'robinhood');
+      const session = this.commands.sessions.createInTransaction('audits', this.control.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN);
       const en = this.commands.language === 'en';
       const title = en ? 'Action required' : '需要人工查看';
       const reason = notification.actionReason === 'CANDIDATE_NEW'
-        ? (en ? 'On-chain gates passed; review X comments and replies.' : '链上门槛已通过，请核验X评论与回复。')
+        ? (en ? 'New market lead on AVE; security is not yet verified. Check it before any trade.' : 'AVE新市场线索，安全性尚未核验。交易前请自行核查。')
         : notification.actionReason === 'RISK_WORSENED'
           ? (en ? 'Risk or evidence worsened; review the updated evidence.' : '风险或证据恶化，请查看更新后的证据。')
-          : notification.issue.reason === 'KEY_UNUSABLE' ? (en ? 'GMGN key is unusable; reconnect with /onboard.' : 'GMGN密钥不可用，请使用 /onboard 重新连接。')
+          : notification.issue.reason === 'KEY_UNUSABLE' ? (en ? 'AVE key is unusable; reconnect with /onboard.' : 'AVE密钥不可用，请使用 /onboard 重新连接。')
             : (en ? 'Message delivery is unconfirmed; check /status.' : '消息投递结果不确定，请通过 /status 核对。');
       const lines = [`<b>${title}</b>`, reason];
       const keyboard = notification.members.map((token, index) => {
@@ -275,19 +257,20 @@ export class TelegramRuntime {
   reconcileInTransaction({ recover = false, tasks: suppliedTasks = null } = {}) {
     if (!this.storage.sql.exec('SELECT tenant_id FROM tenants WHERE tenant_id=?', this.tenantId).toArray().length) return suppliedTasks ?? readSchedulerStateInTransaction(this.storage, this.tenantId).tasks;
     this.inbox.reconcileInTransaction();
-    const pending = this.storage.sql.exec("SELECT value_enc,generation FROM keys WHERE tenant_id=? AND name='gmgn-pending-api-key'", this.tenantId).toArray()[0];
-    if (pending && JSON.parse(pending.value_enc).v === 2 && !this.storage.sql.exec("SELECT update_id FROM inbox WHERE tenant_id=? AND command_type='credential' AND generation=? AND status IN ('RECEIVED','RUNNING')", this.tenantId, pending.generation).toArray().length) this.storage.sql.exec("DELETE FROM keys WHERE tenant_id=? AND name='gmgn-pending-api-key' AND generation=?", this.tenantId, pending.generation);
+    // A pending key whose submission ended is never verified; drop it.
+    const pending = this.storage.sql.exec('SELECT generation FROM keys WHERE tenant_id=? AND name=?', this.tenantId, CONNECTION_KEY_NAMES.PENDING_KEY_NAME).toArray()[0];
+    if (pending && !this.storage.sql.exec("SELECT update_id FROM inbox WHERE tenant_id=? AND command_type='credential' AND generation=? AND status IN ('RECEIVED','RUNNING')", this.tenantId, pending.generation).toArray().length) this.storage.sql.exec('DELETE FROM keys WHERE tenant_id=? AND name=? AND generation=?', this.tenantId, CONNECTION_KEY_NAMES.PENDING_KEY_NAME, pending.generation);
     this.reconcileRequestedPanelsInTransaction();
     const correctionsAt = this.reconcileCardsInTransaction();
     this.reconcileNotificationsInTransaction();
     const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
     const ownedOutbox = new Set(this.outbox.ids().map(row => `outbox:${row.id}`));
-    const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'live:subscription' && task.id !== 'telegram:corrections' && task.id !== 'telegram:expiry' && !task.id.startsWith('inbox:'));
+    const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'telegram:corrections' && task.id !== 'telegram:expiry' && !task.id.startsWith('inbox:'));
     tasks.push(...state.tasks.filter(task => task.id.startsWith('inbox:')));
     const expiry = this.storage.sql.exec("SELECT MIN(expires_at) AS at FROM inbox WHERE tenant_id=? AND status IN ('RECEIVED','RUNNING')", this.tenantId).toArray()[0]?.at;
-    if (Number.isSafeInteger(expiry)) tasks.push({ id: 'telegram:expiry', kind: 'local-control', dueAt: expiry, enabled: true, needsGmgn: false, gmgnWeight: 1 });
-    if (correctionsAt !== null) tasks.push({ id: 'telegram:corrections', kind: 'local-control', dueAt: correctionsAt, enabled: true, needsGmgn: false, gmgnWeight: 1 });
-    tasks.push(...this.live.reconcileInTransaction({ recoverRunning: recover }), ...this.outbox.reconcileInTransaction({ recoverSending: recover }));
+    if (Number.isSafeInteger(expiry)) tasks.push({ id: 'telegram:expiry', kind: 'local-control', dueAt: expiry, enabled: true, aveCost: 0 });
+    if (correctionsAt !== null) tasks.push({ id: 'telegram:corrections', kind: 'local-control', dueAt: correctionsAt, enabled: true, aveCost: 0 });
+    tasks.push(...this.outbox.reconcileInTransaction({ recoverSending: recover }));
     const current = readSchedulerStateInTransaction(this.storage, this.tenantId);
     writeSchedulerStateInTransaction(this.storage, this.tenantId, { ...current, tasks });
     this.commands.sessions.pruneInTransaction();

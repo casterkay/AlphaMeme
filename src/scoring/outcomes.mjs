@@ -1,5 +1,7 @@
 import { sha256Bytes } from '../util/crypto.mjs';
 
+// A deep-audit pass (X_REVIEW) and an AVE market lead (LIVE_READY) both passed the screen.
+const PASSED_DECISIONS = Object.freeze(['X_REVIEW', 'LIVE_READY']);
 export const horizons = Object.freeze({ m5: 300_000, m15: 900_000, m30: 1800_000, h1: 3600_000, h2: 7200_000, h6: 21600_000, h24: 86400_000 });
 const MAX_SAMPLE_ATTEMPTS = 3;
 const MAX_SAMPLE_LATENESS_MS = 24 * 3600_000;
@@ -73,7 +75,7 @@ export async function collectOutcomeSamples(outcomes, gmgn, chain, { limit = 4, 
 
 export function outcomeCoverage(outcomes, now = Date.now()) {
   const cohort = decision => {
-    const rows = outcomes.filter(row => row.initialDecision === decision);
+    const rows = outcomes.filter(row => decision.includes(row.initialDecision));
     return Object.fromEntries(Object.entries(horizons).map(([key, duration]) => {
       const eligible = rows.filter(row => now >= row.baselineAt + duration);
       const values = eligible.map(row => row.samples?.[key]?.return).filter(Number.isFinite).sort((a, b) => a - b);
@@ -83,7 +85,7 @@ export function outcomeCoverage(outcomes, now = Date.now()) {
         positiveRate: n ? values.filter(x => x > 0).length / n : null }];
     }));
   };
-  return { passed: cohort('X_REVIEW'), rejected: cohort('HARD_REJECT') };
+  return { passed: cohort(PASSED_DECISIONS), rejected: cohort(['HARD_REJECT']) };
 }
 
 export const REQUIRED_CALIBRATION_WINDOWS = Object.freeze(['m30', 'h2', 'h24']);
@@ -94,7 +96,7 @@ export function summarizeOutcomes(outcomes, now = Date.now()) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
-  const rows = (Array.isArray(outcomes) ? outcomes : []).filter(item => item?.initialDecision === 'X_REVIEW');
+  const rows = (Array.isArray(outcomes) ? outcomes : []).filter(item => PASSED_DECISIONS.includes(item?.initialDecision));
   const average = key => {
     const values = rows.map(item => numberOrNull(item.samples?.[key]?.return)).filter(value => value !== null);
     return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;

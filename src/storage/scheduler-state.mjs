@@ -3,11 +3,8 @@ import {
   defaultSchedulerRuntime,
   normalizeSchedulerRuntime
 } from '../scheduler.mjs';
-import {
-  normalizeTenantId,
-  readGmgnAdmissionState,
-  writeGmgnAdmissionStateInTransaction
-} from './gmgn-admission-state.mjs';
+import { readAveAdmissionState, writeAveAdmissionStateInTransaction } from './ave-admission-state.mjs';
+import { normalizeTenantId } from './tenant-id.mjs';
 
 const INSTANCE_KEY = 'scheduler.instance.v1';
 const RUNTIME_KEY = 'scheduler.runtime.v1';
@@ -72,7 +69,7 @@ export function readSchedulerStateInTransaction(storage, value) {
   return {
     tasks: taskRecord(readRecord(storage, tenantId, TASKS_KEY, { version: 1, tasks: [] })).tasks,
     runtime: runtimeRecord(readRecord(storage, tenantId, RUNTIME_KEY, defaultSchedulerRuntime())),
-    gmgn: readGmgnAdmissionState(storage, tenantId)
+    ave: readAveAdmissionState(storage, tenantId)
   };
 }
 
@@ -83,13 +80,13 @@ export function writeSchedulerStateInTransaction(storage, value, nextState) {
   }
   const tasks = taskRecord({ version: 1, tasks: nextState.tasks }).tasks;
   const runtime = runtimeRecord(nextState.runtime);
-  const gmgn = readGmgnAdmissionState(storage, tenantId);
+  const ave = readAveAdmissionState(storage, tenantId);
   writeRecord(storage, tenantId, TASKS_KEY, { version: 1, tasks });
   writeRecord(storage, tenantId, RUNTIME_KEY, runtime);
-  if (JSON.stringify(nextState.gmgn) !== JSON.stringify(gmgn)) {
-    writeGmgnAdmissionStateInTransaction(storage, tenantId, nextState.gmgn);
+  if (JSON.stringify(nextState.ave) !== JSON.stringify(ave)) {
+    writeAveAdmissionStateInTransaction(storage, tenantId, nextState.ave);
   }
-  return { tasks: clone(tasks), runtime: clone(runtime), gmgn: clone(nextState.gmgn) };
+  return { tasks: clone(tasks), runtime: clone(runtime), ave: clone(nextState.ave) };
 }
 
 function schedulerInstanceRecord(value) {
@@ -163,11 +160,9 @@ export class SqliteSchedulerStore {
       }
       if (!tenant) {
         this.storage.sql.exec(
-          'INSERT INTO tenants (tenant_id, owner_user_id, gmgn_api_key_enc, onboard_state, created_at) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO tenants (tenant_id, owner_user_id, created_at) VALUES (?, ?, ?)',
           this.tenantId,
           receipt.actorUserId,
-          null,
-          'none',
           receivedAt
         );
       }
@@ -205,7 +200,7 @@ export class SqliteSchedulerStore {
         throw new SchedulerStateError('SCHEDULER_INBOX_RECEIPT_INVALID', 'Telegram inbox receipt has an invalid durable due time');
       }
       const taskId = `inbox:${receipt.updateId}`;
-      const task = { id: taskId, kind: 'command', dueAt, enabled: true, needsGmgn: false, gmgnWeight: 1 };
+      const task = { id: taskId, kind: 'command', dueAt, enabled: true, aveCost: 0 };
       const tasks = keepScheduled
         ? current.tasks.some(candidate => candidate.id === taskId)
           ? current.tasks.map(candidate => candidate.id === taskId ? task : candidate)
@@ -227,15 +222,15 @@ export class SqliteSchedulerStore {
   }
 }
 
-export function scheduleRecoverableScanTaskInTransaction(storage, tenant, cycleId, dueAt, gmgnWeight = 1, enabled = true) {
+export function scheduleRecoverableScanTaskInTransaction(storage, tenant, cycleId, dueAt, aveCost, enabled = true) {
   const tenantId = normalizeTenantId(tenant);
   if (typeof cycleId !== 'string' || !/^[a-z0-9][a-z0-9:_-]{0,127}$/i.test(cycleId)
-    || !Number.isSafeInteger(dueAt) || dueAt < 0 || !Number.isSafeInteger(gmgnWeight) || gmgnWeight <= 0
+    || !Number.isSafeInteger(dueAt) || dueAt < 0 || !Number.isSafeInteger(aveCost) || aveCost < 0
     || typeof enabled !== 'boolean') {
     throw new SchedulerStateError('SCHEDULER_RECOVERABLE_TASK_INVALID', 'recoverable scanner task is invalid');
   }
   const current = taskRecord(readRecord(storage, tenantId, TASKS_KEY, { version: 1, tasks: [] }));
-  const task = { id: `scan:${cycleId}`, kind: 'scan', dueAt, enabled, needsGmgn: true, gmgnWeight };
+  const task = { id: `scan:${cycleId}`, kind: 'scan', dueAt, enabled, aveCost };
   const tasks = current.tasks.some(item => item.id === task.id)
     ? current.tasks.map(item => item.id === task.id ? task : item)
     : [...current.tasks, task];
@@ -243,9 +238,9 @@ export function scheduleRecoverableScanTaskInTransaction(storage, tenant, cycleI
   return task;
 }
 
-export function scheduleCredentialVerificationTaskInTransaction(storage, tenant, generation, dueAt) {
+export function scheduleCredentialVerificationTaskInTransaction(storage, tenant, generation, dueAt, aveCost) {
   const tenantId = normalizeTenantId(tenant);
-  if (!Number.isSafeInteger(generation) || generation < 0 || !Number.isSafeInteger(dueAt) || dueAt < 0) {
+  if (!Number.isSafeInteger(generation) || generation < 0 || !Number.isSafeInteger(dueAt) || dueAt < 0 || !Number.isSafeInteger(aveCost) || aveCost <= 0) {
     throw new SchedulerStateError('SCHEDULER_CREDENTIAL_TASK_INVALID', 'credential verification task is invalid');
   }
   const current = taskRecord(readRecord(storage, tenantId, TASKS_KEY, { version: 1, tasks: [] }));
@@ -254,8 +249,7 @@ export function scheduleCredentialVerificationTaskInTransaction(storage, tenant,
     kind: 'credential',
     dueAt,
     enabled: true,
-    needsGmgn: true,
-    gmgnWeight: 1
+    aveCost
   };
   const tasks = [...current.tasks.filter(item => item.kind !== 'credential'), task];
   writeRecord(storage, tenantId, TASKS_KEY, taskRecord({ version: 1, tasks }));

@@ -1,10 +1,10 @@
-import { normalizeTenantId } from './gmgn-admission-state.mjs';
+import { activateAveKey } from '../ave-admission.mjs';
+import { isScanChain } from '../chains.mjs';
 import {
   readSchedulerStateInTransaction,
   writeSchedulerStateInTransaction
 } from './scheduler-state.mjs';
-
-const SUPPORTED_CHAIN_IDS = new Set(['sol', 'bsc', 'base', 'eth', 'robinhood', 'arc', 'stable']);
+import { normalizeTenantId } from './tenant-id.mjs';
 
 export class ControlStateError extends Error {
   constructor(code, message) {
@@ -15,21 +15,8 @@ export class ControlStateError extends Error {
 }
 
 function chain(value) {
-  if (typeof value !== 'string' || !SUPPORTED_CHAIN_IDS.has(value)) {
-    throw new ControlStateError('CONTROL_CHAIN_INVALID', 'control chain is not supported');
-  }
+  if (!isScanChain(value)) throw new ControlStateError('CONTROL_CHAIN_INVALID', 'control chain is not supported');
   return value;
-}
-
-function scanChains(value) {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 3) {
-    throw new ControlStateError('CONTROL_SCAN_CHAINS_INVALID', 'scan chains must contain between one and three chains');
-  }
-  const normalized = value.map(chain);
-  if (new Set(normalized).size !== normalized.length) {
-    throw new ControlStateError('CONTROL_SCAN_CHAINS_INVALID', 'scan chains must not contain duplicates');
-  }
-  return normalized;
 }
 
 function increment(value, name) {
@@ -46,8 +33,7 @@ function snapshot(state) {
     controlEpoch: state.runtime.control.controlEpoch,
     connectionGeneration: state.runtime.control.connectionGeneration,
     activeChain: state.runtime.control.activeChain,
-    live: Object.freeze({ ...state.runtime.live }),
-    keyEpoch: state.gmgn.keyEpoch
+    keyEpoch: state.ave.keyEpoch
   });
 }
 
@@ -61,10 +47,9 @@ function nextControl(state, changes) {
     runtime: {
       ...state.runtime,
       eligibility: { ...state.runtime.eligibility, ...changes.eligibility },
-      control: { ...state.runtime.control, ...changes.control },
-      live: { ...state.runtime.live, ...changes.live }
+      control: { ...state.runtime.control, ...changes.control }
     },
-    gmgn: { ...state.gmgn, ...changes.gmgn },
+    ave: changes.ave || state.ave,
     tasks: changes.tasks || state.tasks
   };
 }
@@ -73,8 +58,8 @@ export function assertCheckpointGeneration(storage, tenant, checkpoint) {
   const tenantId = normalizeTenantId(tenant);
   const state = readSchedulerStateInTransaction(storage, tenantId);
   const current = snapshot(state);
-  if (!current.configured) throw new ControlStateError('CYCLE_CONNECTION_UNCONFIGURED', 'GMGN connection is not configured');
-  if (checkpoint.keyEpoch !== current.keyEpoch) throw new ControlStateError('CYCLE_KEY_EPOCH_STALE', 'GMGN credential epoch changed while work was in flight');
+  if (!current.configured) throw new ControlStateError('CYCLE_CONNECTION_UNCONFIGURED', 'AVE connection is not configured');
+  if (checkpoint.keyEpoch !== current.keyEpoch) throw new ControlStateError('CYCLE_KEY_EPOCH_STALE', 'AVE credential epoch changed while work was in flight');
   if (checkpoint.controlEpoch !== current.controlEpoch) throw new ControlStateError('CYCLE_CONTROL_EPOCH_STALE', 'control epoch changed while work was in flight');
   return current;
 }
@@ -93,8 +78,7 @@ export function activateCredentialInTransaction(storage, tenant, expected, after
     control: {
       connectionGeneration: increment(state.runtime.control.connectionGeneration, 'connection generation')
     },
-    gmgn: { keyEpoch: increment(state.gmgn.keyEpoch, 'key epoch') },
-    live: {}
+    ave: activateAveKey(state.ave)
   });
   write(storage, tenantId, next);
   if (afterActivate !== undefined) {
@@ -118,8 +102,6 @@ export function beginCredentialVerificationInTransaction(storage, tenant, expect
     control: {
       connectionGeneration: increment(state.runtime.control.connectionGeneration, 'connection generation')
     },
-    gmgn: {},
-    live: {}
   });
   write(storage, tenantId, next);
   return snapshot(next);
@@ -141,9 +123,7 @@ export class SqliteControlStateStore {
   pause() {
     return this.#update(state => nextControl(state, {
       eligibility: { paused: true },
-      control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
-      gmgn: {},
-      live: { leaseUntil: 0 }
+      control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') }
     }));
   }
 
@@ -158,9 +138,7 @@ export class SqliteControlStateStore {
       }
       const next = nextControl(state, {
         eligibility: { paused: false },
-        control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
-        gmgn: {},
-        live: {}
+        control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') }
       });
       const control = snapshot(next);
       const value = afterResume(control);
@@ -169,60 +147,32 @@ export class SqliteControlStateStore {
     });
   }
 
-  switchChain(value) {
+  /**
+   * Scan one chain. Other chains' cycles are discarded (their research records
+   * stay); the caller starts the selected chain's cycle in the same transaction.
+   */
+  selectScanChainInTransaction(value) {
     const activeChain = chain(value);
-    return this.#update(state => state.runtime.control.activeChain === activeChain ? state : nextControl(state, {
-      eligibility: {},
-      control: { activeChain },
-      gmgn: {},
-      live: {},
-      tasks: state.tasks
-    }));
-  }
-
-  setScanChains(value, rebindCheckpoints) {
-    const enabledChains = new Set(scanChains(value));
-    if (typeof rebindCheckpoints !== 'function') {
-      throw new ControlStateError('CONTROL_SCAN_CHAINS_INVALID', 'scan chains require a checkpoint revalidation callback');
+    const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
+    const checkpointChains = new Map(this.storage.sql.exec(
+      'SELECT cycle_id, chain FROM cycle_checkpoint WHERE tenant_id = ?', this.tenantId
+    ).toArray().map(row => [row.cycle_id, row.chain]));
+    const otherCycle = task => task.kind === 'scan' && checkpointChains.get(task.id.slice('scan:'.length)) !== activeChain;
+    if (state.runtime.control.activeChain === activeChain && !state.tasks.some(otherCycle)) return snapshot(state);
+    for (const [cycleId, chainName] of checkpointChains) {
+      if (chainName !== activeChain) this.storage.sql.exec('DELETE FROM cycle_checkpoint WHERE tenant_id = ? AND cycle_id = ?', this.tenantId, cycleId);
     }
-    return this.storage.transactionSync(() => {
-      const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
-      const checkpointChains = new Map(this.storage.sql.exec(
-        'SELECT cycle_id, chain FROM cycle_checkpoint WHERE tenant_id = ?', this.tenantId
-      ).toArray().map(row => [row.cycle_id, row.chain]));
-      const scheduledScans = state.tasks.filter(task => task.kind === 'scan').map(task => {
-        const cycleId = task.id.startsWith('scan:') ? task.id.slice('scan:'.length) : null;
-        const chainName = checkpointChains.get(cycleId);
-        if (!chainName) throw new ControlStateError('CYCLE_CHECKPOINT_MISSING', 'scheduled scan has no checkpoint');
-        return { task, cycleId, chainName };
-      });
-      const scheduledChains = new Set(scheduledScans.map(scan => scan.chainName));
-      if ([...enabledChains].some(chainName => !scheduledChains.has(chainName))) {
-        throw new ControlStateError('CONTROL_SCAN_CHAIN_UNSCHEDULED', 'selected scan chain has no scheduled checkpoint');
-      }
-      const currentEnabledChains = new Set(scheduledScans.filter(scan => scan.task.enabled).map(scan => scan.chainName));
-      if (currentEnabledChains.size === enabledChains.size
-        && [...currentEnabledChains].every(chainName => enabledChains.has(chainName))) return snapshot(state);
-      const next = nextControl(state, {
-        control: { controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
-        tasks: state.tasks.map(task => task.kind === 'scan'
-          ? { ...task, enabled: enabledChains.has(checkpointChains.get(task.id.slice('scan:'.length))) }
-          : task)
-      });
-      rebindCheckpoints({
-        control: snapshot(next),
-        cycleIds: scheduledScans.filter(scan => enabledChains.has(scan.chainName)).map(scan => scan.cycleId)
-      });
-      write(this.storage, this.tenantId, next);
-      return snapshot(next);
+    const next = nextControl(state, {
+      eligibility: {},
+      control: { activeChain, controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch') },
+      tasks: state.tasks.filter(task => !otherCycle(task))
     });
+    write(this.storage, this.tenantId, next);
+    return snapshot(next);
   }
 
-  ensureActiveChain(value) {
-    const activeChain = chain(value);
-    return this.#update(state => state.runtime.control.activeChain === null
-      ? nextControl(state, { eligibility: {}, control: { activeChain }, gmgn: {}, live: {} })
-      : state);
+  selectScanChain(value) {
+    return this.storage.transactionSync(() => this.selectScanChainInTransaction(value));
   }
 
   disconnect() {
@@ -232,9 +182,8 @@ export class SqliteControlStateStore {
         controlEpoch: increment(state.runtime.control.controlEpoch, 'control epoch'),
         connectionGeneration: increment(state.runtime.control.connectionGeneration, 'connection generation')
       },
-      gmgn: { keyEpoch: increment(state.gmgn.keyEpoch, 'key epoch') },
-      live: { subscribed: false, leaseUntil: 0 },
-      tasks: state.tasks.filter(task => !['scan', 'live', 'credential'].includes(task.kind))
+      ave: { ...state.ave, keyEpoch: increment(state.ave.keyEpoch, 'key epoch') },
+      tasks: state.tasks.filter(task => !['scan', 'credential'].includes(task.kind))
     }), { discardCheckpoints: true, deleteKeys: true, cancelCredentialInbox: true });
   }
 
@@ -250,7 +199,7 @@ export class SqliteControlStateStore {
       }
       if (effects.cancelCredentialInbox) {
         this.storage.sql.exec(
-          "UPDATE inbox SET status = 'CANCELLED', payload_enc = NULL, payload_json = NULL, next_at = NULL WHERE tenant_id = ? AND status IN ('RECEIVED', 'RUNNING') AND LOWER(command_type) IN ('setkey', 'credential_verify')",
+          "UPDATE inbox SET status = 'CANCELLED', payload_enc = NULL, payload_json = NULL, next_at = NULL WHERE tenant_id = ? AND status IN ('RECEIVED', 'RUNNING') AND command_type IN ('credential', 'command:setkey')",
           this.tenantId
         );
       }

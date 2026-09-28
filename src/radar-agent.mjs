@@ -1,21 +1,16 @@
 import { TelegramRuntime } from './bot/runtime.mjs';
 import { DurableObject } from 'cloudflare:workers';
-import {
-  normalizeTenantId,
-  readGmgnAdmissionState,
-  SqliteGmgnAdmissionStateStore,
-  writeGmgnAdmissionState
-} from './storage/gmgn-admission-state.mjs';
+import { parseAveBudget, recordAveResponse } from './ave-admission.mjs';
+import { readAveApiKey } from './auth/connection.mjs';
+import { AVE_CU, AveClient, AveError } from './providers/ave.mjs';
+import { readAveAdmissionState, writeAveAdmissionStateInTransaction } from './storage/ave-admission-state.mjs';
 import { initializeRadarSchema } from './storage/schema.mjs';
-import { GmgnClient } from './providers/gmgn.mjs';
+import { normalizeTenantId } from './storage/tenant-id.mjs';
 import { RecoverableScanner } from './recoverable-scanner.mjs';
-import { executeRecoverableScanStep, recoverableRequestAdmission } from './recoverable-scan-executor.mjs';
+import { executeRecoverableScanStep, recoverableRequestCost } from './recoverable-scan-executor.mjs';
 import { externalRequestHandler, localTransactionHandler, OneAlarmScheduler, SchedulerStepError } from './scheduler.mjs';
-import { readGmgnApiKey } from './storage/gmgn-credential.mjs';
 import { SqliteControlStateStore, assertCheckpointGeneration } from './storage/control-state.mjs';
-import { prepareCredentialVerification, verifyAndActivatePendingCredential } from './auth/connection.mjs';
 import {
-  restartRecoverableScanInTransaction,
   resumeRecoverableCheckpointsInTransaction,
   SqliteRecoverableScannerStore
 } from './storage/recoverable-scanner.mjs';
@@ -48,17 +43,18 @@ export class RadarAgent extends DurableObject {
       tenantId,
       schemaVersion: this.schemaVersion,
       lifecycle: 'SKELETON',
-      gmgnAdmission: readGmgnAdmissionState(this.ctx.storage, tenantId),
+      aveAdmission: readAveAdmissionState(this.ctx.storage, tenantId),
       control
     };
   }
 
-  async getGmgnAdmissionState(value) {
-    return readGmgnAdmissionState(this.ctx.storage, this.#boundTenantId(value?.tenantId ?? value));
+  async getAveAdmissionState(value) {
+    return readAveAdmissionState(this.ctx.storage, this.#boundTenantId(value?.tenantId ?? value));
   }
 
-  async setGmgnAdmissionState(value, nextState) {
-    return writeGmgnAdmissionState(this.ctx.storage, this.#boundTenantId(value?.tenantId ?? value), nextState ?? value?.state);
+  async setAveAdmissionState(value) {
+    const tenantId = this.#boundTenantId(value?.tenantId);
+    return this.ctx.storage.transactionSync(() => writeAveAdmissionStateInTransaction(this.ctx.storage, tenantId, value?.state));
   }
 
   async replaceSchedulerTasks(value) {
@@ -78,18 +74,6 @@ export class RadarAgent extends DurableObject {
 
   async getSchedulerSnapshot(value) {
     return this.#schedulerForTenant(value).snapshot();
-  }
-
-  async prepareGmgnCredentialVerification(value) {
-    const tenantId = this.#boundTenantId(value?.tenantId);
-    const prepared = await prepareCredentialVerification({
-      storage: this.ctx.storage,
-      masterKey: this.env.MASTER_ENC_KEY,
-      tenantId,
-      apiKey: value?.apiKey
-    });
-    const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
-    return { ...prepared, dueAt };
   }
 
   async pause(value) {
@@ -114,19 +98,9 @@ export class RadarAgent extends DurableObject {
     return { ...resumed.control, checkpoint: value?.cycleId ? resumed.value[0] : null, checkpoints: resumed.value, dueAt };
   }
 
-  async switchChain(value) {
+  async selectScanChain(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
-    const control = new SqliteControlStateStore(this.ctx.storage, tenantId).switchChain(value?.chain);
-    const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
-    return { ...control, dueAt };
-  }
-
-  async setScanChains(value) {
-    const tenantId = this.#boundTenantId(value?.tenantId);
-    const now = Date.now();
-    const control = new SqliteControlStateStore(this.ctx.storage, tenantId).setScanChains(value?.chains, ({ control, cycleIds }) =>
-      resumeRecoverableCheckpointsInTransaction(this.ctx.storage, tenantId, { cycleIds, control, now, allowPaused: true })
-    );
+    const control = new SqliteControlStateStore(this.ctx.storage, tenantId).selectScanChain(value?.chain);
     const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
     return { ...control, dueAt };
   }
@@ -140,7 +114,7 @@ export class RadarAgent extends DurableObject {
 
   async beginRecoverableCycle(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
-    new SqliteControlStateStore(this.ctx.storage, tenantId).ensureActiveChain(value?.chain);
+    new SqliteControlStateStore(this.ctx.storage, tenantId).selectScanChain(value?.chain);
     const checkpoint = this.#recoverableScanner(tenantId, value?.settings).begin({
       ...value,
       afterBegin: current => scheduleRecoverableScanTaskInTransaction(
@@ -148,7 +122,7 @@ export class RadarAgent extends DurableObject {
         tenantId,
         current.cycleId,
         current.updatedAt + 1_000,
-        recoverableRequestAdmission({ kind: 'DISCOVER', endpoint: 'trenches' }).gmgnWeight
+        AVE_CU.trending
       )
     });
     await this.#schedulerForTenant(tenantId).recomputeAlarm();
@@ -281,6 +255,7 @@ export class RadarAgent extends DurableObject {
   #scheduler(store) {
     return new OneAlarmScheduler({
       store,
+      aveBudget: parseAveBudget(this.env),
       alarms: {
         setAlarm: at => this.ctx.storage.setAlarm(at),
         deleteAlarm: () => this.ctx.storage.deleteAlarm()
@@ -293,7 +268,6 @@ export class RadarAgent extends DurableObject {
           if (!outbox.has(task.id.slice('outbox:'.length))) throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', 'Outbox task has no durable intent');
           return outbox.deliverOne(task.id.slice('outbox:'.length), { request });
         }),
-        live: this.#liveHandler(store),
         credential: this.#credentialVerificationHandler(store),
         scan: this.#recoverableScanHandler(store),
         ...this.#schedulerHandlers
@@ -310,44 +284,56 @@ export class RadarAgent extends DurableObject {
       const checkpoint = scannerStore.read(cycleId);
       if (!checkpoint) return task;
       const scanner = new RecoverableScanner({ store: scannerStore, settings: checkpoint.partial.settings });
-      const admission = recoverableRequestAdmission(scanner.nextRequest(cycleId));
-      return { ...task, needsGmgn: admission.needsGmgn, gmgnWeight: admission.gmgnWeight };
+      return { ...task, aveCost: recoverableRequestCost(scanner.nextRequest(cycleId)) };
     });
   }
 
   #recoverableScanHandler(store) {
-    return externalRequestHandler(async ({ task, request, gmgnReservation }) => {
+    return externalRequestHandler(async ({ task, request }) => {
       if (!task.id.startsWith('scan:')) {
         throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', 'recoverable scan task identity is invalid');
       }
       const cycleId = task.id.slice('scan:'.length);
       const scanner = this.#recoverableScannerForCycle({ tenantId: store.tenantId, cycleId });
-      const apiKey = await readGmgnApiKey(this.ctx.storage, this.#telegram(store.tenantId).masterKey, store.tenantId);
+      const apiKey = await readAveApiKey(this.ctx.storage, this.#telegram(store.tenantId).masterKey, store.tenantId);
       const checkpoint = scanner.checkpoint(cycleId);
       assertCheckpointGeneration(this.ctx.storage, store.tenantId, checkpoint);
-      const gmgn = new GmgnClient({
-        apiKeyProvider: () => apiKey,
-        legacyKeyProvider: () => '',
-        admissionStateStore: new SqliteGmgnAdmissionStateStore(this.ctx.storage, store.tenantId),
-        admissionReservation: gmgnReservation
-      });
-      const isGmgnRequest = recoverableRequestAdmission(scanner.nextRequest(cycleId)).needsGmgn;
+      const aveRequest = recoverableRequestCost(scanner.nextRequest(cycleId)) > 0;
       return executeRecoverableScanStep({
         scanner,
         cycleId,
-        gmgn,
-        request: operation => request(async options => {
-          try {
-            const result = await operation(options);
-            if (isGmgnRequest) this.ctx.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json', store.tenantId, 'telegram.providerAuth', JSON.stringify({ keyEpoch: checkpoint.keyEpoch, unusable: false }));
-            return result;
-          } catch (error) {
-            if (['GMGN_AUTH_FAILED','GMGN_PERMISSION_DENIED','GMGN_API_KEY_INVALID'].includes(error.code)) this.ctx.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json', store.tenantId, 'telegram.providerAuth', JSON.stringify({ keyEpoch: checkpoint.keyEpoch, unusable: true }));
-            throw error;
-          }
-        }),
-        onFinalized: checkpoint => this.#startNextRecoverableCycle(store, scanner, checkpoint)
+        ave: new AveClient({ apiKey }),
+        request: operation => request(aveRequest ? this.#recordingAveAnswer(store.tenantId, operation, checkpoint.keyEpoch) : operation),
+        onFinalized: finalized => this.#startNextRecoverableCycle(store, scanner, finalized)
       });
+    });
+  }
+
+  // Admission learns from every AVE answer: a refusal blocks further requests.
+  // Scan reads also report whether the active key (of keyEpoch) still works;
+  // a candidate key's verification never marks the active key unusable.
+  #recordingAveAnswer(tenantId, operation, keyEpoch = null) {
+    return async options => {
+      let result;
+      try {
+        result = await operation(options);
+      } catch (error) {
+        if (error instanceof AveError) this.#recordAveAnswer(tenantId, keyEpoch, error);
+        throw error;
+      }
+      this.#recordAveAnswer(tenantId, keyEpoch, null);
+      return result;
+    };
+  }
+
+  #recordAveAnswer(tenantId, keyEpoch, error) {
+    const budget = parseAveBudget(this.env);
+    this.ctx.storage.transactionSync(() => {
+      const state = readAveAdmissionState(this.ctx.storage, tenantId);
+      writeAveAdmissionStateInTransaction(this.ctx.storage, tenantId, recordAveResponse(Date.now(), state, error, budget));
+      if (keyEpoch !== null && (!error || error.code === 'AVE_AUTH')) {
+        this.ctx.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json', tenantId, 'telegram.providerAuth', JSON.stringify({ keyEpoch, unusable: Boolean(error) }));
+      }
     });
   }
 
@@ -367,12 +353,11 @@ export class RadarAgent extends DurableObject {
     const successor = existing || scanner.begin({
       cycleId: summary.nextCycleId,
       chain: checkpoint.chain,
-      keyEpoch: schedulerState.gmgn.keyEpoch,
+      keyEpoch: schedulerState.ave.keyEpoch,
       controlEpoch,
       deadlineAt: summary.nextDeadlineAt,
       partial: { rootCycleId: checkpoint.partial.rootCycleId, scanCount: summary.scanCount }
     });
-    const admission = recoverableRequestAdmission({ kind: 'DISCOVER', endpoint: 'trenches' });
     return {
       checkpoint: successor,
       task: {
@@ -380,46 +365,19 @@ export class RadarAgent extends DurableObject {
         kind: 'scan',
         dueAt: summary.nextCycleAt,
         enabled: true,
-        needsGmgn: admission.needsGmgn,
-        gmgnWeight: admission.gmgnWeight
+        aveCost: AVE_CU.trending
       }
     };
   }
 
   #credentialVerificationHandler(store) {
-    return externalRequestHandler(async ({ task, request, gmgnReservation }) => {
+    return externalRequestHandler(async ({ task, request }) => {
       const match = /^credential:(\d+)$/.exec(task.id);
       if (!match) throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', 'credential task identity is invalid');
-      const gmgn = new GmgnClient({
-        apiKeyProvider: () => '',
-        legacyKeyProvider: () => '',
-        admissionStateStore: new SqliteGmgnAdmissionStateStore(this.ctx.storage, store.tenantId),
-        admissionReservation: gmgnReservation
+      return this.#telegram(store.tenantId).verifyCredential(Number(match[1]), {
+        request: operation => request(this.#recordingAveAnswer(store.tenantId, operation)),
+        fetchImpl: globalThis.fetch
       });
-      const strict = this.ctx.storage.sql.exec("SELECT update_id FROM inbox WHERE tenant_id=? AND command_type='credential' AND generation=? AND status IN ('RECEIVED','RUNNING')", store.tenantId, Number(match[1])).toArray()[0];
-      if (strict) return this.#telegram(store.tenantId).verifyCredential(Number(match[1]), { request, gmgn });
-      const result = await verifyAndActivatePendingCredential({
-        storage: this.ctx.storage,
-        masterKey: this.env.MASTER_ENC_KEY,
-        tenantId: store.tenantId,
-        connectionGeneration: Number(match[1]),
-        request,
-        afterActivate: state => restartRecoverableScanInTransaction(this.ctx.storage, store.tenantId, {
-          keyEpoch: state.keyEpoch,
-          controlEpoch: state.controlEpoch,
-          now: Date.now()
-        }),
-        verify: (apiKey, options) => gmgn.verifyApiKey(apiKey, options)
-      });
-      return { status: 'success', complete: true, checkpoint: `credential:${result.connectionGeneration}` };
-    });
-  }
-
-  #liveHandler(store) {
-    return externalRequestHandler(async ({ request, gmgnReservation }) => {
-      const apiKey = await readGmgnApiKey(this.ctx.storage, this.#telegram(store.tenantId).masterKey, store.tenantId);
-      const gmgn = new GmgnClient({ apiKeyProvider: () => apiKey, legacyKeyProvider: () => '', admissionStateStore: new SqliteGmgnAdmissionStateStore(this.ctx.storage, store.tenantId), admissionReservation: gmgnReservation });
-      return this.#telegram(store.tenantId).live.pollOne({ request, gmgn });
     });
   }
 }

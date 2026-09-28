@@ -1,12 +1,15 @@
 /** Scoring and scheduling defaults for the Worker scanner. */
 export const scannerSettings = Object.freeze({
-  chain: 'robinhood',
-  supportedChains: Object.freeze(['sol', 'bsc', 'base', 'eth', 'robinhood', 'arc', 'stable']),
-  scanIntervalMs: 120_000,
-  maxDeepAuditsPerCycle: 6,
-  auditCycleBudgetMs: 80_000,
-  outcomeReadsPerCycle: 4,
-  xReviewMode: 'manual',
+  // The target cadence; AVE admission stretches it when the monthly credit
+  // allowance would otherwise run out before it resets.
+  scanIntervalMs: 15_000,
+  // GoPlus and DexScreener checks cost no AVE credits; bound them per cycle.
+  maxSecondaryChecksPerCycle: 3,
+  auditCycleBudgetMs: 60_000,
+  // Historical one-minute candle backfills (10 credits each) are opt-in, as upstream.
+  outcomeReadsPerCycle: 0,
+  // A lead stays shown this long after the hot list last confirmed it.
+  liveLeadRetentionMs: 30 * 60_000,
   minAgeSec: 5 * 60,
   maxAgeSec: 7 * 86400,
   discoveryMinMarketCap: 10_000,

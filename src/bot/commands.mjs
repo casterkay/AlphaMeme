@@ -2,16 +2,16 @@ import { renderPanel } from './panels.mjs';
 import { readTelegramSnapshot } from './snapshot.mjs';
 import { TelegramSessions } from './sessions.mjs';
 import { annotateInTransaction, ReviewConflict, setManualMarkInTransaction, reviewProjectionRevision } from './review.mjs';
+import { DEFAULT_SCAN_CHAIN, SCAN_CHAINS as CHAINS } from '../chains.mjs';
 
 const ROOTS = new Set(['start','radar','help','status','settings','chains','feed','audits','candidates','saved','events','stats','onboard']);
-const CHAINS = ['sol','bsc','base','eth','robinhood','arc','stable'];
 const CONCRETE_CHAIN_PANELS = new Set(['radar','feed','audits','stats']);
 const CONTROL = new Set(['pause','resume','disconnect','mute','unmute']);
 const text = (lang, zh, en) => lang === 'en' ? en : zh;
 
 export class TelegramCommands {
-  constructor({ storage, tenantId, inbox, outbox, live, controls, now = Date.now, snapshot = readTelegramSnapshot }) {
-    Object.assign(this, { storage, tenantId, inbox, outbox, live, controls, now, snapshot });
+  constructor({ storage, tenantId, inbox, outbox, controls, now = Date.now, snapshot = readTelegramSnapshot }) {
+    Object.assign(this, { storage, tenantId, inbox, outbox, controls, now, snapshot });
     this.sessions = new TelegramSessions({ storage, tenantId, now });
   }
 
@@ -30,9 +30,8 @@ export class TelegramCommands {
     this.outbox.enqueueInTransaction({ id: `${suffix}:${updateId}`, chatId: this.tenantId, method: 'sendMessage', params: { text: message, link_preview_options: { is_disabled: true } }, expiresAt: this.now() + 900_000 });
   }
 
-  renderInTransaction(session, { onboarding = null, deliveryClass = 'USER_RESPONSE' } = {}) {
+  renderInTransaction(session, { deliveryClass = 'USER_RESPONSE' } = {}) {
     const snapshot = this.snapshot(this.storage, this.tenantId, this.now());
-    if (onboarding) snapshot.onboarding = onboarding;
     const rendered = renderPanel(snapshot, session, this.language);
     const control = this.controls.snapshot();
     const keyboard = session.expiresAt > this.now() ? this.sessions.bindKeyboardInTransaction(session, rendered.keyboard, control) : [];
@@ -48,7 +47,7 @@ export class TelegramCommands {
     if (row.command_type === 'callback') {
       const payload = JSON.parse(row.payload_json);
       const link = this.storage.sql.exec('SELECT action FROM shortlinks WHERE tenant_id=? AND id=?', this.tenantId, payload.callbackId).toArray()[0];
-      if (!['scan.pause','scan.resume','connection.disconnect','notifications.set','live.set'].includes(link?.action)) return false;
+      if (!['scan.pause','scan.resume','connection.disconnect','notifications.set'].includes(link?.action)) return false;
       this.processInTransaction(row);
       return true;
     }
@@ -57,7 +56,7 @@ export class TelegramCommands {
     const args = JSON.parse(row.payload_json).arguments ?? '';
     if (args) this.noticeInTransaction(row.update_id, `/${command}`);
     else this.applyControl(command);
-    const session = this.sessions.createInTransaction('settings', this.controls.snapshot().activeChain ?? 'robinhood');
+    const session = this.sessions.createInTransaction('settings', this.controls.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN);
     this.renderInTransaction(session);
     this.inbox.finishInTransaction(row.update_id, 'DONE');
     return true;
@@ -66,7 +65,7 @@ export class TelegramCommands {
   applyControl(command) {
     if (command === 'pause') this.controls.pause();
     else if (command === 'resume') this.controls.resume();
-    else if (command === 'disconnect') { this.controls.disconnect(); this.live.unsubscribeInTransaction(); }
+    else if (command === 'disconnect') this.controls.disconnect();
     else if (command === 'mute' || command === 'unmute') {
       this.setPreference('notifications', command === 'unmute');
       this.setPreference('notificationsVersion', this.preference('notificationsVersion', 0) + 1);
@@ -74,12 +73,12 @@ export class TelegramCommands {
     }
   }
 
-  processInTransaction(row, { onboarding = null } = {}) {
+  processInTransaction(row) {
     const payload = JSON.parse(row.payload_json);
     try {
-      if (row.command_type === 'callback') this.callbackInTransaction(row, payload, onboarding);
+      if (row.command_type === 'callback') this.callbackInTransaction(row, payload);
       else if (row.command_type === 'reply') this.replyInTransaction(row, payload);
-      else this.commandInTransaction(row, payload, onboarding);
+      else this.commandInTransaction(row, payload);
       this.inbox.finishInTransaction(row.update_id, 'DONE');
     } catch (error) {
       if (!(error instanceof ReviewConflict)) throw error;
@@ -88,11 +87,11 @@ export class TelegramCommands {
     }
   }
 
-  commandInTransaction(row, payload, onboarding) {
+  commandInTransaction(row, payload) {
     const command = row.command_type.replace(/^command:/, '');
     const args = payload.arguments ?? '';
     if (CONTROL.has(command)) return this.immediateInTransaction(row);
-    const chain = this.controls.snapshot().activeChain ?? 'robinhood';
+    const chain = this.controls.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN;
     if (command === 'cancel') {
       if (args) return this.noticeInTransaction(row.update_id, '/cancel');
       for (const saved of this.storage.sql.exec('SELECT id FROM ui_sessions WHERE tenant_id=?', this.tenantId).toArray()) {
@@ -109,7 +108,7 @@ export class TelegramCommands {
       if (args) this.setPreference('language', args);
       return this.renderInTransaction(this.sessions.createInTransaction(args ? 'settings' : 'language', chain));
     }
-    if (command === 'setkey') return this.noticeInTransaction(row.update_id, text(this.language, '先使用 /onboard，然后提交 /setkey <key>。含密钥的消息可能留在聊天记录，请检查并删除。', 'Use /onboard, then /setkey <key>. Key messages may remain in chat history; check and delete them.'));
+    if (command === 'setkey') return this.noticeInTransaction(row.update_id, text(this.language, '发送 /setkey <AVE API Key>。含密钥的消息可能留在聊天记录，请检查并删除。', 'Send /setkey <AVE API key>. Key messages may remain in chat history; check and delete them.'));
     if (command === 'export') {
       if (args) return this.noticeInTransaction(row.update_id, '/export');
       return this.exportInTransaction(row.update_id);
@@ -121,25 +120,20 @@ export class TelegramCommands {
       return this.beginInputInTransaction(session, 'note_target');
     }
     if (!ROOTS.has(command)) return this.renderInTransaction(this.sessions.createInTransaction('help', chain));
-    if (command === 'feed') {
-      if (args && ![...CHAINS, 'off'].includes(args)) return this.noticeInTransaction(row.update_id, `/feed ${CHAINS.join(' | ')} | off`);
-      if (args === 'off') this.live.unsubscribeInTransaction();
-      else this.live.subscribeInTransaction(args || chain);
-    } else if (args) return this.noticeInTransaction(row.update_id, `/${command}`);
+    if (args) return this.noticeInTransaction(row.update_id, `/${command}`);
     const panel = command === 'start' ? 'radar' : command === 'candidates' ? 'audits' : command;
     if (command === 'start') this.controls.initializeNotificationBaseline?.();
-    const session = this.sessions.createInTransaction(panel, command === 'saved' || command === 'events' ? 'all' : command === 'feed' && CHAINS.includes(args) ? args : chain);
-    this.renderInTransaction(session, { onboarding });
+    const session = this.sessions.createInTransaction(panel, command === 'saved' || command === 'events' ? 'all' : chain);
+    this.renderInTransaction(session);
   }
 
-  callbackInTransaction(row, payload, onboarding) {
+  callbackInTransaction(row, payload) {
     const binding = this.sessions.resolveInTransaction({ tenantId: this.tenantId, actorUserId: row.actor_user_id, sourceMessageId: row.source_message_id, payload });
     let { session, action, params, token } = binding;
     const control = this.controls.snapshot();
-    if (/^(scan\.|live\.|chains\.save|notifications\.)/.test(action) && binding.expectedControlEpoch !== control.controlEpoch) throw new ReviewConflict('control_changed');
-    if (/^(connection\.|onboard\.)/.test(action) && binding.expectedConnectionGeneration !== control.connectionGeneration && !(action === 'onboard.regenerate' && onboarding?.connectionGeneration === control.connectionGeneration)) throw new ReviewConflict('connection_changed');
-    if (action === 'live.set' && params.expectedLiveGeneration !== (control.live.generation ?? 0)) throw new ReviewConflict('live_changed');
-    if (['notifications.set','chains.save'].includes(action) && params.expectedPreferenceVersion !== this.preference(action === 'notifications.set' ? 'notificationsVersion' : 'scanChainsVersion', 0)) throw new ReviewConflict('settings_changed');
+    if (/^(scan\.|chains\.set|notifications\.)/.test(action) && binding.expectedControlEpoch !== control.controlEpoch) throw new ReviewConflict('control_changed');
+    if (/^connection\./.test(action) && binding.expectedConnectionGeneration !== control.connectionGeneration) throw new ReviewConflict('connection_changed');
+    if (action === 'notifications.set' && params.expectedPreferenceVersion !== this.preference('notificationsVersion', 0)) throw new ReviewConflict('settings_changed');
     let changes = {};
     if (action === 'panel.open') {
       const panel = params.panel;
@@ -148,7 +142,7 @@ export class TelegramCommands {
       let ancestor = returnTo;
       for (let depth = 1; ancestor?.query?.returnTo; depth++) { if (depth >= 4) { delete ancestor.query.returnTo; break; } ancestor = ancestor.query.returnTo; }
       const viewChain = CONCRETE_CHAIN_PANELS.has(panel) && !CHAINS.includes(session.viewChain)
-        ? (CHAINS.includes(control.activeChain) ? control.activeChain : 'robinhood')
+        ? (CHAINS.includes(control.activeChain) ? control.activeChain : DEFAULT_SCAN_CHAIN)
         : session.viewChain;
       changes = { panel, viewChain, query: { ...session.query, schemaVersion: 1, page: 0, pendingInput: undefined, ...(params.query ?? {}), returnTo, ...(token ? { selectedToken: token } : {}) } };
     } else if (action === 'panel.back') {
@@ -173,30 +167,18 @@ export class TelegramCommands {
     else if (action === 'favorite.set' || action === 'note.clear') annotateInTransaction(this.storage, this.tenantId, { token, field: action === 'favorite.set' ? 'favorite' : 'note', value: action === 'favorite.set' ? params.value : '', expectedVersion: params.expectedAnnotationVersion }, this.now());
     else if (action === 'scan.pause' || action === 'scan.resume') this.applyControl(action.split('.')[1]);
     else if (action === 'notifications.set') { if (typeof params.value !== 'boolean') throw new ReviewConflict('invalid_notifications'); this.applyControl(params.value ? 'unmute' : 'mute'); }
-    else if (action === 'live.set') {
-      const chain = params.chain ?? session.viewChain;
-      if (params.value !== false && !CHAINS.includes(chain)) throw new ReviewConflict('invalid_chain');
-      if (params.value === false) this.live.unsubscribeInTransaction(); else this.live.subscribeInTransaction(chain);
-    }
     else if (action === 'delivery.acknowledge') this.outbox.acknowledgeIssuesInTransaction();
     else if (action === 'connection.disconnect') { this.applyControl('disconnect'); changes = { panel: 'settings', query: {} }; }
     else if (action === 'language.set') { if (!['zh','en'].includes(params.value)) throw new ReviewConflict('invalid_language'); this.setPreference('language', params.value); changes = { panel: 'settings', query: {} }; }
-    else if (action === 'chains.draft_set') {
-      const current = session.query.draftChains ?? this.snapshot(this.storage, this.tenantId, this.now()).control.enabledChains;
-      const draft = params.selected ? [...new Set([...current, params.value])] : current.filter(chain => chain !== params.value);
-      if (draft.length > 3) throw new ReviewConflict('chain_limit');
-      changes = { query: { ...session.query, draftChains: draft } };
+    else if (action === 'chains.set') {
+      if (!CHAINS.includes(params.value)) throw new ReviewConflict('invalid_chain');
+      this.controls.selectScanChain(params.value);
+      changes = { viewChain: params.value };
     }
-    else if (action === 'chains.save') this.controls.setScanChains(session.query.draftChains ?? this.snapshot(this.storage, this.tenantId, this.now()).control.enabledChains);
     else if (action === 'export.create') this.exportInTransaction(row.update_id);
-    else if (action === 'audit.enqueue') {
-      const queued = this.live.enqueueReviewInTransaction(token.chain, token.address, { snapshotAt: params.snapshotAt, enabledChains: this.snapshot(this.storage, this.tenantId, this.now()).control.enabledChains });
-      this.noticeInTransaction(row.update_id, queued.accepted ? text(this.language, '已入队，等待额度。', 'Queued; awaiting capacity.') : text(this.language, '当前无法入队，请刷新活跃榜并检查扫描链与连接状态。', 'Cannot queue this token now; refresh the feed and check scan chains and connection.'));
-    }
-    else if (action === 'onboard.regenerate') { if (!onboarding) throw new ReviewConflict('onboarding_not_ready'); changes = { panel: 'onboard' }; }
     else throw new ReviewConflict('unsupported_action');
     session = this.sessions.advanceInTransaction(session, changes);
-    this.renderInTransaction(session, { onboarding });
+    this.renderInTransaction(session);
   }
 
   beginInputInTransaction(session, kind, token = null, expectedVersion = null) {
@@ -224,7 +206,7 @@ export class TelegramCommands {
 
   resolveNoteInTransaction(session, value) {
     const snapshot = this.snapshot(this.storage, this.tenantId, this.now());
-    const rows = [...(snapshot.candidates ?? []), ...Object.values(snapshot.liveByChain ?? {}).flatMap(feed => feed.rows), ...(snapshot.annotations ?? [])];
+    const rows = [...(snapshot.candidates ?? []), ...Object.values(snapshot.feedByChain ?? {}).flatMap(feed => feed.rows), ...(snapshot.annotations ?? [])];
     const unique = [...new Map(rows.map(row => [`${row.chain}:${row.address}`, row])).values()];
     const exact = unique.filter(row => row.address === value || (row.chain !== 'sol' && row.address?.toLowerCase() === value.toLowerCase()));
     const symbol = unique.filter(row => row.symbol?.toLowerCase() === value.toLowerCase());

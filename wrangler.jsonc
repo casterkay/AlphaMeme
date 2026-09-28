@@ -14,6 +14,12 @@
       "head_sampling_rate": 1
     }
   },
+  // The AVE plan's monthly credit allowance and the UTC day it resets. The
+  // free plan's reset day is unverified; set it to your account's reset day.
+  "vars": {
+    "AVE_MONTHLY_CU": "1000000",
+    "AVE_CU_RESET_DAY": "1"
+  },
   "triggers": {
     "crons": ["* * * * *"]
   },
@@ -37,4 +43,5 @@
   ]
   // Secrets are set out of band with `wrangler secret put`, never in this file:
   // OPERATOR_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, MASTER_ENC_KEY.
+  // Each user's AVE API key is entered in Telegram with /setkey and stored encrypted.
 }

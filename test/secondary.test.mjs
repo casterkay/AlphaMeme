@@ -237,7 +237,7 @@ test('missing or malformed GoPlus safety fields stay UNKNOWN and degrade the res
 });
 
 test('unsupported chains never make external requests', async () => {
-  for (const chain of ['robinhood', 'arc', 'stable']) {
+  for (const chain of ['robinhood', 'stable']) {
     let calls = 0;
     const result = await new SecondaryValidator({ fetchImpl: async () => { calls += 1; throw new Error('must not be called'); } })
       .validate({ chain, tokenAddress: evmAddress });
@@ -327,9 +327,17 @@ test('Solana uses its verified endpoints, preserves address case, and evaluates 
 
 test('exported support map contains only verified chain identifiers', () => {
   assert.deepEqual(secondaryChainSupport.dexScreener, {
-    sol: 'solana', bsc: 'bsc', base: 'base', eth: 'ethereum'
+    sol: 'solana', bsc: 'bsc', base: 'base', eth: 'ethereum', arc: 'arc'
   });
   assert.deepEqual(secondaryChainSupport.goPlus, {
-    sol: 'solana', eth: '1', bsc: '56', base: '8453'
+    sol: 'solana', eth: '1', bsc: '56', base: '8453', arc: '5042'
   });
+});
+
+test('Arc tokens are checked on DexScreener chain arc and GoPlus chain 5042', async () => {
+  const urls = [];
+  await new SecondaryValidator({ fetchImpl: async url => { urls.push(String(url)); return Response.json({}); } })
+    .validate({ chain: 'arc', tokenAddress: evmAddress });
+  assert.ok(urls.some(url => url.startsWith('https://api.dexscreener.com/') && url.includes('/arc/')), urls.join(' '));
+  assert.ok(urls.some(url => url.startsWith('https://api.gopluslabs.io/api/v1/token_security/5042?')), urls.join(' '));
 });

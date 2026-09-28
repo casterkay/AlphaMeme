@@ -1,50 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GmgnClient, tokenInfoPrice, translateGmgnError } from '../src/providers/gmgn.mjs';
 import { collectOutcomeSamples, dueOutcomeJobs, horizons, outcomeCoverage, sampleRejected } from '../src/scoring/outcomes.mjs';
 import { sha256Bytes, sha256Hex } from '../src/util/crypto.mjs';
 
 const address = '0x' + '1'.repeat(40);
-
-test('weighted request pacing, bounded cache and credential invalidation', async () => {
-  const client = new GmgnClient({ minRequestGapMs: 0 });
-  let calls = 0;
-  const read = () => ({ count: ++calls });
-  client.tokenInfo = async () => read();
-  client.tokenSecurity = async () => read();
-  client.tokenPoolInfo = async () => read();
-  client.tokenTopHolders = async () => read();
-  client.tokenTopTraders = async () => read();
-  client.tokenKline = async () => ({ list: [] });
-  await client.audit(address, 1_800_000_000, 'bsc');
-  assert.equal(calls, 5);
-  await client.audit(address, 1_800_000_000, 'bsc');
-  assert.equal(calls, 5);
-  client.nextAllowedAt = Date.now() + 60000;
-  client.resetCredentials();
-  await client.audit(address, 1_800_000_000, 'bsc');
-  assert.equal(calls, 10);
-  assert.ok(client.nextAllowedAt > Date.now());
-  assert.equal(client.metrics.cacheHits, 6);
-  assert.equal(tokenInfoPrice({ price: { price: '0.025' } }), 0.025);
-  assert.equal(tokenInfoPrice({ price: '' }), null);
-  const cooldown = translateGmgnError({ status: 429, resetAtUnix: Math.ceil(Date.now()/1000) + 120 });
-  assert.ok(cooldown.retryAfterMs >= 120000);
-});
-
-test('confirmed static rejection skips expensive wallet and candle reads', async () => {
-  const client = new GmgnClient(); const commands = [];
-  client.tokenInfo = async () => { commands.push('info'); return { is_honeypot: 'yes' }; };
-  client.tokenSecurity = async () => { commands.push('security'); return { is_honeypot: 'yes' }; };
-  client.tokenPoolInfo = async () => { commands.push('pool'); return { is_honeypot: 'yes' }; };
-  client.tokenTopHolders = async () => { commands.push('holders'); return { list: [] }; };
-  client.tokenTopTraders = async () => { commands.push('traders'); return { list: [] }; };
-  client.tokenKline = async () => { commands.push('kline'); return { list: [] }; };
-  const audit = await client.audit(address, 1800000000, 'bsc', { shouldStopEarly: partial => partial.security.is_honeypot === 'yes' });
-  assert.deepEqual(commands, ['info','security','pool']);
-  assert.equal(audit._meta.earlyExit, true);
-  assert.equal(audit._meta.complete, false);
-});
 
 test('historical samples survive delisting; missing prices stay missing and retries back off', async () => {
   const now = 1800000000000;
@@ -61,13 +20,6 @@ test('historical samples survive delisting; missing prices stay missing and retr
   assert.equal(dueOutcomeJobs(missing, now).length, 0);
   assert.equal(outcomeCoverage(missing, now).passed.m30.missing, 1);
   assert.equal(outcomeCoverage(missing, now).passed.h24.eligible, 0);
-});
-
-test('priceAt selects timestamped closed candles, not current price or future bars', async () => {
-  const client = new GmgnClient();
-  const target = Date.now() - 86400000;
-  client.tokenKline = async () => ({ list: [{ time: target - 60000, close: '2' }, { time: Date.now() + 60000, close: '99' }] });
-  assert.deepEqual(await client.priceAt(address, target, 'bsc'), { at: target, price:2, source:'GMGN_1M_CLOSE' });
 });
 
 test('WebCrypto SHA-256 helpers preserve the legacy byte and hex vectors', async () => {
