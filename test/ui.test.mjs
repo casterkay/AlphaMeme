@@ -8,6 +8,51 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const html = fs.readFileSync(path.join(here, '..', 'public', 'index.html'), 'utf8');
 
+test('AVE opens token chart/trading with the author referral and never substitutes the pool or source URL', () => {
+  const start = html.indexOf('const AVE_INVITE_URL =');
+  const end = html.indexOf('function candidateRow', start);
+  const context = { t: key => key, escapeHtml: value => String(value).replaceAll('&', '&amp;'), safeUrl: () => '', officialXHandle: () => '' };
+  vm.runInNewContext(html.slice(start, end) + ';this.links = actionLinks;this.tokenUrl = aveTokenUrl;', context);
+  for (const chain of ['bsc', 'eth', 'base', 'robinhood', 'sol']) {
+    const address = chain === 'sol' ? 'So11111111111111111111111111111111111111112' : '0x059ecb64e45b6211f1390d5f28cc909203ca7777';
+    const links = context.links({ chain, address, pairAddress: 'wrong-pool', gmgnUrl: 'https://gmgn.ai/override' });
+    assert.ok(links.includes('https://pro.ave.ai/token/' + address + '-' + (chain === 'sol' ? 'solana' : chain) + '?ref=0001'));
+    assert.ok(links.includes('aveTrade')); assert.doesNotMatch(links, /wrong-pool/);
+    assert.match(links, /data-action="copy"/); assert.doesNotMatch(links, /gmgn.ai/);
+  }
+  for (const row of [{ chain:'unknown',address:'0x059ecb64e45b6211f1390d5f28cc909203ca7777' },
+    { chain:'arc',address:'0x059ecb64e45b6211f1390d5f28cc909203ca7777' },
+    { chain:'stable',address:'0x059ecb64e45b6211f1390d5f28cc909203ca7777' },
+    { chain:'bsc',address:'not-a-ca' }, { chain:'bsc',address:'0x059ecb64e45b6211f1390d5f28cc909203ca7777?ref=evil' }]) {
+    assert.equal(context.tokenUrl(row.chain,row.address), null);
+    assert.match(context.links(row), /https:\/\/share\.ave\.ai\?lang=zh-cn&amp;code=0001/);
+    assert.doesNotMatch(context.links(row), /pro\.ave\.ai/);
+  }
+  assert.match(html, /id="ave-api-key"[^>]*type="password"/);
+  assert.doesNotMatch(html, /ave-data-key|ave-trade-key|data-ave-kind/);
+  const connector = html.slice(html.indexOf('let aveBusy'), html.indexOf('async function refresh()'));
+  assert.doesNotMatch(connector, /localStorage|sessionStorage|window.open|privateKey|signTransaction/);
+});
+
+test('AVE failed retest updates the Data badge while retaining the failure notice and saved-key summary', async () => {
+  const elements = Object.fromEntries(['ave-api-key', 'ave-config-status', 'ave-data-status', 'aveSummary', 'aveSettings']
+    .map(id => [id, { dataset: {}, textContent: '', value: '' }]));
+  const context = {
+    byId: id => elements[id], t: key => key,
+    document: { querySelectorAll: () => [] }, AbortSignal,
+    fetch: async () => ({ ok: false, json: async () => ({ error: 'AVE_AUTH',
+      ave: { configured: true, data: { configured: true, status: 'error' }, trade: { configured: false, status: 'disabled' } } }) }),
+  };
+  vm.runInNewContext(html.slice(html.indexOf('let aveBusy'), html.indexOf('async function refresh()'))
+    + ';this.change = changeAve;this.render = renderAveConnection;', context);
+  context.render({ configured: true, data: { status: 'connected' } });
+  assert.equal(elements['ave-data-status'].textContent, 'aveChecked');
+  await context.change('configure');
+  assert.equal(elements['ave-data-status'].textContent, 'aveFailed');
+  assert.equal(elements['aveSummary'].textContent, ' · aveKeySaved');
+  assert.match(elements['ave-config-status'].textContent, /AVE_AUTH/);
+});
+
 test('所有内联脚本均可通过语法解析', () => {
   const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
   assert.ok(scripts.length >= 2);
@@ -30,10 +75,14 @@ test('看板明确区分累计、本轮和近30分钟口径', () => {
   assert.doesNotMatch(html, /最终候选/);
 });
 
-test('人工复核仅保存本地标记且不包含交易入口', () => {
+test('自动筛选替代人工通过，保留历史标记兼容且不下单', () => {
   assert.match(html, /robinhoodRadarManualMarksV1/);
-  assert.match(html, /data-action="pass"/);
-  assert.match(html, /data-action="ignore"/);
+  assert.doesNotMatch(html, /data-action="pass"/);
+  assert.doesNotMatch(html, /data-action="ignore"/);
+  assert.match(html, /id="advancedPanel"[^>]*>/);
+  assert.doesNotMatch(html, /id="advancedPanel"[^>]*\bopen\b/);
+  assert.match(html, /value="new" selected/);
+  assert.match(html, /class="compact-audits"/);
   assert.match(html, /复制合约/);
   assert.match(html, /官网无/);
   assert.match(html, /访问官网/);
@@ -82,6 +131,13 @@ test('语言下拉使用地球图标和深色高对比选项', () => {
   assert.doesNotMatch(html, /\.language-select\s*\{[\s\S]*?background:\s*transparent/);
 });
 
+test('语音播报提供独立的中英文手动切换，最近成功与限频状态分开显示', () => {
+  assert.match(html, /id="voiceLanguage"[^>]*>[\s\S]*?<option value="zh">中文<\/option>[\s\S]*?<option value="en">English<\/option>/);
+  assert.match(html, /memeRadarLastSuccessAtV2:/);
+  assert.match(html, /recentSuccess/);
+  assert.doesNotMatch(html, /robinhoodRadarLastSuccessAtV1/);
+});
+
 test('翻译词典完整覆盖静态挂点和动态文案键', () => {
   const dictionarySource = html.match(/const messages = (\{[\s\S]*?\n    \});\n\n    let currentLocale/);
   assert.ok(dictionarySource, '应能提取翻译词典');
@@ -96,13 +152,71 @@ test('翻译词典完整覆盖静态挂点和动态文案键', () => {
   for (const key of new Set([...staticKeys, ...dynamicKeys])) assert.ok(messages[key], '缺少翻译键：' + key);
 });
 
-test('多链切换仅向本地后端提交白名单链标识', () => {
-  for (const chain of ['sol', 'bsc', 'base', 'eth', 'robinhood', 'arc', 'stable']) {
+test('顶部链标签可直接加入或切换扫描，且始终最多三条', async () => {
+  for (const chain of ['sol', 'bsc', 'base', 'eth', 'robinhood']) {
     assert.match(html, new RegExp("id: '" + chain + "'"));
   }
-  assert.match(html, /fetch\('\/api\/active-chain'/);
-  assert.match(html, /JSON\.stringify\(\{ chain: chain \}\)/);
   assert.match(html, /renderChainSwitcher\(null\)/);
+  const start = html.indexOf('function activeChain('), end = html.indexOf('function providerStatus(', start);
+  assert.ok(start >= 0 && end > start);
+  function harness(enabled, active = 'bsc', view = '') {
+    const elements = { chainSwitcher: { innerHTML: '' }, chainHint: { textContent: '' } };
+    const requests = [], storage = [], toasts = [];
+    const context = {
+      chainCatalog: ['sol', 'bsc', 'base', 'eth', 'robinhood'].map(id => ({ id })),
+      chainSwitching: false, selectedChainsDirty: true, viewChain: view,
+      lastData: { activeChain: active, supportedChains: ['sol', 'bsc', 'base', 'eth', 'robinhood'], scheduler: { enabledChains: enabled, scanningChain: active } },
+      byId: id => elements[id], chainLabel: chain => chain.id, escapeHtml: String, t: key => key,
+      showToast: value => toasts.push(value), currentLocale: 'en', hasChinese: () => false,
+      postLocal: async (url, body) => { requests.push({ url, body }); return { enabledChains: body.chains }; },
+      writeStorage: (key, value) => storage.push({ key, value }), refresh: async () => {}
+    };
+    vm.runInNewContext(html.slice(start, end) + ';this.renderChainSwitcher=renderChainSwitcher;this.switchActiveChain=switchActiveChain;this.ensureVisibleChain=ensureVisibleChain;', context);
+    return { context, elements, requests, storage, toasts };
+  }
+
+  const adding = harness(['bsc']);
+  adding.context.renderChainSwitcher(adding.context.lastData);
+  for (const chain of ['sol', 'bsc', 'base', 'eth', 'robinhood']) {
+    const button = adding.elements.chainSwitcher.innerHTML.match(new RegExp('<button[^>]*data-chain="' + chain + '"[^>]*>'))?.[0];
+    assert.ok(button, chain + ' 应显示');
+    assert.doesNotMatch(button, /\sdisabled(?:\s|>)/, chain + ' 应可点击');
+  }
+  await adding.context.switchActiveChain('base');
+  assert.deepEqual(JSON.parse(JSON.stringify(adding.requests)), [{ url: '/api/scan-chains', body: { chains: ['bsc', 'base'] } }]);
+  assert.equal(adding.context.viewChain, 'base');
+
+  const replacing = harness(['bsc', 'sol', 'base'], 'bsc');
+  await replacing.context.switchActiveChain('eth');
+  assert.deepEqual(JSON.parse(JSON.stringify(replacing.requests)), [{ url: '/api/scan-chains', body: { chains: ['eth', 'sol', 'base'] } }]);
+  assert.equal(replacing.context.viewChain, 'eth');
+
+  const viewing = harness(['bsc', 'sol'], 'bsc');
+  await viewing.context.switchActiveChain('sol');
+  assert.deepEqual(viewing.requests, []);
+  assert.equal(viewing.context.viewChain, 'sol');
+
+  const restored = harness(['bsc', 'robinhood'], 'robinhood', 'eth');
+  assert.equal(restored.context.ensureVisibleChain(restored.context.lastData), true);
+  assert.equal(restored.context.viewChain, 'robinhood');
+  assert.deepEqual(JSON.parse(JSON.stringify(restored.storage)), [{ key: 'memeRadarViewChainV1', value: 'robinhood' }]);
+  assert.doesNotMatch(html.slice(start, end), /\/api\/active-chain/);
+});
+
+test('AVE 健康状态使用短句，限频仍显示恢复时间', () => {
+  const start = html.indexOf('function providerStatus('), end = html.indexOf('function freshnessStatus(', start);
+  const now = Date.now();
+  const context = { Date, activeChain: data => data.activeChain, formatClock: value => 'clock:' + value,
+    t: (key, args) => args ? key + ':' + JSON.stringify(args) : key, number: Number, relativeTime: String };
+  vm.runInNewContext(html.slice(start, end) + ';this.providerStatus=providerStatus;', context);
+  const healthy = context.providerStatus({ scanProvider: 'AVE', activeChain: 'bsc', status: 'RUNNING',
+    aveMarket: { chains: { bsc: { state: 'observed' } } } });
+  assert.equal(healthy.detail, 'avePollingHealthy');
+  assert.doesNotMatch(healthy.detail, /liveLimits/);
+  const limited = context.providerStatus({ scanProvider: 'AVE', activeChain: 'bsc', status: 'RATE_LIMITED',
+    aveMarket: { pauseCode: 'AVE_RATE_LIMITED', nextAllowedAt: now + 60_000 } });
+  assert.match(limited.detail, /aveRetryAt/);
+  assert.match(limited.detail, /clock:/);
 });
 
 test('页面不再公开展示严格筛选规则', () => {
@@ -113,31 +227,30 @@ test('页面不再公开展示严格筛选规则', () => {
   assert.doesNotMatch(html, /class="criteria"/);
 });
 
-test('GMGN密钥仅提交给同源接口且不会持久化或回显', () => {
-  assert.match(html, /id="gmgnKeyInput"[^>]*type="password"[^>]*autocomplete="off"[^>]*spellcheck="false"[^>]*maxlength="256"/);
-  assert.match(html, /id="gmgnKeyButton"[^>]*data-i18n-aria="gmgnApiSubmitAria"/);
-  assert.match(html, /id="gmgnKeyStatus"[^>]*aria-live="polite"/);
-  const start = html.indexOf('async function connectGmgnApi');
+test('AVE 单 Key 仅提交给同源接口且不会持久化或回显', () => {
+  assert.match(html, /id="ave-api-key"[^>]*type="password"[^>]*autocomplete="off"[^>]*spellcheck="false"[^>]*maxlength="1024"/);
+  assert.match(html, /id="ave-key-form"/);
+  assert.match(html, /id="ave-config-status"[^>]*aria-live="polite"/);
+  const start = html.indexOf('async function changeAve');
   const end = html.indexOf('async function refresh', start);
   assert.ok(start >= 0 && end > start);
   const source = html.slice(start, end);
-  assert.match(source, /fetch\('\/api\/gmgn-key'/);
-  assert.match(source, /body: JSON\.stringify\(\{ apiKey: apiKey \}\)/);
-  assert.match(source, /input\.value = ''/);
-  assert.match(source, /t\('gmgnApiConnected'\)/);
-  assert.match(source, /result\.verified !== true/);
+  assert.match(source, /fetch\('\/api\/ave-' \+ action/);
+  assert.match(source, /body: JSON\.stringify\(body\)/);
+  assert.match(source, /byId\('ave-api-key'\)\.value = ''/);
+  assert.match(source, /if \(!response\.ok\) throw/);
+  assert.match(source, /renderAveConnection\(result\.ave\)/);
   assert.doesNotMatch(source, /localStorage|sessionStorage|readStorage|writeStorage/);
   assert.doesNotMatch(source, /console\.|innerHTML|textContent\s*=\s*result\./);
 });
 
-test('新用户无需Agent即可生成GMGN公钥且页面绝不请求私钥', () => {
-  assert.match(html, /id="gmgnOnboardingButton"/);
-  assert.match(html, /id="gmgnPublicKey"[^>]*readonly/);
-  assert.match(html, /fetch\('\/api\/gmgn-onboarding'/);
-  assert.match(html, /每次创建新的 GMGN API Key，都必须重新完成 Agent 公钥绑定/);
-  assert.match(html, /JSON\.stringify\(\{ regenerate: regenerate === true \}\)/);
-  assert.match(html, /只开启“允许读取”，务必关闭“允许交易”/);
-  assert.doesNotMatch(html, /gmgn-private-key|privateKey\s*=/);
+test('生产页面无 GMGN 配置流程，AVE 行情不请求钱包私钥或交易权限', () => {
+  assert.doesNotMatch(html, /id="(?:gmgnKeyInput|gmgnKeyButton|gmgnKeyStatus|gmgnOnboardingButton|gmgnPublicKey)"/);
+  assert.doesNotMatch(html, /fetch\(['"]\/api\/gmgn|connectGmgnApi|prepareGmgnOnboarding/);
+  assert.doesNotMatch(html, /gmgn-private-key|privateKey\s*=|eth_requestAccounts|signTransaction|sendTransaction/);
+  assert.match(html, /https:\/\/cloud\.ave\.ai\//);
+  assert.doesNotMatch(html, /仅测试行情，约 5 CU。单 Key，无需钱包。/);
+  assert.doesNotMatch(html, /id="ave-trade-status"|ave-data-key|ave-trade-key/);
 });
 
 test('看板包含新鲜度、运行进度和动态降级支持', () => {

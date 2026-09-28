@@ -1,19 +1,20 @@
 #!/usr/bin/env node
-import { config } from './config.mjs';
-import { GmgnClient } from './providers/gmgn.mjs';
-import { GmgnKeyStore } from './gmgn-key-store.mjs';
-import { GmgnConnection } from './gmgn-connection.mjs';
+import { config, ROOT } from './config.mjs';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { AveClient } from './ave.mjs';
+import { createAveSettings } from './ave-settings.mjs';
 import { RadarState } from './state.mjs';
 import { Scanner } from './scanner.mjs';
-import { SecondaryValidator } from './providers/secondary.mjs';
+import { DexBatchMarketOverlay, SecondaryValidator } from './secondary.mjs';
 import { createServer, toPublicStatus } from './server.mjs';
-import { RadarControls } from './storage/controls.mjs';
+import { RadarControls } from './local-store.mjs';
 import { LiveDiscovery } from './live-discovery.mjs';
 import { configureWindowsSystemProxy } from './windows-proxy.mjs';
 
 // Browsers use the Windows system proxy automatically, while Node normally
 // only sees proxy environment variables. Mirror the effective Windows proxy
-// before any GMGN request is sent so the portable build follows the same
+// before AVE reads begin so the portable build follows the same
 // network route as the user's browser.
 const proxy = configureWindowsSystemProxy();
 if (process.platform === 'win32') {
@@ -22,19 +23,35 @@ if (process.platform === 'win32') {
 
 const once = process.argv.includes('--once');
 const state = new RadarState(config.stateDir);
-const keyStore = new GmgnKeyStore(config.stateDir);
-// Community installations must be explicit: never inherit an API key from the
-// user's shell or a pre-existing global GMGN configuration.
-const gmgn = new GmgnClient({
-  apiKeyProvider: () => keyStore.get(),
-  legacyKeyProvider: () => ''
+let scanner;
+// Production discovery deliberately performs one hot-list read per turn. The
+// current AVE head response already carries the card fields; pagination and
+// automatic per-token completion must not amplify a shared-key rate limit.
+const market = new AveClient({ directory: config.stateDir, apiKeyProvider: () => ave.getKey(), enrichLimit: 0,
+  maxTrendingPages: 1, rotateTrendingPages: true, minimumGapMs: 5 * 60_000 });
+const ave = createAveSettings({ directory: config.stateDir,
+  verifyData: key => market.verifyApiKey(key),
+  onChange: () => { market.resetCredentials(); scanner?.requestCycle(); }
 });
-if (keyStore.disconnected()) await gmgn.resetCredentials({ disabled: true });
-gmgn.nextAllowedAt = Math.max(0, Number(state.value.retryAt) || 0);
+// Keep old history and credentials on disk, but never reuse a GMGN pass as
+// current AVE evidence. No GMGN client, worker or key store is loaded here.
+if (state.value.scanProvider !== 'AVE') {
+  for (const scope of [state.value, ...Object.values(state.value.chainStates || {})]) {
+    for (const row of scope.candidates || []) {
+      if (row.status === 'X_REVIEW') {
+        row.status = 'WAIT_RECHECK'; row.staleAt = 0;
+        row.deep = { ...row.deep, chainPass: false };
+        row.decisionReason = '已切换 AVE，等待新来源核验';
+      }
+    }
+    scope.sourceHealth = {}; scope.retryAt = 0;
+  }
+  state.value.scanProvider = 'AVE'; state.save();
+}
 const controls = new RadarControls(config.stateDir, config.supportedChains, state.value.activeChain || config.chain);
-const scanner = new Scanner({ gmgn, secondary: new SecondaryValidator(), state, controls });
-const connection = new GmgnConnection({ gmgn, keyStore, scanner });
-const liveDiscovery = new LiveDiscovery({ gmgn });
+scanner = new Scanner({ provider: market, secondary: new SecondaryValidator(), state, controls });
+const liveDiscovery = new LiveDiscovery({ provider: market, cacheOnly: true, marketOverlay: new DexBatchMarketOverlay() });
+const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 
 if (once) {
   await scanner.cycle();
@@ -43,17 +60,16 @@ if (once) {
 }
 
 const server = createServer({
+  ave,
   state,
   controls,
   liveDiscovery,
   enqueueReview: (chain, row) => scanner.enqueueReview(chain, row),
-  settings: config,
+  settings: { ...config, version },
   supportedChains: config.supportedChains,
   switchChain: chain => scanner.switchChain(chain),
-  saveGmgnKey: apiKey => connection.apply(apiKey),
-  disconnectGmgnKey: () => connection.disconnect(),
-  getGmgnOnboarding: options => keyStore.onboarding(options),
-  getGmgnConnection: () => connection.snapshot()
+  getAveConnection: () => ave.snapshot(),
+  getMarketStatus: () => market.snapshot()
 });
 server.requestTimeout = 10_000;
 server.headersTimeout = 12_000;
@@ -66,11 +82,13 @@ await new Promise((resolve, reject) => {
 });
 console.log(`Meme雷达：http://127.0.0.1:${config.port}`);
 console.log('只读扫描器：交易执行永久关闭');
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    scanner.stop();
-    liveDiscovery.stop();
-    server.close(() => process.exit(0));
-  });
+let closing = false;
+function shutdown() {
+  if (closing) return;
+  closing = true; scanner.stop(); liveDiscovery.stop();
+  market.resetCredentials({ disabled: true });
+  server.close(() => process.exit(0));
+  server.closeIdleConnections();
 }
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => shutdown());
 await scanner.start();
