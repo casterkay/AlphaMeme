@@ -17,6 +17,14 @@ accept an AVE key from an environment fallback: each owner connects through
 Telegram onboarding. `AVE_MONTHLY_CU` and `AVE_CU_RESET_DAY` in `wrangler.jsonc`
 set the plan allowance that admission paces requests against.
 
+Trading is configured by `vars`: `KYBER_CLIENT_ID` and one https RPC URL per chain
+(`ARC_RPC_URL`, `BSC_RPC_URL`, `BASE_RPC_URL`, `ETH_RPC_URL`; empty disables the
+chain), plus optional explorer bases (`ARC_EXPLORER_URL` has no default). The
+config is parsed when the Telegram runtime starts; a malformed value fails every
+request loudly rather than disabling a chain silently. The KyberSwap `arc` slug
+and ERC-20 USDC quoting on Arc are unverified from the development sandbox and
+need a live check before Arc trading is announced.
+
 `MASTER_ENC_KEY` accepts the existing nonempty secret string or a JSON keyring
 `{"activeVersion":"2","keys":{"1":"old material","2":"current material"}}`.
 See [the credential boundary](development/ONBOARDING-CRYPTO.md) before rotation.
@@ -43,12 +51,12 @@ Data API key, then send `/setkey <key>`. Verification spends one 5-credit AVE re
 The bot attempts deletion, but Telegram may forbid it. Check and delete the
 original message yourself. The service persists only encrypted candidate/active
 keys and never echoes a key. Failure during replacement preserves the prior
-connection; `/disconnect` fences pending verification and removes stored keys.
-Read-only research; no trades or investment advice.
+connection; `/disconnect` fences pending verification and removes the stored AVE
+keys (the trading wallet stays). The AVE key is read-only; not investment advice.
 
 中文：密钥明文会经过Telegram并可能留在聊天记录中。机器人会尝试删除，但无法保证删除；
 请自行检查并删除原消息。服务端仅保存加密密钥，从不回显。失败的替换不会破坏之前的连接。
-只读研究，不执行交易；非投资建议。
+AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
 
 ## Behavior and recovery
 
@@ -58,8 +66,8 @@ Read-only research; no trades or investment advice.
   switches the single scan chain; the old chain's research records stay.
   `/feed` shows the scanner's latest AVE hot list; it makes no extra requests.
 - Every passing hot-list token becomes a lead and alerts at once. GoPlus and
-  DexScreener then check it; a fatal finding vetoes the lead, hides its AVE trade
-  link and sends a "risk worsened" notice to anyone it alerted.
+  DexScreener then check it; a fatal finding vetoes the lead, blocks buying it and
+  sends a "risk worsened" notice to anyone it alerted.
 - Search and notes use a five-minute ForceReply prompt. Credentials are routed
   before note/search input and are never persisted as either.
 - An uncertain Telegram send gets at most one automatic uncertain retry over its
@@ -70,6 +78,25 @@ Read-only research; no trades or investment advice.
   correct every mapped detail card, including while muted.
 - `/export` sends the all-chain research whitelist. Exports above the service's
   10 MiB limit fail with an explicit message; no silent truncation is used.
+
+## Trading operations
+
+- Trades are `trade:<id>` rows in `scheduler_state`, executed by scheduler tasks of
+  kind `trade` (one network request per step). States: QUOTING → QUOTED → CONFIRMED
+  → [APPROVE_SIGNED → APPROVE_SENT → APPROVED] → SWAP_SIGNED → SWAP_SENT → FILLED,
+  or FAILED, UNKNOWN, EXPIRED, CANCELLED. The newest 20 finished trades are kept.
+- A signed transaction is persisted with its hash before it is broadcast. After a
+  restart the identical raw transaction is rebroadcast; a step never signs twice.
+  A broadcast without an answer is treated as sent and settled by its receipt.
+- Receipts are polled every 3 s (the identical transaction is rebroadcast every
+  fifth poll). No receipt within 10 minutes marks the trade UNKNOWN with its
+  transaction link; nothing is replaced or re-signed automatically. Check the
+  explorer and the wallet balance before trading again.
+- One trade executes per wallet at a time; a second confirmation is refused.
+- Defaults (`TRADING_SETTINGS` in `src/trading/config.mjs`): 5% slippage
+  (1/3/5/10/20%), $100 per-trade buy cap ($50/$100/$250/$500/$1000), 30 s quotes,
+  10-minute swap deadline, 20% gas-limit buffer, exact approvals only when the
+  allowance is short, sells of 100% use the balance read at quote time.
 
 ## Validation boundary
 

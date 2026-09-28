@@ -1,7 +1,7 @@
 {
   "name": "meme-radar-open-source",
   "version": "0.1.10",
-  "description": "Read-only meme token research radar on Cloudflare Workers with a Telegram interface",
+  "description": "Meme token research radar on Cloudflare Workers with a Telegram interface and optional one-tap trading",
   "author": "DeFi狙击手 (@bi_9527zx)",
   "repository": {
     "type": "git",
