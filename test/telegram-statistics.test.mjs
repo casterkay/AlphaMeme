@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { readTelegramStatistics, STATISTICS_CHAINS } from '../src/bot/statistics.mjs';
-import { summarizeOutcomes as scannerSummary } from '../src/scanner.mjs';
 import { horizons, summarizeOutcomes } from '../src/scoring/outcomes.mjs';
 
 function fixture(t) {
@@ -61,8 +60,7 @@ test('the calibration gate needs 50 samples in each of 30m, 2h and 24h', t => {
   assert.equal(stats.averageReturn24h, 0);
 });
 
-test('SQL coverage and averages share the scanner contract including median and positive-return rate', t => {
-  assert.equal(scannerSummary, summarizeOutcomes);
+test('SQL coverage and averages share the outcome summary contract including median and positive-return rate', t => {
   const { storage, insert } = fixture(t);
   const rows = [-0.2, 0, 0.4, null].map(value => ({ initialDecision: 'X_REVIEW', baselineAt: 1000, samples: { h6: { return: value }, m30: { return: value } } }));
   for (const row of rows) insert({ samples: row.samples });

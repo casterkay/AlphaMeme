@@ -1,7 +1,7 @@
 {
   "name": "meme-radar-open-source",
   "version": "0.1.10",
-  "description": "Open-source edition of a local, read-only multi-chain meme token research radar",
+  "description": "Read-only meme token research radar on Cloudflare Workers with a Telegram interface",
   "author": "DeFi狙击手 (@bi_9527zx)",
   "repository": {
     "type": "git",
@@ -18,12 +18,6 @@
     "node": "^22.23.0 || >=24.5.0"
   },
   "scripts": {
-    "start": "node --use-env-proxy src/main.mjs",
-    "setup": "node scripts/setup.mjs",
-    "open": "node scripts/open.mjs",
-    "doctor": "node scripts/setup.mjs --check",
-    "release:audit": "node scripts/release-audit.mjs",
-    "once": "node --use-env-proxy src/main.mjs --once",
     "test": "npm run test:node && npm run test:workers",
     "test:node": "node --test test/*.test.mjs",
     "test:workers": "vitest run --config vitest.workers.config.mjs",

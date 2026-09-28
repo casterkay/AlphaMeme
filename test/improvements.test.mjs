@@ -1,27 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import vm from 'node:vm';
-import { Readable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
-import { config } from '../src/config.mjs';
 import { GmgnClient, tokenInfoPrice, translateGmgnError } from '../src/providers/gmgn.mjs';
 import { collectOutcomeSamples, dueOutcomeJobs, horizons, outcomeCoverage, sampleRejected } from '../src/scoring/outcomes.mjs';
 import { sha256Bytes, sha256Hex } from '../src/util/crypto.mjs';
-import { atomicJson, readJsonWithBackup } from '../src/storage/store.mjs';
-import { RadarControls, tokenKey } from '../src/storage/controls.mjs';
-import { GmgnKeyStore } from '../src/gmgn-key-store.mjs';
-import { GmgnConnection } from '../src/gmgn-connection.mjs';
-import { RadarState } from '../src/state.mjs';
-import { Scanner, reviewRevision } from '../src/scanner.mjs';
-import { createServer } from '../src/server.mjs';
-import { effectiveStatus } from '../src/scoring/manual-review.mjs';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
 const address = '0x' + '1'.repeat(40);
-const temp = t => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-v3-test-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return dir; };
 
 test('weighted request pacing, bounded cache and credential invalidation', async () => {
   const client = new GmgnClient({ minRequestGapMs: 0 });
@@ -116,116 +99,4 @@ test('rejection sampling uses the legacy SHA-256 first byte modulo five rule', a
   const candidate = { chain: 'bsc', address: '0x0000000000000000000000000000000000000001', price: 1, status: 'HARD_REJECT' };
   const rows = await sampleRejected([], candidate, 10);
   assert.deepEqual(rows.map(row => row.address), [candidate.address]);
-});
-
-test('local store recovers last good JSON; unrecoverable data is not silently reset', t => {
-  const dir = temp(t); const file = path.join(dir,'state.json');
-  atomicJson(file,{n:1}); atomicJson(file,{n:2});
-  fs.writeFileSync(file,'broken');
-  assert.deepEqual(readJsonWithBackup(file,{}), {value:{n:1},recovered:true});
-  atomicJson(file,{n:3});
-  assert.equal(JSON.parse(fs.readFileSync(file+'.bak')).n,1);
-  fs.writeFileSync(file,'broken'); fs.writeFileSync(file+'.bak','broken');
-  assert.throws(() => readJsonWithBackup(file,{}), {code:'STATE_CORRUPT'});
-});
-
-test('favorites and notes persist with exact Solana keys, bounded input and safe chain selection', t => {
-  const dir=temp(t); const controls = new RadarControls(dir, config.supportedChains,'robinhood');
-  const a='So11111111111111111111111111111111111111112', b='so11111111111111111111111111111111111111112';
-  controls.annotate({chain:'sol',address:a,favorite:true,note:'hello'});
-  controls.annotate({chain:'sol',address:b,favorite:false,note:'different'});
-  assert.notEqual(tokenKey('sol',a),tokenKey('sol',b));
-  assert.equal(Object.keys(controls.value.annotations).length,2);
-  controls.setChains(['sol','bsc','base']);
-  assert.deepEqual(new RadarControls(dir,config.supportedChains,'robinhood').value.enabledChains,['sol','bsc','base']);
-  assert.throws(() => controls.setChains(['sol','bsc','eth','base']));
-  assert.throws(() => controls.annotate({chain:'bsc',address:'../../x',favorite:true,note:'x'}));
-});
-
-test('disconnect survives reload and never falls back to legacy credentials; verification races cannot restore it', async t => {
-  const dir=temp(t); const store=new GmgnKeyStore(dir); const key='gmgn_'+'a'.repeat(32);
-  store.save(key);
-  store.onboarding();
-  const gmgn=new GmgnClient({ apiKeyProvider:()=>store.get(), legacyKeyProvider:()=>key });
-  let finish;
-  gmgn.verifyApiKey=()=>new Promise(resolve=>{finish=resolve;});
-  const connection=new GmgnConnection({gmgn,keyStore:store,scanner:{activeChain:'bsc',requestCycle(){}}});
-  const pending=connection.apply(key);
-  connection.disconnect(); finish({verified:true});
-  await assert.rejects(pending,{code:'GMGN_CHECK_CANCELLED'});
-  assert.equal(gmgn.apiKey(),'');
-  assert.equal(new GmgnKeyStore(dir).disconnected(),true);
-  assert.equal(store.get(),'');
-  gmgn.verifyApiKey=async()=>({verified:true});
-  await connection.apply(key);
-  assert.equal(store.disconnected(),false);
-  assert.equal(gmgn.apiKey(),key);
-});
-
-test('UI approval is case-sensitive on Solana and expires on risk revision changes', async () => {
-  const a='So11111111111111111111111111111111111111112', b=a.replace(/^S/,'s');
-  const marks={['sol:'+a]:{decision:'passed',at:Date.now(),reviewRevision:'r1'}};
-  const candidate={status:'X_REVIEW',auditedAt:Date.now(),reviewRevision:'r1'};
-  assert.equal(effectiveStatus({address:a,...candidate},marks['sol:'+a]),'passed');
-  assert.equal(effectiveStatus({address:b,...candidate},marks['sol:'+b]),'chain');
-  assert.equal(effectiveStatus({address:a,...candidate,reviewRevision:'r2'},marks['sol:'+a]),'chain');
-  assert.equal(await reviewRevision({
-    status: 'X_REVIEW',
-    deep: { checks: ['tax', 'rug'], failed: ['wallets'], security: { ownerRenounced: true, renouncedMint: true, renouncedFreezeAccount: false, honeypot: false, buyTax: 0, sellTax: 0, lockRate: .8, lpBurned: true } },
-    secondary: { security: { verdict: 'NO_FATAL_FLAGS' }, conflicts: [] },
-    info: { website: 'https://example.test', twitter: 'example' }
-  }), 'd528d083a302796978e30f27');
-  assert.notEqual(await reviewRevision({status:'X_REVIEW'}),await reviewRevision({status:'HARD_REJECT'}));
-});
-
-test('scanner batch audits multiple candidates, saves per-chain history, and multi-chain view does not interrupt work', async t => {
-  const dir=temp(t); const state=new RadarState(dir); const controls=new RadarControls(dir,config.supportedChains,'bsc');
-  state.value.activeChain='bsc';
-  let audited=0;
-  const gmgn={ configured:async()=>true, discover:async()=>Array.from({length:5},(_,i)=>({address:'0x'+String(i+1).padStart(40,'0'),symbol:'TEST',price:1,market_cap:50000,liquidity:10000,
-    creation_timestamp:Date.now()/1000-1000,rug_ratio:.1,bundler_rate:.1,rat_trader_amount_rate:.1,is_wash_trading:false,is_honeypot:0})),
-    audit:async()=>{audited++;return {info:{price:{price:'1'}},security:{owner_renounced:'no'},pool:{},holders:[],traders:[],candles:[],_meta:{complete:true}};} };
-  const scanner=new Scanner({gmgn,state,controls,settings:{...config,maxDeepAuditsPerCycle:6}});
-  await scanner.cycle();
-  assert.equal(audited,5);
-  assert.equal(state.value.auditQueueStats.auditedThisCycle,5);
-  assert.equal(state.value.chainStates.bsc.scanCount,1);
-  controls.setChains(['bsc','sol']); scanner.running=true;
-  assert.equal(scanner.switchChain('sol').queued,false);
-  assert.equal(scanner.activeChain,'bsc');
-  assert.equal(scanner.pendingChain,'');
-});
-
-function dispatch(server, method, route, body, origin=true) {
-  return new Promise((resolve,reject)=>{
-    const req=Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []);
-    req.method=method;req.url=route;req.socket={remoteAddress:'127.0.0.1'};
-    req.headers={host:'127.0.0.1:3791','content-type':'application/json',...(origin?{origin:'http://127.0.0.1:3791'}:{})};
-    const result={headers:{}};
-    const res={setHeader(k,v){result.headers[k]=v;},writeHead(status,headers){result.status=status;Object.assign(result.headers,headers);},end(body){result.body=JSON.parse(body);resolve(result);}};
-    Promise.resolve(server.listeners('request')[0](req,res)).catch(reject);
-  });
-}
-
-test('settings endpoints validate origin/schema; view/export exposes whitelisted records only', async t=>{
-  const dir=temp(t), controls=new RadarControls(dir,config.supportedChains,'bsc');
-  const state={value:{activeChain:'bsc',status:'RUNNING',supportedChains:config.supportedChains,
-    privateKey:'do-not-leak',candidates:[{ address, status:'HARD_REJECT', auditHealth:{earlyExit:true,private:'do-not-leak'}, deep:{wallets:{botHoldRate:0,linkedHoldRate:0,ordinaryCount:0},sellability:{distinctSellers:0}} }],chainStates:{sol:{scanCount:5,candidates:[]}},outcomes:[{address,baselinePrice:1,raw:'do-not-leak',samples:{m30:{return:.1,price:1.1,private:'do-not-leak'}}}]}};
-  const server=createServer({state,controls,settings:{...config,publicDir:path.join(root,'public')},disconnectGmgnKey:()=>({disconnected:true})});
-  assert.equal((await dispatch(server,'POST','/api/scan-chains',{chains:['sol','bsc']})).status,200);
-  assert.equal((await dispatch(server,'POST','/api/scan-chains',{chains:['sol'],trade:true})).status,400);
-  assert.equal((await dispatch(server,'POST','/api/gmgn-disconnect',{},false)).status,403);
-  assert.equal((await dispatch(server,'POST','/api/gmgn-disconnect',{})).body.disconnected,true);
-  const status=await dispatch(server,'GET','/api/status?chain=sol');
-  assert.equal(status.body.activeChain,'sol'); assert.equal(status.body.scanCount,5);
-  assert.equal(status.body.scheduler.scanningChain,'bsc');
-  const exported=await dispatch(server,'GET','/api/export');
-  assert.equal(exported.body.chains.bsc.outcomes[0].samples.m30.return,.1);
-  const skipped = exported.body.chains.bsc.candidates[0];
-  assert.equal(skipped.auditHealth.earlyExit,true);
-  assert.equal(skipped.deep.wallets.botHoldRate,null);
-  assert.equal(skipped.deep.wallets.linkedHoldRate,null);
-  assert.equal(skipped.deep.sellability.distinctSellers,null);
-  assert.doesNotMatch(JSON.stringify(exported),/do-not-leak/);
-  assert.equal((await dispatch(server,'GET','/api/status?chain=not-a-chain')).status,400);
 });

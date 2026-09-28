@@ -413,9 +413,10 @@ test('recoverable scanner caps outcome reads for a cycle', () => {
     address,
     initialDecision: 'X_REVIEW',
     latestDecision: 'X_REVIEW',
-    baselineAt: NOW - 90_000_000 - index,
+    // Due for the 5-minute horizon and within upstream's 24-hour lateness bound.
+    baselineAt: NOW - 10 * 60_000 - index,
     baselinePrice: 1,
-    lastAuditedAt: NOW - 90_000_000,
+    lastAuditedAt: NOW - 10 * 60_000,
     symbol: `OUTCOME${index}`,
     latestFailed: [],
     samples: {},

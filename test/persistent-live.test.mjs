@@ -6,7 +6,7 @@ import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } fro
 import { PersistentLive } from '../src/bot/live.mjs';
 import { RecoverableScanner } from '../src/recoverable-scanner.mjs';
 import { SqliteRecoverableScannerStore } from '../src/storage/recoverable-scanner.mjs';
-import { config } from '../src/config.mjs';
+import { scannerSettings as config } from '../src/scanner-settings.mjs';
 const START = 1800000000000;
 const token = overrides => ({ address: `0x${'1'.repeat(40)}`, symbol: 'T', market_cap: 50000, liquidity: 15000, creation_timestamp: START / 1000 - 1000, price: 1, volume: 1000, buys: 10, sells: 5, holder_count: 100, smart_degen_count: 3, rug_ratio: .1, bundler_rate: .1, rat_trader_amount_rate: .1, is_wash_trading: false, is_honeypot: 0, ...overrides });
 function fixture() {

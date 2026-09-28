@@ -1,4 +1,4 @@
-/** Shared scoring and scheduling defaults for local and Workers runtimes. */
+/** Scoring and scheduling defaults for the Worker scanner. */
 export const scannerSettings = Object.freeze({
   chain: 'robinhood',
   supportedChains: Object.freeze(['sol', 'bsc', 'base', 'eth', 'robinhood', 'arc', 'stable']),
@@ -15,6 +15,16 @@ export const scannerSettings = Object.freeze({
   priorityMaxMarketCap: 80_000,
   minLiquidity: 3_000,
   strictLiquidity: 8_000,
+  // Fast alerts should favor current activity. These are dynamic opportunity
+  // gates, not permanent contract-risk exclusions.
+  matureMarketAgeSec: 60 * 60,
+  oldMarketAgeSec: 6 * 60 * 60,
+  minMatureVolume5mUsd: 100,
+  minOldVolume5mUsd: 250,
+  minMatureTurnover5m: 0.005,
+  minOldTurnover5m: 0.01,
+  maxCollapsedAthRatio: 0.10,
+  strongRebound1h: 0.20,
   maxRugRatio: 0.20,
   maxTop10Rate: 0.30,
   maxInsiderRate: 0.15,

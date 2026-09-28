@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { config } from '../src/config.mjs';
+import { scannerSettings as config } from '../src/scanner-settings.mjs';
 import {
   discoveryScreen, analyzeWallets, observeFiveMinutes, deepScreen, empiricalSellability, marketBehaviorScreen
 } from '../src/scoring/index.mjs';
