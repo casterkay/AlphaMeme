@@ -68,7 +68,7 @@ test('run options reject cadences faster than the planned 15-second production i
   assert.deepEqual(parseRunOptions({}), {
     chain: 'bsc', samples: PROBE_LIMITS.defaultSamples, intervalMs: PROBE_LIMITS.defaultIntervalMs
   });
-  for (const invalid of [{ intervalMs: 14_999 }, { samples: 0 }, { samples: PROBE_LIMITS.maxSamples + 1 }, { chain: 'arc' }, { extra: 1 }]) {
+  for (const invalid of [{ intervalMs: 14_999 }, { samples: 0 }, { samples: PROBE_LIMITS.maxSamples + 1 }, { chain: 'stable' }, { extra: 1 }]) {
     assert.throws(() => parseRunOptions(invalid), RangeError, JSON.stringify(invalid));
   }
 });

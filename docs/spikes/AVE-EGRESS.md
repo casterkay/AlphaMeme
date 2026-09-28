@@ -80,8 +80,14 @@ grep -o '"outcome": *"[A-Za-z]*"' ave-egress-tail.json | sort | uniq -c
 npx wrangler delete -c $CONFIG   # afterwards
 ```
 
-Options: `chain` is `bsc`, `eth`, `base` or `sol`; `samples` 1–240;
-`intervalMs` 15,000–600,000. Each run id is single-use.
+Options: `chain` is `bsc`, `eth`, `base`, `sol`, `robinhood` or `arc`;
+`samples` 1–240; `intervalMs` 15,000–600,000. Each run id is single-use.
+
+Run the egress verdict on `bsc`, which AVE documents. `robinhood` and `arc` are
+not in AVE's documentation, and upstream dropped `arc` for lack of evidence that
+AVE serves it. A failure on those chains, typically `provider_error`, answers
+"does AVE serve this chain?", not the egress question, so check them with a
+separate short run (for example `"samples":3`).
 
 The result's `summary` gives the stop reason, the next scheduled alarm, outcome
 counts, estimated CU, trending latency and alarm-delivery lag percentiles,

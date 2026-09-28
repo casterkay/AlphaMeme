@@ -5,7 +5,9 @@
 
 const AVE_ORIGIN = 'https://prod.ave-api.com';
 const EGRESS_ECHO_URL = 'https://api.ipify.org?format=json';
-const AVE_CHAINS = Object.freeze({ bsc: 'bsc', eth: 'eth', base: 'base', sol: 'solana' });
+// Mirrors upstream's AVE chain slugs. AVE documents only bsc, eth, base and solana;
+// robinhood and arc are accepted so a short run can show whether AVE serves them.
+const AVE_CHAINS = Object.freeze({ bsc: 'bsc', eth: 'eth', base: 'base', sol: 'solana', robinhood: 'robinhood', arc: 'arc' });
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_BODY_BYTES = 1_048_576;
 const BODY_PREFIX_CHARS = 300;
