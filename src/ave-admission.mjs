@@ -69,8 +69,9 @@ export function aveReadyAt(state) {
   return Math.max(state.spacingReadyAt, state.blockedUntil);
 }
 
+// Only a later period starts a fresh allowance; a clock that steps back keeps spending counted.
 function inPeriod(state, period) {
-  return state.periodStartAt === period.startAt ? state : { ...state, periodStartAt: period.startAt, cuUsed: 0 };
+  return period.startAt > state.periodStartAt ? { ...state, periodStartAt: period.startAt, cuUsed: 0 } : state;
 }
 
 /**
