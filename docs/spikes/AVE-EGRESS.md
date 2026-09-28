@@ -1,6 +1,6 @@
 # AVE egress probe from Cloudflare Workers
 
-**Status: awaiting a deployed run.** This decides whether the AVE migration
+**Status: egress and rate limit pass; CPU per alarm still to be read from the tail.** This decides whether the AVE migration
 stays on Cloudflare Workers or falls back to the Fly.io host in #51.
 
 GMGN banned the shared Workers egress IP (`docs/spikes/LIVE-TIMING.md`), so the
@@ -115,6 +115,25 @@ workerd with no compatibility flags; that sandbox cannot reach
 
 ## Result
 
-_Fill in from `ave-egress-result.json` and the tail capture: Worker version,
-date, chain, outcome counts, first failure body prefix, latency p50/p95, CPU per
-alarm, and the verdict._
+**2026-09-28, `bsc`, 120 samples at 15 s** (02:54–03:24 UTC, run started before
+the default moved to `arc`):
+
+- Stopped `complete`; 121 of 121 reads `ok` (120 trending with 100 rows each, one
+  token details), no 429, no refusal, no rate-limit headers. About 605 CU.
+- Trending latency p50 420 ms, p95 1,092 ms, max 1,174 ms. Latency is bimodal:
+  62 reads under 500 ms, 58 over 900 ms. Bodies were 323–328 KB.
+- Alarm delivery lag p50 1 ms, p95 2 ms, max 27 ms.
+- Egress `2a06:98c0:3600::103` (Cloudflare Workers IPv6) on every read; all
+  requests went through `SJC`.
+- The top trending token did not change for the whole 30 minutes.
+- No run stopped as `invocation_lost`, so no read was killed on the CPU limit.
+  The per-invocation CPU times from the tail are still to be recorded.
+
+**Arc, 3 samples, the same day:** trending returned HTTP 200, body `status` 1 and
+100 rows (234 KB) in 961 ms, and one token-details read was `ok`, all from the
+same egress address.
+
+**Verdict:** AVE answers Workers egress and allows one trending read every 15
+seconds, so the migration stays on Cloudflare Workers rather than Fly.io. The
+account is on Workers Free, so the production alarm's CPU still has to fit the
+10 ms limit; that needs the tail breakdown.
