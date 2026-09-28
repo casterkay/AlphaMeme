@@ -192,7 +192,8 @@ export class SqliteControlStateStore {
       const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
       const next = mutator(state);
       if (effects.deleteKeys) {
-        this.storage.sql.exec('DELETE FROM keys WHERE tenant_id = ?', this.tenantId);
+        // Disconnecting AVE deletes only AVE keys; the trading wallet is removed only under /wallet.
+        this.storage.sql.exec("DELETE FROM keys WHERE tenant_id = ? AND name IN ('ave-api-key', 'ave-pending-api-key')", this.tenantId);
       }
       if (effects.discardCheckpoints) {
         this.storage.sql.exec('DELETE FROM cycle_checkpoint WHERE tenant_id = ?', this.tenantId);
