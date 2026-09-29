@@ -608,8 +608,8 @@ test('a handler learns its final attempt and every failure is logged without sec
   assert.deepEqual(seen, [false, true]);
   assert.equal(store.read().tasks[0].enabled, false);
   assert.deepEqual(warn.mock.calls.map(call => JSON.parse(call.arguments[0])), [
-    { event: 'scheduler_task_failed', taskKind: 'credential', errorCode: 'AVE_TIMEOUT', httpStatus: 504, attempt: 1, exhausted: false },
-    { event: 'scheduler_task_failed', taskKind: 'credential', errorCode: 'AVE_TIMEOUT', httpStatus: 504, attempt: 2, exhausted: true }
+    { event: 'scheduler_task_failed', taskId: 'credential:1', taskKind: 'credential', errorCode: 'AVE_TIMEOUT', httpStatus: 504, attempt: 1, exhausted: false },
+    { event: 'scheduler_task_failed', taskId: 'credential:1', taskKind: 'credential', errorCode: 'AVE_TIMEOUT', httpStatus: 504, attempt: 2, exhausted: true }
   ]);
 });
 

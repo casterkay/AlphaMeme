@@ -122,6 +122,16 @@ test('a rejected delivery is logged with its Telegram error code but never its d
   assert.equal(line.includes('secret'), false);
 });
 
+test('a failed delivery log carries no transport text that is not a known code', async t => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const f = fixture(async () => ({ ok: false, kind: 'deleted', code: 'untrusted secret: message text', errorCode: 'secret' }));
+  f.enqueue('a');
+  await f.deliver('a');
+  const line = warn.mock.calls[0].arguments[0];
+  assert.deepEqual(JSON.parse(line), { event: 'telegram_delivery_failed', method: 'sendMessage', kind: 'deleted', code: null, telegramErrorCode: null, attempt: 1 });
+  assert.equal(line.includes('secret'), false);
+});
+
 test('multiple messages retain independent token mappings; leaving detail removes only that message', async () => {
   const f = fixture();
   f.enqueue('a', { token: { chain: 'sol', address: 'token' } });
