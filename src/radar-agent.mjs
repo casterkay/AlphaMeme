@@ -332,7 +332,7 @@ export class RadarAgent extends DurableObject {
       const state = readAveAdmissionState(this.ctx.storage, tenantId);
       writeAveAdmissionStateInTransaction(this.ctx.storage, tenantId, recordAveResponse(Date.now(), state, error, budget));
       if (!error || error.code === 'AVE_AUTH') {
-        this.ctx.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json', tenantId, 'telegram.providerAuth', JSON.stringify({ keyEpoch, unusable: Boolean(error) }));
+        this.ctx.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json WHERE value_json IS NOT excluded.value_json', tenantId, 'telegram.providerAuth', JSON.stringify({ keyEpoch, unusable: Boolean(error) }));
       }
     });
   }
@@ -343,7 +343,7 @@ export class RadarAgent extends DurableObject {
       || !Number.isSafeInteger(summary.nextDeadlineAt) || !Number.isSafeInteger(summary.scanCount)) {
       throw new SchedulerStepError('RECOVERABLE_SCAN_SUMMARY_INVALID', 'recoverable scan summary cannot schedule its successor');
     }
-    this.ctx.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json', store.tenantId, 'runtime.global', JSON.stringify({ scanCount: summary.scanCount, discoveredCount: checkpoint.partial.screened?.length ?? null, prequalifiedCount: checkpoint.partial.prequalifiedCount ?? null, lastAttemptAt: checkpoint.partial.startedAt, lastSuccessAt: summary.completedAt, nextCycleAt: summary.nextCycleAt }));
+    this.ctx.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json WHERE value_json IS NOT excluded.value_json', store.tenantId, 'runtime.global', JSON.stringify({ scanCount: summary.scanCount, discoveredCount: checkpoint.partial.screened?.length ?? null, prequalifiedCount: checkpoint.partial.prequalifiedCount ?? null, lastAttemptAt: checkpoint.partial.startedAt, lastSuccessAt: summary.completedAt, nextCycleAt: summary.nextCycleAt }));
     const schedulerState = store.read();
     if (schedulerState.runtime.eligibility.paused || !schedulerState.runtime.eligibility.configured) return null;
     const existing = scanner.checkpoint(summary.nextCycleId);
