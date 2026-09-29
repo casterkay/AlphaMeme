@@ -126,6 +126,13 @@ test('HTTP 429 without Retry-After is AVE_RATE_LIMITED without a retry time', as
   await rejectsWith(ave.trending('bsc'), 'AVE_RATE_LIMITED', error => assert.equal(Object.hasOwn(error, 'retryAt'), false));
 });
 
+test('a redirect is never followed and is AVE_UPSTREAM', async () => {
+  const { ave, calls } = client(() => new Response(null, { status: 302, headers: { location: 'https://elsewhere.example/' } }));
+  await rejectsWith(ave.trending('bsc'), 'AVE_UPSTREAM');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].init.redirect, 'manual');
+});
+
 for (const status of [500, 502, 503]) {
   test(`HTTP ${status} is AVE_UPSTREAM`, async () => {
     const { ave } = client(() => new Response('bad gateway', { status }));

@@ -18,9 +18,10 @@ const jsonResponse=value=>new Response(JSON.stringify(value),{status:200,headers
 const schedulerTasks=(storage,tenantId)=>readSchedulerStateInTransaction(storage,tenantId).tasks;
 
 // A hand-written AVE endpoint: records each request's URL and key, never touches the network.
+// Building a real Request applies the Workers runtime's option checks, which a bare stub would skip.
 function aveStub(respond) {
   const calls=[];
-  return {calls,fetch:async(url,init)=>{calls.push({url:String(url),apiKey:init.headers['X-API-KEY']});return respond(String(url));}};
+  return {calls,fetch:async(url,init)=>{const request=new Request(url,init);calls.push({url:request.url,apiKey:request.headers.get('X-API-KEY')});return respond(request.url);}};
 }
 
 async function withRuntime(tenantId,operation) {
