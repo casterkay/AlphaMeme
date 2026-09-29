@@ -1,0 +1,34 @@
+src/radar-agent.mjs
+  s_c497d5c9be8144::t_4be695c19616b0 374,379-380
+src/bot/outbox.mjs
+  s_c497d5c9be8144::t_35ea24bf8caf2d 171-172
+src/bot/telegram-transport.mjs
+  s_c497d5c9be8144::t_35ea24bf8caf2d 36-38
+test/telegram-outbox.test.mjs
+  s_c497d5c9be8144::t_0bf4c8dfb7f23d 112-124
+workers/telegram-e2e.runtime.mjs
+  s_c497d5c9be8144::t_c66c5640bdb254 310
+  s_c497d5c9be8144::t_0bf4c8dfb7f23d 309,311-321
+test/scheduler.test.mjs
+  s_c497d5c9be8144::t_0bf4c8dfb7f23d 588-615
+src/bot/runtime.mjs
+  s_c497d5c9be8144::t_4be695c19616b0 124,134-137,142-144
+src/scheduler.mjs
+  s_c497d5c9be8144::t_117fb7886c2be2 535,548-549,713-714
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "95542ffc2fa5bbc0279d3aafcf6033eaca4b07bf",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
