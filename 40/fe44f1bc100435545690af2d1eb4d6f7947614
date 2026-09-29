@@ -1,0 +1,32 @@
+workers/radar-agent.runtime.mjs
+  s_c497d5c9be8144::t_7da54f0c550287 280-316
+workers/storage-writes.runtime.mjs
+  s_c497d5c9be8144::t_0deb87927e0a83 1-108
+  s_c497d5c9be8144::t_78dca37af4f9bb 109-110
+src/bot/notification-policy.mjs
+  s_c497d5c9be8144::t_c8d3490a507f05 20
+src/radar-agent.mjs
+  s_c497d5c9be8144::t_e042f4e05638ab 335,346
+src/storage/ave-admission-state.mjs
+  s_c497d5c9be8144::t_023c2246287f42 33
+src/storage/recoverable-scanner.mjs
+  s_c497d5c9be8144::t_60b4bd890bb5c6 489-492,499-505,701,712-730,790
+src/storage/scheduler-state.mjs
+  s_c497d5c9be8144::t_1fca3e25b84380 40,43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "40fe44f1bc100435545690af2d1eb4d6f7947614",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
