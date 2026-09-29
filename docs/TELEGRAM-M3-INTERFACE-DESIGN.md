@@ -693,7 +693,7 @@ schedule corrections; do not reuse new-candidate eligibility to suppress them.
 Freeze batch membership/identity before dispatch; cancel stale batches and create
 a new logical batch if needed, never mutate an ambiguous retry's membership.
 
-Initial start, reconnection, resubscription and unmute establish the specified
+Initial start, reconnection, resubscription and turning alerts back on establish the specified
 quiet baseline and cancel stale candidate notifications. Restoring an evicted DO
 restores its existing baseline and pending eligible work. No catch-up broadcast.
 Recovery of a service issue updates its existing issue/card, not a new broadcast.
@@ -918,7 +918,7 @@ it does not open PRs, post comments, reassign milestones, deploy or enable a bot
 | A18 | Slow GMGN read/429; Refresh spam; duplicate Queue audit | Max in-flight 1, cooldown respected, visible lag, no burst catch-up or extra reads | #26/#29 / scheduler + live |
 | A19 | All seven windows, both cohorts, missing samples, 49/50 gate boundaries | Existing summary/coverage values; all-three-window overall gate | #28 / panels + outcomes |
 | A20 | Routine events/429/sample completion then eligible new candidate | Routine send count 0; actionable notice has reason and detail entry | #27 / notification-policy |
-| A21 | First start/reconnect/resubscribe/unmute vs eviction | No backlog replay; eviction preserves eligible undelivered work | #27 / notification-policy |
+| A21 | First start/reconnect/resubscribe/alerts on vs eviction | No backlog replay; eviction preserves eligible undelivered work | #27 / notification-policy |
 | A22 | Send succeeds then local crash; second ambiguous attempt; old edit race | At most one UNKNOWN auto retry; suspend uncertain card; never claim newest remotely | #20 / telegram-outbox |
 | A23 | Deleted card, permanent send failure, mute during queued alert | No background replacement spam; status exposes issue; invalid alerts cancelled | #20/#27 / outbox |
 | A24 | Export under filtering, during updates, with secret-shaped notes | Consistent all-chain whitelist file, complete marks, no secrets/raw payload | #22 / panels + export |

@@ -195,9 +195,9 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(runtime.notifications.controls().enabled).toBe(true);
       await command('mute');await drain();
       expect(runtime.notifications.controls().enabled).toBe(false);
-      expect(sent.at(-1).params.text).toContain('提醒');
-      await command('mute');
-      expect(runtime.notifications.controls().enabled).toBe(true);
+      expect(sent.at(-1).params.text).toContain('提醒: 已关闭');
+      await command('mute');await drain();
+      expect(runtime.notifications.controls().enabled).toBe(true);expect(sent.at(-1).params.text).toContain('提醒: 已开启');
       await command('unmute');
       expect(runtime.notifications.controls().enabled).toBe(true);
       expect(runtime.commands.preference('notificationsVersion',0)).toBe(2);
