@@ -20,7 +20,9 @@ test('all native panels render both locales with bounded text and typed action d
     for(const item of result.keyboard.flat()) assert.ok(item.url || typeof item.action==='string');
     assert.equal(result.version,2);
   }
-  assert.equal(telegramCommandDescriptions('en').length,23);
+  const commands=telegramCommandDescriptions('en').map(item=>item.command);
+  assert.equal(commands.length,22);
+  assert.ok(commands.includes('mute')&&!commands.includes('unmute'));
 });
 
 test('audit filters use effective marks while overview keeps original on-chain candidate count',()=>{

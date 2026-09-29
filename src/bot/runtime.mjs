@@ -128,7 +128,7 @@ export class TelegramRuntime {
         this.startScan();
         this.resetNotificationBaseline();
         this.inbox.finishInTransaction(state.updateId, 'DONE');
-        this.commands.noticeInTransaction(state.updateId, this.commands.language === 'en' ? 'AVE connected. Read-only; no trades. Check and delete your key message. Notifications remain under your control: /unmute.' : 'AVE已连接。只读，不执行交易。请检查并删除密钥消息。可使用 /unmute 开启提醒。', 'connected');
+        this.commands.noticeInTransaction(state.updateId, this.commands.language === 'en' ? 'AVE connected. Read-only; no trades. Check and delete your key message. Alerts are on; /mute turns them off or back on.' : 'AVE已连接。只读，不执行交易。请检查并删除密钥消息。提醒已开启，可使用 /mute 关闭或重新开启。', 'connected');
       } });
     } catch (error) {
       // A transient failure retries the verification until its final attempt; a refusal ends it.

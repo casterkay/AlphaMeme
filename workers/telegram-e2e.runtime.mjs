@@ -177,16 +177,30 @@ describe('Telegram complete command and delivery flows',()=>{
 
   it('rejects obsolete notification and scan-chain controls from independently current sessions',async()=>{
     await withRuntime('22908',async({runtime,command,sessions,link,click})=>{
-      await command('settings');const oldSettings=sessions()[0],enable=link(oldSettings,'notifications.set',params=>params.value===true);
-      await command('unmute');await command('mute');
-      const obsoleteNotifications=await click(enable);
-      expect(runtime.inbox.get(obsoleteNotifications.updateId).status).toBe('FAILED');expect(runtime.commands.preference('notifications',false)).toBe(false);
+      await command('settings');const oldSettings=sessions()[0],disable=link(oldSettings,'notifications.set',params=>params.value===false);
+      await command('mute');await command('mute');
+      const obsoleteNotifications=await click(disable);
+      expect(runtime.inbox.get(obsoleteNotifications.updateId).status).toBe('FAILED');expect(runtime.notifications.controls().enabled).toBe(true);
       expect(runtime.commands.sessions.get(oldSettings.id).version).toBe(oldSettings.version);
       await command('chains');const oldChains=sessions().at(-1),toSol=link(oldChains,'chains.set',params=>params.value==='sol');
       await command('chains');await click(link(sessions().at(-1),'chains.set',params=>params.value==='bsc'));
       expect(runtime.control.snapshot().activeChain).toBe('bsc');
       const obsoleteChain=await click(toSol);
       expect(runtime.inbox.get(obsoleteChain.updateId).status).toBe('FAILED');expect(runtime.control.snapshot().activeChain).toBe('bsc');
+    });
+  });
+
+  it('starts with alerts on and toggles them with /mute, answering with the settings panel',async()=>{
+    await withRuntime('22923',async({runtime,command,sent,drain})=>{
+      expect(runtime.notifications.controls().enabled).toBe(true);
+      await command('mute');await drain();
+      expect(runtime.notifications.controls().enabled).toBe(false);
+      expect(sent.at(-1).params.text).toContain('提醒');
+      await command('mute');
+      expect(runtime.notifications.controls().enabled).toBe(true);
+      await command('unmute');
+      expect(runtime.notifications.controls().enabled).toBe(true);
+      expect(runtime.commands.preference('notificationsVersion',0)).toBe(2);
     });
   });
 
@@ -201,7 +215,7 @@ describe('Telegram complete command and delivery flows',()=>{
       await click(link(home,'panel.open',params=>params.panel==='feed'));
       const feed=runtime.commands.sessions.get(saved.id);expect(feed.viewChain).toBe('arc');
 
-      await command('unmute');
+      await command('mute');await command('mute');
       storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,stale_at,review_revision) VALUES (?,?,?,?,?,?,?,?)',tenantId,'arc','0x'+'d'.repeat(40),'ALERT','LIVE_READY',at,at+600_000,'alert-revision');
       expect(runtime.notifications.controls()).toEqual({enabled:true,chains:['arc']});
       expect(runtime.notifications.candidates().find(row=>row.symbol==='ALERT')?.qualified).toBe(true);
@@ -276,7 +290,7 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(storage.sql.exec('SELECT name,value_enc FROM keys WHERE tenant_id=?',tenantId).toArray().map(row=>{expect(row.value_enc).not.toContain(apiKey);return row.name;})).toEqual(['ave-api-key']);
       expect(sent.some(row=>row.method==='deleteMessage'&&row.params.message_id===input.sourceMessageId)).toBe(true);expect(JSON.stringify(sent)).not.toContain(apiKey);
       expect(sent.some(row=>row.params.text?.includes('AVE已连接'))).toBe(true);
-      expect(runtime.commands.preference('notifications',false)).toBe(false);
+      expect(runtime.notifications.controls().enabled).toBe(true);
       const [scan]=schedulerTasks(storage,tenantId).filter(task=>task.kind==='scan');
       expect(scan).toMatchObject({kind:'scan',dueAt:at,enabled:true,aveCost:AVE_CU.trending});
       expect(storage.sql.exec('SELECT chain,key_epoch,phase FROM cycle_checkpoint WHERE tenant_id=? AND cycle_id=?',tenantId,scan.id.slice('scan:'.length)).one()).toEqual({chain:'arc',key_epoch:1,phase:'DISCOVER'});
@@ -369,7 +383,7 @@ describe('Telegram complete command and delivery flows',()=>{
     await withRuntime('22913',async({runtime,storage,tenantId,command,sessions,link,click,seed,drain})=>{
       seed();await command('audits');await click(link(sessions()[0],'panel.open',params=>params.panel==='detail'));
       await command('audits');await click(link(sessions()[1],'panel.open',params=>params.panel==='detail'));
-      expect(runtime.commands.preference('notifications',false)).toBe(false);
+      await command('mute');expect(runtime.notifications.controls().enabled).toBe(false);
       storage.sql.exec('UPDATE candidates SET review_revision=? WHERE tenant_id=?','risk-revision',tenantId);
       storage.transactionSync(()=>runtime.reconcileCardsInTransaction());
       const corrections=()=>runtime.outbox.rows().filter(row=>row.delivery_class==='PANEL_UPDATE');

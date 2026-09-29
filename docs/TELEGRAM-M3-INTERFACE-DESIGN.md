@@ -163,7 +163,7 @@ All root panels have inline navigation, even empty/error panels.
 | `/pause` | 暂停扫描 / Pause scanning | Immediate durable pause; no confirmation step |
 | `/resume` | 恢复扫描 / Resume scanning | Resume scan and existing subscription if credentials usable |
 | `/disconnect` | 断开并删除密钥 / Disconnect and delete key | Explicit command executes immediately; UI button first opens confirmation |
-| `/mute`, `/unmute` | 关闭提醒 / Mute alerts; 开启提醒 / Enable alerts | Set notification preference; unmute establishes a fresh baseline |
+| `/mute` | 开关提醒 / Turn alerts on or off | Toggle the notification preference (on by default); turning alerts on establishes a fresh baseline |
 | `/lang [zh\|en]` | 选择语言 / Choose language | No argument opens selector; valid argument persists preference |
 | `/cancel` | 取消输入 / Cancel input | Clear pending input in replied-to session; without a reply clear all own pending inputs |
 
