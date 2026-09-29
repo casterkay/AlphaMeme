@@ -168,6 +168,8 @@ export class TelegramOutbox {
       if (error?.code !== 'SCHEDULER_REQUEST_TIMEOUT' && !(error instanceof TypeError) && error?.name !== 'AbortError') throw error;
       result = { ok: false, kind: 'unknown' };
     }
+    if (!result.ok && result.kind !== 'not-modified') console.warn(JSON.stringify({ event: 'telegram_delivery_failed', method: payload.method,
+      kind: result.kind, code: result.code ?? null, telegramErrorCode: result.errorCode ?? null, attempt: row.attempts }));
     this.storage.transactionSync(() => {
       // A lease recovery can supersede a late network completion; it cannot prove delivery ordering.
       const current = this.storage.sql.exec('SELECT * FROM outbox WHERE tenant_id = ? AND id = ?', this.tenantId, id).toArray()[0];

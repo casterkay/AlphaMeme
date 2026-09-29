@@ -306,6 +306,19 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
+  it('ends verification on its final attempt when AVE stays unavailable, scrubs the candidate and tells the user to resend',async()=>{
+    await withRuntime('22922',async({runtime,storage,tenantId,sent,receipt,drain})=>{
+      const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);await runtime.runCommand(input.updateId);
+      const ave=aveStub(()=>new Response('too many requests',{status:429,headers:{'retry-after':'30'}}));
+      await runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,{request,fetchImpl:ave.fetch,finalAttempt:true});await drain();
+      expect(ave.calls).toHaveLength(1);
+      expect(runtime.inbox.get(input.updateId)).toMatchObject({status:'FAILED',payload_enc:null});
+      expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
+      expect(runtime.control.snapshot().configured).toBe(false);
+      expect(sent.some(row=>row.params.text?.includes('AVE暂时不可用')&&row.params.text.includes('/setkey'))).toBe(true);
+    });
+  });
+
   it.each(['pause','disconnect'])('commits /%s during a suspended verification before its network completion',async action=>{
     await withRuntime(action==='pause'?'22904':'22905',async({runtime,storage,tenantId,command,receipt})=>{
       await command('onboard');const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);await runtime.runCommand(input.updateId);

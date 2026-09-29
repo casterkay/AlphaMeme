@@ -33,9 +33,9 @@ export function createTelegramTransport({ botToken, fetchImpl = fetch, timeoutMs
       const code = Number(value?.error_code || response.status);
       if (code === 400 && /message is not modified/i.test(value?.description || '')) return { ok: false, kind: 'not-modified', code: 'TELEGRAM_NOT_MODIFIED' };
       if (code === 400 && /message to (?:edit|delete) not found/i.test(value?.description || '')) return { ok: false, kind: 'deleted', code: 'TELEGRAM_MESSAGE_DELETED' };
-      if (code === 429) return { ok: false, kind: 'retryable', code: 'TELEGRAM_RATE_LIMITED', retryAfterMs: Math.max(0, Number(value?.parameters?.retry_after) || 0) * 1000 };
-      if (code >= 500) return { ok: false, kind: 'unknown', code: 'TELEGRAM_SERVER_UNCERTAIN' };
-      return { ok: false, kind: 'permanent', code: 'TELEGRAM_REJECTED' };
+      if (code === 429) return { ok: false, kind: 'retryable', code: 'TELEGRAM_RATE_LIMITED', errorCode: code, retryAfterMs: Math.max(0, Number(value?.parameters?.retry_after) || 0) * 1000 };
+      if (code >= 500) return { ok: false, kind: 'unknown', code: 'TELEGRAM_SERVER_UNCERTAIN', errorCode: code };
+      return { ok: false, kind: 'permanent', code: 'TELEGRAM_REJECTED', errorCode: code };
     } catch (error) {
       if (error instanceof TypeError || error?.name === 'AbortError' || controller.signal.aborted) return { ok: false, kind: 'unknown', code: 'TELEGRAM_TRANSPORT_UNCERTAIN' };
       throw error;

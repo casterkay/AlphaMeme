@@ -371,12 +371,13 @@ export class RadarAgent extends DurableObject {
   }
 
   #credentialVerificationHandler(store) {
-    return externalRequestHandler(async ({ task, request }) => {
+    return externalRequestHandler(async ({ task, request, finalAttempt }) => {
       const match = /^credential:(\d+)$/.exec(task.id);
       if (!match) throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', 'credential task identity is invalid');
       return this.#telegram(store.tenantId).verifyCredential(Number(match[1]), {
         request,
-        fetchImpl: globalThis.fetch
+        fetchImpl: globalThis.fetch,
+        finalAttempt
       });
     });
   }

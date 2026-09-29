@@ -109,6 +109,19 @@ test('transport redacts rejection details and recognizes not-modified', async ()
   assert.equal(JSON.stringify(result).includes('secret'), false);
 });
 
+test('a rejected delivery is logged with its Telegram error code but never its description', async t => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const transport = createTelegramTransport({ botToken: 'secret', fetchImpl: async () => new Response(JSON.stringify({ ok: false, error_code: 403, description: 'secret: bot was blocked by the user' }), { status: 403 }) });
+  const f = fixture(transport);
+  f.enqueue('a');
+  await f.deliver('a');
+  assert.equal(f.outbox.rows()[0].status, 'FAILED');
+  assert.equal(warn.mock.callCount(), 1);
+  const line = warn.mock.calls[0].arguments[0];
+  assert.deepEqual(JSON.parse(line), { event: 'telegram_delivery_failed', method: 'sendMessage', kind: 'permanent', code: 'TELEGRAM_REJECTED', telegramErrorCode: 403, attempt: 1 });
+  assert.equal(line.includes('secret'), false);
+});
+
 test('multiple messages retain independent token mappings; leaving detail removes only that message', async () => {
   const f = fixture();
   f.enqueue('a', { token: { chain: 'sol', address: 'token' } });
