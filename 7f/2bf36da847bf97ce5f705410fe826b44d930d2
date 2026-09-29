@@ -1,0 +1,40 @@
+src/bot/snapshot.mjs
+  s_c497d5c9be8144::t_a7bf1c992144c8 135
+src/bot/inbox.mjs
+  s_c497d5c9be8144::t_a7bf1c992144c8 7
+docs/TELEGRAM-M3-INTERFACE-DESIGN.md
+  s_c497d5c9be8144::t_2d0eb710c9e56e 166
+workers/telegram-e2e.runtime.mjs
+  s_c497d5c9be8144::t_2d0eb710c9e56e 180-183,218,293,386
+  s_c497d5c9be8144::t_1be41b8da6b4e5 193-206
+test/telegram-panels.test.mjs
+  s_c497d5c9be8144::t_bcf9345faeaffa 23-25
+src/bot/runtime.mjs
+  s_c497d5c9be8144::t_a7bf1c992144c8 131
+src/bot/commands.mjs
+  s_c497d5c9be8144::t_a7bf1c992144c8 9,69-76,172
+src/bot/panels.mjs
+  s_c497d5c9be8144::t_2d0eb710c9e56e 210
+test/notification-policy.test.mjs
+  s_c497d5c9be8144::t_dea4c14282c1ab 42-49
+README.md
+  s_c497d5c9be8144::t_2d0eb710c9e56e 74
+src/bot/notification-policy.mjs
+  s_c497d5c9be8144::t_a7bf1c992144c8 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7f2bf36da847bf97ce5f705410fe826b44d930d2",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
