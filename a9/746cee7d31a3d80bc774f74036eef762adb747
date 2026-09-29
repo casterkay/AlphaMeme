@@ -1,0 +1,23 @@
+test/ave-provider.test.mjs
+  s_c497d5c9be8144::t_86b357fe461a65 129-135
+src/providers/ave.mjs
+  s_c497d5c9be8144::t_693ba07658c04d 286
+workers/telegram-e2e.runtime.mjs
+  s_c497d5c9be8144::t_86b357fe461a65 21,24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a9746cee7d31a3d80bc774f74036eef762adb747",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
