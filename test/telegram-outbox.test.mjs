@@ -132,6 +132,27 @@ test('a failed delivery log carries no transport text that is not a known code',
   assert.equal(line.includes('secret'), false);
 });
 
+test('a message cancelled before sending is logged with the check that failed', async t => {
+  const log = t.mock.method(console, 'log', () => {});
+  const f = fixture();
+  f.enqueue('late', { expiresAt: 150 });
+  f.advance(100);
+  await f.deliver('late');
+  assert.equal(f.outbox.rows()[0].status, 'CANCELLED');
+  assert.deepEqual(JSON.parse(log.mock.calls[0].arguments[0]), { event: 'telegram_delivery_cancelled', id: 'late', method: 'sendMessage', deliveryClass: 'USER_RESPONSE', actionReason: null, reason: 'expired' });
+});
+
+test('an ineligible message is cancelled with the eligibility reason its owner supplies', t => {
+  const log = t.mock.method(console, 'log', () => {});
+  const f = fixture();
+  const outbox = new TelegramOutbox({ storage: f.storage, tenantId: 'tenant', transport: async () => ({ ok: true }), now: () => 100,
+    ineligibleReason: () => 'lead_revised' });
+  f.enqueue('alert');
+  f.storage.transactionSync(() => outbox.reconcileInTransaction());
+  assert.equal(outbox.rows()[0].status, 'CANCELLED');
+  assert.equal(JSON.parse(log.mock.calls[0].arguments[0]).reason, 'lead_revised');
+});
+
 test('multiple messages retain independent token mappings; leaving detail removes only that message', async () => {
   const f = fixture();
   f.enqueue('a', { token: { chain: 'sol', address: 'token' } });
