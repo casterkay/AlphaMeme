@@ -11,9 +11,11 @@ const MEASURED_CYCLES = 20;
 // notification and audit-queue rows were rewritten, and bills 59 once they are
 // skipped: 34 fixed SQL rows (scheduler lease and alarm state, the cycle
 // checkpoint, AVE admission, feed and health snapshots), 5 alarms, and one
-// refreshed lead and one refreshed queue row per passing token. Restoring any
-// one of those rewrites costs at least 20 rows a cycle, so this bound bites.
-const MAX_ROWS_PER_CYCLE = 65;
+// refreshed lead and one refreshed queue row per passing token. Alerts are on
+// by default, so the notification baseline also refreshes each alerted lead's
+// quiet time, about 10 rows a cycle more (69). Restoring any one of the removed
+// rewrites costs at least 20 rows a cycle, so this bound bites.
+const MAX_ROWS_PER_CYCLE = 75;
 
 function jsonResponse(value, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
