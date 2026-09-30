@@ -126,7 +126,8 @@ export function marketCap(row) {
 }
 
 export function createdAt(row) {
-  if (row?.marketProvider === 'AVE') return num(first(row.first_trade_at, row.pool_created_at, row.launch_at,
+  // The same launch-based age the AVE screen uses; pools never date a token.
+  if (row?.marketProvider === 'AVE') return num(first(row.launch_at,
     row.ageBasis === 'launch' || row.ageBasis === 'token' ? row.creation_timestamp : null));
   return num(first(row.creation_timestamp, row.created_timestamp, row.open_timestamp));
 }

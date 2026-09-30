@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { scannerSettings as config } from '../src/scanner-settings.mjs';
 import {
-  discoveryScreen, analyzeWallets, observeFiveMinutes, deepScreen, empiricalSellability, marketBehaviorScreen
+  discoveryScreen, analyzeWallets, observeFiveMinutes, deepScreen, empiricalSellability, marketBehaviorScreen, createdAt
 } from '../src/scoring/index.mjs';
 
 const nowSec = 1_800_000_000;
@@ -318,7 +318,19 @@ test('the AVE screen still demands more current activity from older tokens', asy
 });
 
 test('the AVE screen does not screen by pool: a Uniswap v4 hook pool is neither required nor rejected', async () => {
-  const [row] = await aveHotListRows([aveToken(1, 30)]);
-  const withHookPool = { ...row, pairs: [{ chain: 'arc', address: row.address, pair: `0x${'b'.repeat(64)}`, amm: 'uniswap v4' }] };
-  assert.equal(discoveryScreen(withHookPool, { ...config, chain: 'arc' }, Date.now() / 1000).pass, true);
+  for (const ageHours of [2, 30]) {
+    const [row] = await aveHotListRows([aveToken(1, ageHours)]);
+    const withHookPool = { ...row, pairs: [{ chain: 'arc', address: row.address, pair: `0x${'b'.repeat(64)}`, amm: 'uniswap v4' }] };
+    const screen = discoveryScreen(withHookPool, { ...config, chain: 'arc' }, Date.now() / 1000);
+    assert.equal(screen.pass, true, `age ${ageHours}h: ${screen.reasons.join(' | ')}`);
+  }
+});
+
+test('an AVE token without a launch time is dated by its creation time, as the lead shows it', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const [row] = await aveHotListRows([aveToken(1, 0, { launch_at: null, created_at: nowSec - 30 * 3600 })]);
+  const screen = discoveryScreen(row, { ...config, chain: 'arc' }, Date.now() / 1000);
+  assert.equal(screen.pass, true, screen.reasons.join(' | '));
+  assert.equal(screen.ageBasis, 'token');
+  assert.equal(createdAt({ ...row, pool_created_at: nowSec - 3600 }), nowSec - 30 * 3600);
 });
