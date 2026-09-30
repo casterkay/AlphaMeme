@@ -390,15 +390,15 @@ time per tenant; scheduler priority equals `command`.
 
 One issue, branch, worktree and PR each; each PR gets an independent review.
 
-| # | Slice | Depends on | Main files |
-|---|---|---|---|
-| 1 | Formatting, icons, footer helper | — | `render/telegram.mjs`, all panels (mechanical) |
-| 2 | Names, menu, Radar, Settings, Status, Help | 1 | `panels.mjs`, `commands.mjs`, `inbox.mjs`, `scripts/telegram-register.mjs` |
-| 3 | Alert cards | 1 | `runtime.mjs` |
-| 4 | Lists, detail, selectors, Activity, Performance | 1 | `panels.mjs`, `trading-panels.mjs` |
-| 5 | Unverified-buy confirmation (§3.9) | 1 | `trading/engine.mjs`, `commands.mjs`, `trading-panels.mjs` |
-| 6 | First run, language detection, connect panel, banners, prompts, unrecognized text | 2 | `telegram-intake.mjs`, `inbox.mjs`, `commands.mjs`, `runtime.mjs` |
-| 7 | Contract-address lookup | 4, 5, 6 | new `lookup.mjs`, `telegram-intake.mjs`, `commands.mjs`, `radar-agent.mjs`, `trading/engine.mjs` |
+| # | Issue | Slice | Depends on | Main files |
+|---|---|---|---|---|
+| 1 | #62 | Formatting, icons, footer helper | — | `render/telegram.mjs`, all panels (mechanical) |
+| 2 | #63 | Names, menu, Radar, Settings, Status, Help | 1 | `panels.mjs`, `commands.mjs`, `inbox.mjs`, `scripts/telegram-register.mjs` |
+| 3 | #64 | Alert cards | 1 | `runtime.mjs` |
+| 4 | #65 | Lists, detail, selectors, Activity, Performance | 1 | `panels.mjs`, `trading-panels.mjs` |
+| 5 | #66 | Unverified-buy confirmation (§3.9) | 1 | `trading/engine.mjs`, `commands.mjs`, `trading-panels.mjs` |
+| 6 | #67 | First run, language detection, connect panel, banners, prompts, unrecognized text | 2 | `telegram-intake.mjs`, `inbox.mjs`, `commands.mjs`, `runtime.mjs` |
+| 7 | #68 | Contract-address lookup | 4, 5, 6 | new `lookup.mjs`, `telegram-intake.mjs`, `commands.mjs`, `radar-agent.mjs`, `trading/engine.mjs` |
 
 Slices 2, 3, 4 and 5 run in parallel after 1; slice 5 touches trading, so it gets
 its own review even though its diff is small. Documentation (`TELEGRAM-M3-OPERATIONS.md`,
