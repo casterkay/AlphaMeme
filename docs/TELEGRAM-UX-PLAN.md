@@ -57,8 +57,8 @@ Status icons (one table in `src/render/telegram.mjs`, the only source of icons):
 | Vetoed / failed | ⛔ | Check running | ⏳ |
 | New lead | 🆕 | Key / account issue | 🔑 |
 
-Rules: at most one status icon per line; navigation buttons carry their panel
-icon; no decorative emoji in body text.
+Rules: every icon marks a state or a destination; navigation buttons carry their
+panel icon; no decorative emoji in body text.
 
 ### Formatting (`src/render/telegram.mjs`)
 
