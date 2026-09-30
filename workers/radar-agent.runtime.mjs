@@ -146,7 +146,7 @@ describe('recoverable Radar scanner', () => {
     expect(screened.partial.leads.map(lead => lead.row.address)).toEqual([LEAD]);
     await runInDurableObject(radar, async (_instance, state) => {
       const leads = state.storage.sql.exec('SELECT address, status, review_revision, ave_url FROM candidates WHERE tenant_id = ?', tenantId).toArray();
-      expect(leads).toEqual([{ address: LEAD, status: 'LIVE_READY', review_revision: expect.stringMatching(/^lead-arc-/), ave_url: `https://pro.ave.ai/token/${LEAD}-arc?ref=0001` }]);
+      expect(leads).toEqual([{ address: LEAD, status: 'LIVE_READY', review_revision: expect.stringMatching(/^lead-arc-/), ave_url: null }]);
       expect(state.storage.sql.exec('SELECT id, type, address FROM events WHERE tenant_id = ?', tenantId).toArray())
         .toEqual([{ id: stableEffectId(tenantId, cycleId, 'arc', LEAD, 'CANDIDATE_NEW'), type: 'CANDIDATE_NEW', address: LEAD }]);
       expect(state.storage.sql.exec('SELECT address, initial_decision, baseline_price FROM outcomes WHERE tenant_id = ?', tenantId).toArray())

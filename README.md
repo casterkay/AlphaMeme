@@ -2,11 +2,12 @@
 
 基于 [Meme雷达开源版](https://github.com/nhovongoc0-max/meme-radar) v0.1.10 的云端版本：
 扫描器运行在 Cloudflare Workers（Durable Objects），通过 Telegram 机器人查看线索与接收提醒。
-行情数据来自 AVE Data API，与上游一致。只读研究：不持有钱包私钥，不签名、不下单。
+行情数据来自 AVE Data API，与上游一致。AVE Key 只读；可选的一键交易使用机器人为你生成的独立热钱包，每笔需确认报价。
 
 A cloud edition of Meme Radar v0.1.10: the scanner runs on Cloudflare Workers
 (Durable Objects) and you use it through a Telegram bot. Market data comes from
-the AVE Data API, as upstream. Read-only research: no wallet keys, signing or orders.
+the AVE Data API, as upstream. The AVE key is read-only; optional one-tap trading
+uses a separate hot wallet the bot generates for you, and every trade needs a confirmed quote.
 
 ## 工作方式 / How it works
 
@@ -17,14 +18,37 @@ the AVE Data API, as upstream. Read-only research: no wallet keys, signing or or
   Each cycle reads the chain's AVE hot list and applies upstream's AVE market screen;
   every passing token becomes a **market lead** and alerts immediately.
 - 线索随后由 GoPlus 与 DexScreener 免费核验（Arc：GoPlus 链 5042、DexScreener `arc`）。
-  貔貅、异常税率等一票否决会撤销线索、隐藏交易入口并推送“风险恶化”。
-  Leads are then checked on GoPlus and DexScreener; a fatal finding vetoes the lead,
-  hides its trade link and sends a "risk worsened" follow-up.
+  貔貅、异常税率等一票否决会撤销线索并推送“风险恶化”。
+  Leads are then checked on GoPlus and DexScreener; a fatal finding vetoes the lead
+  and sends a "risk worsened" follow-up.
 - AVE 不提供持有人、交易者或合约安全数据，因此线索只是行情观察，**安全性未核验不代表安全**。
   AVE has no holder, trader or contract-security data: a lead is a market
   observation, and unverified does not mean safe.
-- 代币详情提供“在AVE交易”链接；交易在 AVE 页面由你自己确认。
-  Token details link to AVE, where you confirm any trade yourself.
+
+## 一键交易 / One-tap trading
+
+- `/wallet` 生成专用 EVM 交易钱包（不会导入你的私钥），显示地址、余额和最近交易。**这是热钱包**：私钥加密保存在你的
+  Durable Object 中并由机器人签名；只存入你愿意承担风险的小额资金。
+  `/wallet` generates a dedicated EVM trading wallet (it never imports your key) and shows
+  its address, balances and recent trades. **It is a hot wallet**: the bot keeps the key
+  encrypted in your Durable Object and signs with it; fund it only with amounts you can lose.
+- 代币详情提供 买 $10/$20/$50/自定义 与 卖 25%/50%/100%/自定义%。第一次点击获取 KyberSwap 报价并显示确认页
+  （支出与换算、预计/最少获得、价格影响、滑点、Gas、单笔上限）；报价 30 秒后过期，过期确认会重新报价。
+  Token details offer Buy $10/$20/$50/custom and Sell 25%/50%/100%/custom %. The first tap
+  fetches a KyberSwap quote and shows a confirm screen; quotes expire after 30 s and an
+  expired confirmation re-quotes instead of executing.
+- 支持链：Arc（用 USDC 买入，Gas 也用 USDC）、BNB Chain、Base、Ethereum（用原生币买入）。Solana 与 Robinhood 不支持交易。
+  Chains: Arc (buys spend USDC, which also pays gas), BNB Chain, Base and Ethereum (buys
+  spend the native coin). Solana and Robinhood cannot trade.
+- 安全核验否决（GoPlus 致命风险）的代币禁止买入，卖出不受限制。单笔买入上限默认 $100，滑点默认 5%，可在交易设置中调整。
+  A token vetoed by the safety check cannot be bought; selling is never blocked. The
+  per-trade buy cap defaults to $100 and slippage to 5%; both are adjustable.
+- 费用：只有 DEX 路由费用和链上 Gas，机器人不收取任何费用。Fees: DEX routing and gas only; the bot charges 0.
+- 导出私钥需二次确认，私钥只发送一次并在 60 秒后尝试删除；移除钱包会删除私钥，未导出时资金无法找回。
+  `/disconnect` 只断开 AVE，不影响交易钱包。
+  Key export needs a confirmation, sends the key once and tries to delete it after 60 s.
+  Removing the wallet deletes its key; without an export its funds are unrecoverable.
+  `/disconnect` disconnects AVE only and keeps the trading wallet.
 
 ## 额度与节奏 / Credits and pacing
 
@@ -61,6 +85,20 @@ npx wrangler deploy
 TELEGRAM_BOT_TOKEN=... node scripts/telegram-register.mjs
 ```
 
+交易默认关闭。要启用某条链，在 `wrangler.jsonc` 的 `vars` 中设置它的 RPC URL 和 `KYBER_CLIENT_ID`：
+Trading is off by default. To enable a chain, set its RPC URL and `KYBER_CLIENT_ID` in `wrangler.jsonc` `vars`:
+
+| Var | Meaning |
+| --- | --- |
+| `KYBER_CLIENT_ID` | `x-client-id` sent to the KyberSwap Aggregator; required once any chain is enabled |
+| `ARC_RPC_URL`, `BSC_RPC_URL`, `BASE_RPC_URL`, `ETH_RPC_URL` | https JSON-RPC endpoint; empty disables that chain |
+| `BSC_EXPLORER_URL`, `BASE_EXPLORER_URL`, `ETH_EXPLORER_URL` | optional; default bscscan.com, basescan.org, etherscan.io |
+| `ARC_EXPLORER_URL` | optional, no default; without it Arc trades show the transaction hash only |
+
+KyberSwap 的 Arc 路由（`arc` 网络标识与以 ERC-20 USDC 报价）尚未在线验证；启用 Arc 前请先小额试用。
+KyberSwap's Arc routing (the `arc` slug and quoting ERC-20 USDC) is not yet verified
+live; try a small amount before relying on it.
+
 然后把 Telegram webhook 指向 `https://<worker>/webhook/telegram`，并带上相同的 `secret_token`。
 Then point the Telegram webhook at `/webhook/telegram` with the same `secret_token`.
 
@@ -72,6 +110,7 @@ If you deployed the GMGN version, delete it first; the schema moved to v2 withou
 1. `/start`，然后 `/onboard`：登录 [AVE Cloud](https://cloud.ave.ai/login) 复制 Data API Key。
 2. 发送 `/setkey <key>`：验证读取一次（5 个额度）后开始扫描 Arc。含密钥的消息会尝试删除，请自行确认已删除。
 3. 线索提醒默认开启，`/mute` 可关闭或重新开启；`/chains` 切换扫描链；`/feed` 查看热榜；`/audits` 查看线索与核验；`/status` 查看运行与额度。
+4. 可选：`/wallet` 创建交易钱包并充值，然后在代币详情中买卖。
 
 `/help` 列出全部命令。运维细节见 [docs/TELEGRAM-M3-OPERATIONS.md](docs/TELEGRAM-M3-OPERATIONS.md)。
 

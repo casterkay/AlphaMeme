@@ -210,7 +210,7 @@ function marketRow(row, capturedAt, now) {
     rug_ratio: null, bundler_rate: null, rat_trader_amount_rate: null, is_wash_trading: null, is_honeypot: null,
     capturedAt, sourceUpdatedAt: sampledAt, sampledAt, expiresAt,
     stale: sampledAt === null || sampledAt > capturedAt + 30000 || now >= expiresAt,
-    identityBasis: row.identityBasis, aveUrl: 'https://pro.ave.ai/token/' + row.token + '-' + row.apiChain + '?ref=0001' };
+    identityBasis: row.identityBasis };
 }
 
 async function readBody(response) {

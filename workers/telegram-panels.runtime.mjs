@@ -25,7 +25,7 @@ describe('Telegram SQLite snapshot projection',()=>{
       expect(rendered.text).toContain('Manually approved');expect(rendered.text).toContain('Market cap Unknown');
     });
   });
-  it('offers the AVE trade link on a lead detail and hides it once security vetoes the token',async()=>{
+  it('never renders a legacy stored AVE trade link on a lead or vetoed detail',async()=>{
     const radar=env.RADAR.get(env.RADAR.idFromName('panels-trade-19202'));
     await runInDurableObject(radar,async(_instance,{storage})=>{
       const now=1_800_000_000_000,lead='0x'+'1'.repeat(40),vetoed='0x'+'2'.repeat(40);
@@ -34,8 +34,7 @@ describe('Telegram SQLite snapshot projection',()=>{
       }
       const snapshot=readTelegramSnapshot(storage,'19202',now);
       const buttons=address=>renderPanel(snapshot,{panel:'detail',viewChain:'arc',query:{selectedToken:{chain:'arc',address}},version:1},'en').keyboard.flat().filter(Boolean);
-      expect(buttons(lead)).toContainEqual(expect.objectContaining({text:'Trade on AVE',url:`https://pro.ave.ai/token/${lead}-arc?ref=0001`}));
-      expect(buttons(vetoed).some(button=>button.text==='Trade on AVE'||String(button.url).includes('pro.ave.ai'))).toBe(false);
+      for(const address of [lead,vetoed]) expect(buttons(address).some(button=>button.text==='Trade on AVE'||String(button.url).includes('pro.ave.ai'))).toBe(false);
     });
   });
 });

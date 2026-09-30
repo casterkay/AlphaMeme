@@ -98,7 +98,7 @@ function feedRow(row, screen) {
     createdAt: numberOrNull(screen.createdAt), ageBasis: screen.ageBasis || null, holders: numberOrNull(row.holder_count),
     volume5m: numberOrNull(row.volume_5m), buys5m: numberOrNull(row.buys_5m), sells5m: numberOrNull(row.sells_5m),
     priceChange5m: numberOrNull(row.price_change_percent5m), priorityBand: screen.priorityBand === true,
-    pass: screen.pass === true, reasons: screen.reasons.slice(0, 3), aveUrl: String(row.aveUrl || '')
+    pass: screen.pass === true, reasons: screen.reasons.slice(0, 3)
   };
 }
 

@@ -3,15 +3,31 @@ import { readTelegramSnapshot } from './snapshot.mjs';
 import { TelegramSessions } from './sessions.mjs';
 import { annotateInTransaction, ReviewConflict, setManualMarkInTransaction, reviewProjectionRevision } from './review.mjs';
 import { DEFAULT_SCAN_CHAIN, SCAN_CHAINS as CHAINS } from '../chains.mjs';
+import { TradeRefusal } from '../trading/engine.mjs';
+import { TRADING_SETTINGS } from '../trading/config.mjs';
+import { parseUsdCents, parsePercent } from '../trading/amounts.mjs';
+import { saveTradingWalletInTransaction, removeTradingWalletInTransaction, tradingWalletEnvelope, readTradingWallet } from '../trading/wallet.mjs';
 
-const ROOTS = new Set(['start','radar','help','status','settings','chains','feed','audits','candidates','saved','events','stats','onboard']);
+const ROOTS = new Set(['start','radar','help','status','settings','chains','feed','audits','candidates','saved','events','stats','onboard','wallet']);
 const CONCRETE_CHAIN_PANELS = new Set(['radar','feed','audits','stats']);
 const CONTROL = new Set(['pause','resume','disconnect','mute']);
 const text = (lang, zh, en) => lang === 'en' ? en : zh;
+const INPUT_KINDS = new Set(['search','note','note_target','trade_usd','trade_percent']);
+const REFUSALS = {
+  NOT_TRADABLE: ['此链不支持交易。', 'Trading is not available on this chain.'],
+  NO_WALLET: ['请先在 /wallet 创建交易钱包。', 'Create a trading wallet under /wallet first.'],
+  INVALID_TOKEN: ['此代币无法交易。', 'This token cannot be traded.'],
+  VETOED: ['安全核验未通过，已拒绝买入。卖出不受影响。', 'Safety check failed; the buy was refused. Selling is not affected.'],
+  INVALID_AMOUNT: ['金额无效。', 'The amount is invalid.'],
+  STATE_CHANGED: ['交易状态已变化，未执行旧操作。', 'The trade changed; the old action was not applied.'],
+  BUSY: ['另一笔交易正在执行，请等待它完成后再确认。', 'Another trade is executing; confirm again after it finishes.'],
+  TRADES_OPEN: ['仍有进行中或结果未知的交易，暂不能移除钱包。请打开钱包点击刷新，待回执确认结果后再试。', 'A trade is still open or its outcome unknown, so the wallet cannot be removed yet. Refresh the wallet until the receipts resolve it, then try again.'],
+  EXPORT_FIRST: ['钱包仍有余额且私钥从未导出，请先导出私钥。', 'The wallet still holds funds and its key was never exported; export it first.']
+};
 
 export class TelegramCommands {
-  constructor({ storage, tenantId, inbox, outbox, controls, now = Date.now, snapshot = readTelegramSnapshot }) {
-    Object.assign(this, { storage, tenantId, inbox, outbox, controls, now, snapshot });
+  constructor({ storage, tenantId, inbox, outbox, controls, trading = null, now = Date.now, snapshot = readTelegramSnapshot }) {
+    Object.assign(this, { storage, tenantId, inbox, outbox, controls, trading, now, snapshot });
     this.sessions = new TelegramSessions({ storage, tenantId, now });
   }
 
@@ -76,10 +92,10 @@ export class TelegramCommands {
     this.controls.resetNotificationBaseline?.();
   }
 
-  processInTransaction(row) {
+  processInTransaction(row, prepared = null) {
     const payload = JSON.parse(row.payload_json);
     try {
-      if (row.command_type === 'callback') this.callbackInTransaction(row, payload);
+      if (row.command_type === 'callback') this.callbackInTransaction(row, payload, prepared);
       else if (row.command_type === 'reply') this.replyInTransaction(row, payload);
       else this.commandInTransaction(row, payload);
       this.inbox.finishInTransaction(row.update_id, 'DONE');
@@ -127,10 +143,11 @@ export class TelegramCommands {
     const panel = command === 'start' ? 'radar' : command === 'candidates' ? 'audits' : command;
     if (command === 'start') this.controls.initializeNotificationBaseline?.();
     const session = this.sessions.createInTransaction(panel, command === 'saved' || command === 'events' ? 'all' : chain);
+    if (command === 'wallet') this.trading?.requestBalancesInTransaction(session.id);
     this.renderInTransaction(session);
   }
 
-  callbackInTransaction(row, payload) {
+  callbackInTransaction(row, payload, prepared = null) {
     const binding = this.sessions.resolveInTransaction({ tenantId: this.tenantId, actorUserId: row.actor_user_id, sourceMessageId: row.source_message_id, payload });
     let { session, action, params, token } = binding;
     const control = this.controls.snapshot();
@@ -179,17 +196,96 @@ export class TelegramCommands {
       changes = { viewChain: params.value };
     }
     else if (action === 'export.create') this.exportInTransaction(row.update_id);
+    else if (/^(trade|trading|wallet)\./.test(action)) {
+      changes = this.tradingActionInTransaction(row, session, action, params, token, prepared);
+      if (changes === null) return;
+    }
     else throw new ReviewConflict('unsupported_action');
     session = this.sessions.advanceInTransaction(session, changes);
     this.renderInTransaction(session);
   }
 
+  tradingSettings() {
+    return { slippageBps: this.preference('tradingSlippageBps', TRADING_SETTINGS.slippageBps), capUsd: this.preference('tradingBuyCapUsd', TRADING_SETTINGS.buyCapUsd) };
+  }
+
+  refuseInTransaction(updateId, refusal) {
+    const cap = this.tradingSettings().capUsd;
+    const message = refusal.code === 'OVER_CAP' ? [`超过单笔买入上限 $${cap}，已拒绝。可在交易设置中调整。`, `Above your per-trade buy cap of $${cap}; refused. Adjust it in trade settings.`] : REFUSALS[refusal.code] ?? REFUSALS.STATE_CHANGED;
+    this.noticeInTransaction(updateId, text(this.language, ...message));
+  }
+
+  /** Session changes for a trading action; a refusal is explained and leaves the panel as it was. */
+  tradingActionInTransaction(row, session, action, params, token, prepared) {
+    if (!this.trading) throw new ReviewConflict('trading_unavailable');
+    const returnTo = session.panel === 'trade' ? session.query.returnTo : { panel: session.panel, viewChain: session.viewChain, query: { ...session.query, pendingInput: undefined } };
+    const show = trade => ({ panel: 'trade', query: { schemaVersion: 1, page: 0, tradeId: trade.id, returnTo } });
+    const wallet = { panel: 'wallet', query: { schemaVersion: 1, page: 0, returnTo } };
+    try {
+      if (action === 'trade.buy' || action === 'trade.sell') {
+        if (!token) throw new ReviewConflict('invalid_token');
+        const amount = action === 'trade.buy' ? { usdCents: Number.isSafeInteger(params.usd) ? params.usd * 100 : null } : { percent: params.percent };
+        return show(this.startTradeInTransaction(session, token, action === 'trade.buy' ? 'buy' : 'sell', amount));
+      }
+      if (action === 'trade.input') {
+        if (!token || !['buy','sell'].includes(params.side)) throw new ReviewConflict('invalid_input');
+        this.beginInputInTransaction(session, params.side === 'buy' ? 'trade_usd' : 'trade_percent', token);
+        return null;
+      }
+      if (action === 'trade.confirm') return show(this.trading.confirmInTransaction(params.tradeId, this.tradingSettings()).trade);
+      if (action === 'trade.cancel') { this.trading.cancelInTransaction(params.tradeId); return {}; }
+      if (action === 'trade.requote') return show(this.trading.requoteInTransaction(params.tradeId, this.tradingSettings()));
+      if (action === 'trade.recheck') { this.trading.recheckUnknownInTransaction(); return {}; }
+      if (action === 'trading.slippage.set' || action === 'trading.cap.set') {
+        const [key, choices] = action === 'trading.slippage.set' ? ['tradingSlippageBps', TRADING_SETTINGS.slippageChoicesBps] : ['tradingBuyCapUsd', TRADING_SETTINGS.buyCapChoicesUsd];
+        if (!choices.includes(params.value)) throw new ReviewConflict('invalid_setting');
+        this.setPreference(key, params.value);
+        return {};
+      }
+      if (action === 'wallet.create') {
+        if (!readTradingWallet(this.storage, this.tenantId)) {
+          if (!prepared?.wallet) throw new ReviewConflict('wallet_unprepared');
+          saveTradingWalletInTransaction(this.storage, this.tenantId, prepared.wallet, this.now());
+        }
+        this.trading.requestBalancesInTransaction(session.id);
+        return wallet;
+      }
+      if (action === 'wallet.refresh') { this.trading.requestBalancesInTransaction(session.id); this.trading.recheckUnknownInTransaction(); return {}; }
+      if (action === 'wallet.export') {
+        const envelope = tradingWalletEnvelope(this.storage, this.tenantId);
+        if (!envelope) throw new TradeRefusal('NO_WALLET');
+        // The outbox keeps only the encrypted key; the transport decrypts it for this one send.
+        this.outbox.enqueueInTransaction({ id: `wallet-export:${row.update_id}`, chatId: this.tenantId, method: 'sendMessage', params: { secret: envelope, parse_mode: 'HTML', link_preview_options: { is_disabled: true } }, purpose: 'secret', expiresAt: this.now() + 300_000 });
+        return wallet;
+      }
+      if (action === 'wallet.remove') {
+        this.trading.assertRemovableInTransaction();
+        if (this.trading.exportRequiredBeforeRemoval()) throw new TradeRefusal('EXPORT_FIRST');
+        this.outbox.cancelPendingSecretsInTransaction();
+        removeTradingWalletInTransaction(this.storage, this.tenantId);
+        return wallet;
+      }
+    } catch (error) {
+      if (!(error instanceof TradeRefusal)) throw error;
+      this.refuseInTransaction(row.update_id, error);
+      return {};
+    }
+    throw new ReviewConflict('unsupported_action');
+  }
+
+  startTradeInTransaction(session, token, side, amount) {
+    return this.trading.requestTradeInTransaction({ chain: token.chain, token: token.address, side, ...amount, sessionId: session.id, ...this.tradingSettings() });
+  }
+
   beginInputInTransaction(session, kind, token = null, expectedVersion = null) {
-    if (!['search','note','note_target'].includes(kind)) throw new ReviewConflict('invalid_input');
+    if (!INPUT_KINDS.has(kind)) throw new ReviewConflict('invalid_input');
     const outboxId = `prompt:${session.id}:${session.version + 1}`;
     const next = this.sessions.advanceInTransaction(session, { query: { ...session.query, pendingInput: { kind, target: token, expectedVersion, outboxId, promptMessageId: null, expiresAt: Math.min(this.now() + 300_000, session.expiresAt) } } });
     this.renderInTransaction(next);
-    const instruction = kind === 'note' ? text(this.language, '请回复此消息，输入备注（最多500字符）。/cancel 取消。', 'Reply with a note (max 500 characters). /cancel.') : text(this.language, '请回复此消息，输入名称、简称或CA（最多128字符）。/cancel 取消。', 'Reply with a name, symbol or contract address (max 128 characters). /cancel.');
+    const cap = this.tradingSettings().capUsd;
+    const instruction = kind === 'note' ? text(this.language, '请回复此消息，输入备注（最多500字符）。/cancel 取消。', 'Reply with a note (max 500 characters). /cancel.')
+      : kind === 'trade_usd' ? text(this.language, `请回复买入金额（美元，最多2位小数，上限 $${cap}）。/cancel 取消。`, `Reply with the USD amount to buy (up to 2 decimals, cap $${cap}). /cancel.`)
+        : kind === 'trade_percent' ? text(this.language, '请回复卖出比例（1–100的整数%）。/cancel 取消。', 'Reply with the percentage to sell (a whole number 1–100). /cancel.') : text(this.language, '请回复此消息，输入名称、简称或CA（最多128字符）。/cancel 取消。', 'Reply with a name, symbol or contract address (max 128 characters). /cancel.');
     this.outbox.enqueueInTransaction({ id: outboxId, chatId: this.tenantId, method: 'sendMessage', params: { text: `${token ? `${token.chain} ${token.address}\n` : ''}${instruction}`, reply_markup: { force_reply: true, selective: true } }, purpose: 'prompt', sessionId: next.id, sessionVersion: next.version, expiresAt: next.query.pendingInput.expiresAt });
   }
 
@@ -202,9 +298,28 @@ export class TelegramCommands {
       this.noticeInTransaction(row.update_id, text(this.language, '输入过长，请缩短后回复原提示。', 'Input is too long; shorten it and reply to the original prompt.')); return;
     }
     if (pending.kind === 'note_target') return this.resolveNoteInTransaction(session, value);
+    if (pending.kind === 'trade_usd' || pending.kind === 'trade_percent') return this.tradeReplyInTransaction(row, session, pending, value);
     if (pending.kind === 'note') annotateInTransaction(this.storage, this.tenantId, { token: pending.target, field: 'note', value, expectedVersion: pending.expectedVersion }, this.now());
     const { pendingInput, ...query } = session.query;
     this.renderInTransaction(this.sessions.advanceInTransaction(session, { query: { ...query, ...(pending.kind === 'search' ? { search: value, page: 0 } : {}) } }));
+  }
+
+  tradeReplyInTransaction(row, session, pending, value) {
+    const buy = pending.kind === 'trade_usd';
+    const amount = buy ? { usdCents: parseUsdCents(value) } : { percent: parsePercent(value) };
+    if (Object.values(amount)[0] === null) {
+      this.noticeInTransaction(row.update_id, text(this.language, buy ? '金额无效：请回复如 25 或 12.5。' : '比例无效：请回复1–100的整数。', buy ? 'Invalid amount: reply like 25 or 12.5.' : 'Invalid percentage: reply with a whole number from 1 to 100.'));
+      return;
+    }
+    const { pendingInput, ...query } = session.query;
+    let trade;
+    try { trade = this.startTradeInTransaction(session, pending.target, buy ? 'buy' : 'sell', amount); } catch (error) {
+      if (!(error instanceof TradeRefusal)) throw error;
+      this.refuseInTransaction(row.update_id, error);
+      return this.renderInTransaction(this.sessions.advanceInTransaction(session, { query }));
+    }
+    const returnTo = { panel: session.panel, viewChain: session.viewChain, query };
+    this.renderInTransaction(this.sessions.advanceInTransaction(session, { panel: 'trade', query: { schemaVersion: 1, page: 0, tradeId: trade.id, returnTo } }));
   }
 
   resolveNoteInTransaction(session, value) {
