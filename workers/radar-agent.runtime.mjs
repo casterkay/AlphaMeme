@@ -277,6 +277,61 @@ describe('recoverable Radar scanner', () => {
     });
   });
 
+  it.each([
+    ['firstSeenAt', 2, 'first_seen_at', 2], ['lastSeenAt', 20, 'last_seen_at', 20], ['lastAuditedAt', 30, 'last_audited_at', 30],
+    ['nextAuditAt', 40, 'next_audit_at', 40], ['attempts', 3, 'attempts', 3], ['status', 'AUDITED', 'status', 'AUDITED'],
+    ['priorityBand', true, 'priority_band', 1], ['score', 2.5, 'score', 2.5], ['watched', true, 'watched', 1],
+    ['details', { reason: 'changed' }, 'details_json', '{"reason":"changed"}']
+  ])('a queue commit that changes only %s updates the stored row', async (field, value, column, stored) => {
+    const tenantId = '19014';
+    const radar = await configuredRadar(tenantId);
+    const checkpoint = await beginCycle(radar, tenantId, `cycle-queue-column-${field}`);
+    await runInDurableObject(radar, async (_instance, state) => {
+      const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
+      const base = { address: LEAD, firstSeenAt: 1, lastSeenAt: 10, lastAuditedAt: 0, nextAuditAt: 0, attempts: 0, status: 'QUEUED', priorityBand: false, score: 1, watched: false, details: {} };
+      store.commitQueue({ expected: {}, auditQueue: [base], next: { ...checkpoint, updatedAt: checkpoint.updatedAt + 1 } });
+      store.commitQueue({ expected: {}, auditQueue: [{ ...base, [field]: value }], next: { ...checkpoint, updatedAt: checkpoint.updatedAt + 2 } });
+      expect(state.storage.sql.exec(`SELECT ${column} AS value FROM audit_queue WHERE tenant_id = ? AND address = ?`, tenantId, LEAD).one().value).toEqual(stored);
+    });
+  });
+
+  it('commits a queue as exactly the chain\'s audit queue, writing only its changed and new rows', async () => {
+    const tenantId = '19006';
+    const cycleId = 'cycle-queue-exact';
+    const radar = await configuredRadar(tenantId);
+    const checkpoint = await beginCycle(radar, tenantId, cycleId);
+    const THIRD = `0x${'3'.repeat(40)}`;
+    await runInDurableObject(radar, async (_instance, state) => {
+      const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
+      const row = (address, lastSeenAt) => ({ address, firstSeenAt: 1, lastSeenAt, lastAuditedAt: 0, nextAuditAt: 0, attempts: 0, status: 'QUEUED', priorityBand: false, score: 1, watched: false });
+      const commit = (auditQueue, updatedAt) => store.commitQueue({ expected: {}, auditQueue, next: { ...checkpoint, updatedAt } });
+      const queue = () => state.storage.sql.exec('SELECT chain, address, last_seen_at FROM audit_queue WHERE tenant_id = ? ORDER BY chain, address', tenantId).toArray();
+      state.storage.sql.exec("INSERT INTO audit_queue (tenant_id, chain, address, last_seen_at) VALUES (?, 'bsc', ?, 5)", tenantId, LEAD);
+      commit([row(LEAD, 10), row(SECOND, 10)], 10);
+
+      const rowsWritten = [];
+      const exec = state.storage.sql.exec;
+      state.storage.sql.exec = function (query, ...args) {
+        const cursor = exec.call(this, query, ...args);
+        if (/audit_queue/.test(query)) rowsWritten.push(cursor);
+        return cursor;
+      };
+      try {
+        commit([row(LEAD, 10), row(THIRD, 20)], 20);
+      } finally {
+        state.storage.sql.exec = exec;
+      }
+      expect(queue()).toEqual([
+        { chain: 'arc', address: LEAD, last_seen_at: 10 }, { chain: 'arc', address: THIRD, last_seen_at: 20 },
+        { chain: 'bsc', address: LEAD, last_seen_at: 5 }
+      ]);
+      // Deleting the dropped row writes one row and inserting the new one two (row and key); the unchanged row writes none.
+      expect(rowsWritten.reduce((sum, cursor) => sum + cursor.rowsWritten, 0)).toBe(3);
+      expect(() => commit([row(LEAD, 30), row(LEAD, 30)], 30)).toThrow('audit queue addresses must be unique');
+      expect(queue()).toHaveLength(3);
+    });
+  });
+
   it('eliminates a lead that now fails the AVE screen and keeps a lead missing from one hot list', async () => {
     const tenantId = '19006';
     const radar = await configuredRadar(tenantId);

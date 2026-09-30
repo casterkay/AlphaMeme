@@ -37,9 +37,10 @@ function readRecord(storage, tenantId, key, fallback) {
   return parseRecord(rows[0], key, fallback);
 }
 
+// Every scheduler step rewrites its whole state; an unchanged record is skipped so it costs no row write.
 function writeRecord(storage, tenantId, key, value) {
   storage.sql.exec(
-    'INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json',
+    'INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json WHERE value_json IS NOT excluded.value_json',
     tenantId,
     key,
     JSON.stringify(value)

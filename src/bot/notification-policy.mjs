@@ -17,7 +17,7 @@ export class NotificationPolicy {
   constructor({ storage, tenantId, now = Date.now }) { this.storage = storage; this.tenantId = tenantId; this.now = now; }
   query(sql, ...args) { return this.storage.sql.exec(sql, this.tenantId, ...args).toArray(); }
   read() { return decode(this.query('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', STATE_KEY)[0]?.value_json); }
-  write(value) { this.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json', this.tenantId, STATE_KEY, JSON.stringify(value)); }
+  write(value) { this.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?) ON CONFLICT(tenant_id,key) DO UPDATE SET value_json=excluded.value_json WHERE value_json IS NOT excluded.value_json', this.tenantId, STATE_KEY, JSON.stringify(value)); }
   controls() {
     const preferences = Object.fromEntries(this.query('SELECT key,value_json FROM preferences WHERE tenant_id=?').map(row => [row.key, decode(row.value_json)]));
     const scanChain = readSchedulerStateInTransaction(this.storage, this.tenantId).runtime.control.activeChain ?? DEFAULT_SCAN_CHAIN;

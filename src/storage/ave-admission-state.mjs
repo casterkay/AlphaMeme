@@ -30,7 +30,7 @@ export function writeAveAdmissionStateInTransaction(storage, tenant, next) {
   const tenantId = normalizeTenantId(tenant);
   const state = validateAveAdmission(next);
   storage.sql.exec(
-    'INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json',
+    'INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json WHERE value_json IS NOT excluded.value_json',
     tenantId, AVE_ADMISSION_STATE_KEY, JSON.stringify(state)
   );
   return { ...state };

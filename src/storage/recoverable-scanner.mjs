@@ -486,23 +486,23 @@ export class SqliteRecoverableScannerStore {
       throw new RecoverableScannerError('AUDIT_QUEUE_INVALID', 'audit queue must be an array');
     }
     const auditQueue = value.auditQueue.map(item => queueInput(item, this.tenantId, next.chain));
+    const addresses = auditQueue.map(row => row.address);
+    if (new Set(addresses).size !== addresses.length) {
+      throw new RecoverableScannerError('AUDIT_QUEUE_INVALID', 'audit queue addresses must be unique');
+    }
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
       assertCurrent(this.storage, this.tenantId, current, expected);
       if (!checkpointEqual(current, next)) {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
-      this.storage.sql.exec('DELETE FROM audit_queue WHERE tenant_id = ? AND chain = ?', this.tenantId, next.chain);
-      for (const row of auditQueue) {
-        this.storage.sql.exec(
-          `INSERT INTO audit_queue (tenant_id, chain, address, first_seen_at, last_seen_at, last_audited_at, next_audit_at, attempts, status, priority_band, score, watched, details_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          row.tenantId, row.chain, row.address, integerOrNull(row.firstSeenAt), integerOrNull(row.lastSeenAt),
-          integerOrNull(row.lastAuditedAt), integerOrNull(row.nextAuditAt), integerOrNull(row.attempts),
-          stringOrNull(row.status), row.priorityBand ? 1 : 0, numberOrNull(row.score), row.watched ? 1 : 0,
-          JSON.stringify(row.details || {})
-        );
-      }
+
+      // The chain's queue becomes exactly this list; rewriting unchanged rows would only spend row writes.
+      this.storage.sql.exec(
+        'DELETE FROM audit_queue WHERE tenant_id = ? AND chain = ? AND address NOT IN (SELECT value FROM json_each(?))',
+        this.tenantId, next.chain, JSON.stringify(addresses)
+      );
+      for (const row of auditQueue) this.#upsertQueueRow(row);
       this.storage.sql.exec(
         'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
         next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
@@ -698,18 +698,7 @@ export class SqliteRecoverableScannerStore {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
       this.#upsertCandidate(candidate, { keepEvidence: false });
-      this.storage.sql.exec(
-        `INSERT INTO audit_queue (tenant_id, chain, address, first_seen_at, last_seen_at, last_audited_at, next_audit_at, attempts, status, priority_band, score, watched, details_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
-           first_seen_at = excluded.first_seen_at, last_seen_at = excluded.last_seen_at, last_audited_at = excluded.last_audited_at,
-           next_audit_at = excluded.next_audit_at, attempts = excluded.attempts, status = excluded.status,
-           priority_band = excluded.priority_band, score = excluded.score, watched = excluded.watched, details_json = excluded.details_json`,
-        auditQueue.tenantId, auditQueue.chain, auditQueue.address, integerOrNull(auditQueue.firstSeenAt), integerOrNull(auditQueue.lastSeenAt),
-        integerOrNull(auditQueue.lastAuditedAt), integerOrNull(auditQueue.nextAuditAt), integerOrNull(auditQueue.attempts),
-        stringOrNull(auditQueue.status), auditQueue.priorityBand ? 1 : 0, numberOrNull(auditQueue.score), auditQueue.watched ? 1 : 0,
-        JSON.stringify(auditQueue.details || {})
-      );
+      this.#upsertQueueRow(auditQueue);
       if (outcome) this.#upsertOutcome(outcome);
       const recorded = this.#recordEvent(event, next.chain, candidate.address);
       this.#mergeSourceHealth(value.sourceHealth);
@@ -718,6 +707,25 @@ export class SqliteRecoverableScannerStore {
       if (completion && typeof completion.then === 'function') throw new TypeError('Classification hook must be synchronous');
       return Object.freeze({ checkpoint: { tenantId: this.tenantId, ...next }, effectId: recorded?.id || null });
     });
+  }
+
+  // An identical row is left untouched so it costs no row write.
+  #upsertQueueRow(row) {
+    this.storage.sql.exec(
+      `INSERT INTO audit_queue (tenant_id, chain, address, first_seen_at, last_seen_at, last_audited_at, next_audit_at, attempts, status, priority_band, score, watched, details_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
+         first_seen_at = excluded.first_seen_at, last_seen_at = excluded.last_seen_at, last_audited_at = excluded.last_audited_at,
+         next_audit_at = excluded.next_audit_at, attempts = excluded.attempts, status = excluded.status,
+         priority_band = excluded.priority_band, score = excluded.score, watched = excluded.watched, details_json = excluded.details_json
+       WHERE (first_seen_at, last_seen_at, last_audited_at, next_audit_at, attempts, status, priority_band, score, watched, details_json)
+         IS NOT (excluded.first_seen_at, excluded.last_seen_at, excluded.last_audited_at, excluded.next_audit_at, excluded.attempts,
+           excluded.status, excluded.priority_band, excluded.score, excluded.watched, excluded.details_json)`,
+      row.tenantId, row.chain, row.address, integerOrNull(row.firstSeenAt), integerOrNull(row.lastSeenAt),
+      integerOrNull(row.lastAuditedAt), integerOrNull(row.nextAuditAt), integerOrNull(row.attempts),
+      stringOrNull(row.status), row.priorityBand ? 1 : 0, numberOrNull(row.score), row.watched ? 1 : 0,
+      JSON.stringify(row.details || {})
+    );
   }
 
   // A lead refresh keeps the security evidence and revision of an earlier check.
@@ -779,7 +787,7 @@ export class SqliteRecoverableScannerStore {
 
   #writeState(key, value) {
     this.storage.sql.exec(
-      'INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json',
+      'INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO UPDATE SET value_json = excluded.value_json WHERE value_json IS NOT excluded.value_json',
       this.tenantId, key, JSON.stringify(value)
     );
   }
