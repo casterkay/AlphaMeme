@@ -26,8 +26,6 @@ export const scannerSettings = Object.freeze({
   minOldVolume5mUsd: 250,
   minMatureTurnover5m: 0.005,
   minOldTurnover5m: 0.01,
-  maxCollapsedAthRatio: 0.10,
-  strongRebound1h: 0.20,
   maxRugRatio: 0.20,
   maxTop10Rate: 0.30,
   maxInsiderRate: 0.15,

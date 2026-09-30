@@ -1,6 +1,5 @@
 import { chartRiskScreen } from './chart-risk.mjs';
 import { validTokenAddress } from '../address.mjs';
-import { verifiedAvePoolEvidence, verifiedPoolMarket } from '../pool-identity.mjs';
 
 const NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 
@@ -132,62 +131,17 @@ export function createdAt(row) {
   return num(first(row.creation_timestamp, row.created_timestamp, row.open_timestamp));
 }
 
-function aveHookPending(row, chain) {
-  const ca = normalizeAddress(row.address, chain);
-  const pool = row.poolEvidence;
-  const amms = [];
-  if (pool?.chain === chain && normalizeAddress(pool.target_token, chain) === ca &&
-    (normalizeAddress(pool.token0_address, chain) === ca || normalizeAddress(pool.token1_address, chain) === ca) &&
-    typeof pool.pair === 'string' && pool.pair) amms.push(pool.amm);
-  for (const p of (Array.isArray(row.pairs) ? row.pairs.slice(0, 100) : [])) {
-    if (p?.chain === chain && normalizeAddress(p.address, chain) === ca && typeof p.pair === 'string' && p.pair) amms.push(p.amm);
-  }
-  return amms.some(amm => {
-    const protocol = typeof amm === 'string' ? amm.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
-    return protocol.includes('uniswapv4') || protocol.includes('pancakeswapinfinity') || protocol.includes('pancakeinfinity');
-  });
-}
-
-function freshAvePoolTrajectory(row, chain, now) {
-  const identity = verifiedAvePoolEvidence(row, chain, { requireRowPair: true });
-  if (!identity) return null;
-  const pool = identity.pool, ca = identity.token, poolPair = identity.pair, rowPair = identity.rowPair;
-  const capturedAt = optionalNumber(pool.capturedAt), sourceUpdatedAt = optionalNumber(pool.sourceUpdatedAt), expiresAt = optionalNumber(pool.expiresAt);
-  const poolFresh = capturedAt > 0 && sourceUpdatedAt > 0 && sourceUpdatedAt <= capturedAt && capturedAt <= now
-    && now - sourceUpdatedAt <= 60000 && expiresAt > now;
-  const overlayCapturedAt = optionalNumber(row?.capturedAt), overlaySourceUpdatedAt = optionalNumber(row?.sourceUpdatedAt);
-  const samePoolOverlayFresh = row?.marketOverlayProvider === 'DEXSCREENER' && rowPair === poolPair
-    && row?.marketOverlayPriceUpdated === true && overlayCapturedAt > 0 && overlaySourceUpdatedAt > 0
-    && overlaySourceUpdatedAt <= overlayCapturedAt && overlayCapturedAt <= now
-    && now - overlaySourceUpdatedAt <= 60000 && optionalNumber(row?.expiresAt) > now;
-  const poolCurrent = optionalNumber(normalizeAddress(pool.token0_address, chain) === ca ? pool.token0_price_usd : pool.token1_price_usd);
-  const current = poolFresh ? poolCurrent : samePoolOverlayFresh ? optionalNumber(row.price) : null;
-  const ath = optionalNumber(pool.price_ath_u), rawChange1h = optionalNumber(pool.price_change_1h);
-  if (!(current > 0) || !(ath > 0)) return { identityVerified: true, evidenceFresh: poolFresh, athRatio: null, change1h: null };
-  return { identityVerified: true, evidenceFresh: poolFresh, current, ath, athRatio: current / ath,
-    // AVE documents this field as a percentage. Do not apply the generic
-    // +/-500% ratio guard here: an extreme verified rebound is still a rebound.
-    change1h: !poolFresh || rawChange1h === null ? null : rawChange1h / 100 };
-}
-
-// AVE discovery is a market-only shortlist. Missing proprietary GMGN fields do
-// not block the shortlist, but are never fabricated into a deep-audit pass.
+// AVE discovery is a market-only shortlist screened on token-level facts; it
+// does not screen by pool, so a pool's type, hook or history never decides it.
+// Missing proprietary GMGN fields do not block the shortlist, but are never
+// fabricated into a deep-audit pass.
 export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
   const now = nowSec * 1000, chain = config.chain;
   const mcValue = optionalNonNegativeNumber(row.market_cap), liquidityValue = optionalNonNegativeNumber(row.liquidity);
-  const poolIdentity = verifiedAvePoolEvidence(row, chain, { requireRowPair: true });
-  const poolMarket = verifiedPoolMarket(row, chain, now);
-  // Pool age and activity are one atomic tuple. Legacy or malformed evidence
-  // cannot lend an old first-trade time to a newly selected secondary pool.
-  const tradeAt = poolIdentity ? optionalNumber(poolIdentity.pool.first_trade_at) : null;
-  const poolAt = poolIdentity ? optionalNumber(poolIdentity.pool.created_at)
-    : poolMarket?.source === 'DEXSCREENER' ? poolMarket.poolCreatedAt : null;
   const launchAt = optionalNumber(row.launch_at), tokenAt = row.ageBasis === 'launch' || row.ageBasis === 'token'
     ? optionalNumber(row.creation_timestamp) : null;
-  const created = tradeAt !== null && tradeAt > 0 ? tradeAt : poolAt !== null && poolAt > 0 ? poolAt
-    : launchAt !== null && launchAt > 0 ? launchAt : tokenAt;
-  const ageBasis = tradeAt !== null && tradeAt > 0 ? 'trade' : poolAt !== null && poolAt > 0 ? 'pool'
-    : launchAt !== null && launchAt > 0 ? 'launch' : tokenAt !== null && tokenAt > 0 ? 'token' : 'unknown';
+  const created = launchAt !== null && launchAt > 0 ? launchAt : tokenAt;
+  const ageBasis = launchAt !== null && launchAt > 0 ? 'launch' : tokenAt !== null && tokenAt > 0 ? 'token' : 'unknown';
   const ageSec = created !== null && created > 0 ? nowSec - created : 0;
   const mc = mcValue ?? 0, liquidity = liquidityValue ?? 0, volume = optionalNonNegativeNumber(row.volume_5m);
   const reasons = knownRiskReasons(row, { ...config, strictLiquidity: config.minLiquidity });
@@ -203,10 +157,9 @@ export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
     !(row.marketCapSourceUpdatedAt > 0) || row.marketCapSourceUpdatedAt > row.marketCapCapturedAt ||
     row.marketCapCapturedAt > now || now - row.marketCapSourceUpdatedAt > 60000 ||
     !(row.marketCapExpiresAt > now))) reasons.push('市值原始时间待更新');
-  if (created === null || created <= 0 || !Number.isInteger(created)) reasons.push('池龄或首笔成交时间未知');
-  else if (ageSec < config.minAgeSec) reasons.push(ageBasis === 'trade' ? '首笔成交不足5分钟'
-    : ageBasis === 'pool' ? '池创建不足5分钟' : '上线不足5分钟');
-  else if (ageSec > config.maxAgeSec) reasons.push('超过观察池龄上限');
+  if (created === null || created <= 0 || !Number.isInteger(created)) reasons.push('上线时间未知');
+  else if (ageSec < config.minAgeSec) reasons.push('上线不足5分钟');
+  else if (ageSec > config.maxAgeSec) reasons.push('超过观察年龄上限');
   if (mcValue === null) reasons.push('市值数据未知');
   else if (!(mc >= config.discoveryMinMarketCap && mc <= config.discoveryMaxMarketCap)) reasons.push('市值不在发现范围');
   if (liquidityValue === null) reasons.push('流动性数据未知');
@@ -216,21 +169,7 @@ export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
     const old = ageSec >= (config.oldMarketAgeSec ?? 21600);
     const absolute = old ? config.minOldVolume5mUsd ?? 250 : config.minMatureVolume5mUsd ?? 100;
     const turnover = old ? config.minOldTurnover5m ?? .01 : config.minMatureTurnover5m ?? .005;
-    const activityVolume = poolMarket?.volume5m ?? volume;
-    const activityLiquidity = poolMarket?.liquidity ?? liquidity;
-    if (old && !poolMarket) reasons.push('老池缺少同池流动性与成交证据');
-    if (activityVolume < Math.max(absolute, activityLiquidity * turnover)) reasons.push(old ? '老池当前成交活跃度不足' : '当前成交活跃度不足');
-  }
-  const trajectory = freshAvePoolTrajectory(row, chain, now);
-  const mature = ageSec >= (config.matureMarketAgeSec ?? 3600), old = ageSec >= (config.oldMarketAgeSec ?? 21600);
-  if (mature && row.poolEvidence && !trajectory) reasons.push('池历史证据身份待核验');
-  if (old && (!trajectory || trajectory.athRatio === null)) reasons.push('老池历史轨迹待核验');
-  if (trajectory && trajectory.athRatio !== null && mature
-    && trajectory.athRatio <= (config.maxCollapsedAthRatio ?? .10)
-    && !(trajectory.change1h !== null && trajectory.change1h > (config.strongRebound1h ?? .20))) {
-    reasons.push('距历史高点跌幅过深且未出现强势反弹');
-  } else if (trajectory && mature && !trajectory.evidenceFresh) {
-    reasons.push('池历史轨迹已过期，等待更新');
+    if (volume < Math.max(absolute, liquidity * turnover)) reasons.push(old ? '老币当前成交活跃度不足' : '当前成交活跃度不足');
   }
   for (const field of ['buy_volume_5m', 'sell_volume_5m']) {
     if (row[field] != null && !(optionalNonNegativeNumber(row[field]) > 0)) reasons.push(field === 'buy_volume_5m' ? '近5分钟买入额不足或未核验' : '近5分钟卖出额不足或未核验');
@@ -240,7 +179,6 @@ export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
   for (const [field, label] of [['rug_ratio', 'rug风险'], ['bundler_rate', '捆绑机器人占比'], ['rat_trader_amount_rate', '内幕占比']]) {
     if ((optionalRate(row[field]) ?? 0) > .3) reasons.push(label + '过高');
   }
-  if (aveHookPending(row, chain)) reasons.push('Hook架构池待核验，交易路由未确认');
   const signals = discoverySignalView(row), priorityBand = mc >= config.priorityMinMarketCap && mc <= config.priorityMaxMarketCap;
   const score = (priorityBand ? 35 : 10) + Math.min(25, liquidity / 1000) + Math.min(20, (volume || 0) / 1000) + Math.min(20, num(row.holder_count) / 10);
   return { pass: reasons.length === 0, reasons: [...new Set(reasons)], priorityBand, score, mc, liquidity, ageSec, ageBasis,
