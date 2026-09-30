@@ -518,6 +518,49 @@ describe('AVE onboarding and scanning through the Durable Object', () => {
     }
   });
 
+  it('tells the user to resend /setkey when AVE stays unavailable through every verification attempt', async () => {
+    const tenantId = '19033';
+    const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+    const unavailableKey = 'ave-radar-unavailable-key';
+    const requests = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const request = new Request(url, init);
+      if (request.headers.get('X-API-KEY') === unavailableKey) {
+        requests.push(request.url);
+        return new Response('gateway timeout', { status: 504 });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    try {
+      await runInDurableObject(radar, async (instance, state) => {
+        const now = Date.now();
+        await instance.receiveTelegramCredential({
+          tenantId, actorUserId: tenantId, updateId: '9', commandType: 'credential', payload: { source: 'message' },
+          dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: '90'
+        }, `/setkey ${unavailableKey}`);
+        const inboxStatus = () => state.storage.sql.exec("SELECT status FROM inbox WHERE tenant_id = ? AND update_id = '9'", tenantId).one().status;
+        for (let step = 0; step < 30 && inboxStatus() !== 'FAILED'; step++) {
+          await instance.alarm();
+          // Release retry backoff and AVE request spacing instead of waiting them out.
+          const { tasks } = await instance.getSchedulerSnapshot(tenantId);
+          await instance.replaceSchedulerTasks({ tenantId, tasks: tasks.map(task => task.kind === 'credential' ? { ...task, dueAt: 0 } : task) });
+          await instance.setAveAdmissionState({ tenantId, state: { ...(await instance.getAveAdmissionState(tenantId)), spacingReadyAt: 0 } });
+        }
+
+        expect(inboxStatus()).toBe('FAILED');
+        expect(requests.length).toBe(5);
+        expect(state.storage.sql.exec('SELECT name FROM keys WHERE tenant_id = ?', tenantId).toArray()).toEqual([]);
+        expect((await instance.getStatus(tenantId)).control.configured).toBe(false);
+        const notices = state.storage.sql.exec('SELECT payload_json FROM outbox WHERE tenant_id = ?', tenantId).toArray()
+          .map(row => JSON.parse(row.payload_json).params.text ?? '');
+        expect(notices.some(text => text.includes('AVE暂时不可用') && text.includes('/setkey'))).toBe(true);
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it.each([
     ['a refused replacement leaves the working key unblocked', 402, null],
     ['a replacement verifies and activates while the active key is quota-blocked', 200, 'QUOTA']

@@ -210,7 +210,7 @@ export class TelegramRuntime {
     return { status: 'success', complete: true };
   }
 
-  async verifyCredential(connectionGeneration, { request, fetchImpl }) {
+  async verifyCredential(connectionGeneration, { request, fetchImpl, finalAttempt = false }) {
     try {
       await verifyAndActivateOnboardingCredential({ ...this.keyOptions(), connectionGeneration, request, verify: (key, { signal }) => verifyAveApiKey(key, { fetchImpl, now: this.now, signal }), afterActivate: state => {
         restartRecoverableScanInTransaction(this.storage, this.tenantId, { keyEpoch: state.keyEpoch, controlEpoch: state.controlEpoch, now: this.now() });
@@ -220,14 +220,17 @@ export class TelegramRuntime {
         this.commands.noticeInTransaction(state.updateId, this.commands.language === 'en' ? 'AVE connected with a read-only key. Check and delete your key message. Notifications remain under your control: /unmute.' : 'AVE已连接（只读密钥）。请检查并删除密钥消息。可使用 /unmute 开启提醒。', 'connected');
       } });
     } catch (error) {
-      // A transient failure retries the verification; a refusal ends it.
-      if (['AVE_RATE_LIMITED','AVE_TIMEOUT','AVE_NETWORK','AVE_UPSTREAM','AVE_ABORTED','SCHEDULER_REQUEST_TIMEOUT'].includes(error.code)) throw error;
-      if (!(error instanceof ConnectionError) && !['AVE_AUTH','AVE_QUOTA','AVE_SCHEMA','AVE_SIZE','AVE_CONFIG','AVE_INPUT'].includes(error.code)) throw error;
+      // A transient failure retries the verification until its final attempt; a refusal ends it.
+      const transient = ['AVE_RATE_LIMITED','AVE_TIMEOUT','AVE_NETWORK','AVE_UPSTREAM','AVE_ABORTED','SCHEDULER_REQUEST_TIMEOUT'].includes(error.code);
+      if (transient && !finalAttempt) throw error;
+      if (!transient && !(error instanceof ConnectionError) && !['AVE_AUTH','AVE_QUOTA','AVE_SCHEMA','AVE_SIZE','AVE_CONFIG','AVE_INPUT'].includes(error.code)) throw error;
       this.storage.transactionSync(() => {
         const row = this.storage.sql.exec("SELECT update_id FROM inbox WHERE tenant_id=? AND command_type='credential' AND generation=? AND status IN ('RECEIVED','RUNNING')", this.tenantId, connectionGeneration).toArray()[0];
         if (row) {
           failOnboardingVerification({ storage: this.storage, tenantId: this.tenantId, updateId: row.update_id, connectionGeneration });
-          this.commands.noticeInTransaction(row.update_id, this.commands.language === 'en' ? 'Connection failed or expired; prior connection retained. Use /onboard to retry. Check and delete the key message.' : '连接失败或已过期，保留之前的连接。请使用 /onboard 重试，并检查删除密钥消息。', 'verification');
+          this.commands.noticeInTransaction(row.update_id, transient
+            ? (this.commands.language === 'en' ? 'AVE was temporarily unavailable, so the key could not be verified; prior connection retained. Send /setkey again later. Check and delete the key message.' : 'AVE暂时不可用，未能验证密钥，保留之前的连接。请稍后重新发送 /setkey，并检查删除密钥消息。')
+            : (this.commands.language === 'en' ? 'Connection failed or expired; prior connection retained. Use /onboard to retry. Check and delete the key message.' : '连接失败或已过期，保留之前的连接。请使用 /onboard 重试，并检查删除密钥消息。'), 'verification');
         }
       });
     }

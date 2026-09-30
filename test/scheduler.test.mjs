@@ -585,6 +585,34 @@ test('retry exhaustion is terminal, observable, and cannot leave a due-now alarm
   assert.equal(alarms.at, null);
 });
 
+test('a handler learns its final attempt and every failure is logged without secrets', async t => {
+  let clock = NOW;
+  const seen = [];
+  const warn = t.mock.method(console, 'warn', () => {});
+  const { instance, store } = scheduler({
+    store: new MemorySchedulerStore({ tasks: [task('credential:1', 'credential', NOW, { aveCost: 5 })], runtime: CONFIGURED }),
+    now: () => clock,
+    maxRetryAttempts: 2,
+    handlers: {
+      credential: externalRequestHandler(async ({ finalAttempt }) => {
+        seen.push(finalAttempt);
+        throw new AveError('TIMEOUT', 504);
+      })
+    }
+  });
+
+  await instance.alarm();
+  clock += 60_000;
+  await instance.alarm();
+
+  assert.deepEqual(seen, [false, true]);
+  assert.equal(store.read().tasks[0].enabled, false);
+  assert.deepEqual(warn.mock.calls.map(call => JSON.parse(call.arguments[0])), [
+    { event: 'scheduler_task_failed', taskId: 'credential:1', taskKind: 'credential', errorCode: 'AVE_TIMEOUT', httpStatus: 504, attempt: 1, exhausted: false },
+    { event: 'scheduler_task_failed', taskId: 'credential:1', taskKind: 'credential', errorCode: 'AVE_TIMEOUT', httpStatus: 504, attempt: 2, exhausted: true }
+  ]);
+});
+
 test('the watchdog does not duplicate an active step, clear an AVE block, or unpause work', async () => {
   let release;
   let calls = 0;

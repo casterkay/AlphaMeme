@@ -533,6 +533,7 @@ export class OneAlarmScheduler {
         value: {
           ...selected,
           epoch,
+          attempt: Number(state.runtime.retries[selected.task.id]?.attempts || 0) + 1,
           handlerMode: usableHandler?.mode || 'unavailable',
           unavailable: usableHandler === undefined
         }
@@ -545,7 +546,8 @@ export class OneAlarmScheduler {
       throw new SchedulerStepError('SCHEDULER_HANDLER_UNAVAILABLE', `no bounded handler is registered for ${claim.task.kind}`);
     }
     const handler = this.#handlers[claim.task.kind];
-    const context = { task: clone(claim.task), epoch: claim.epoch };
+    // A handler on its final attempt can end its work with a user-visible outcome instead of failing silently.
+    const context = { task: clone(claim.task), epoch: claim.epoch, finalAttempt: claim.attempt >= this.maxRetryAttempts };
     if (handler.mode === 'external-request') {
       let requestCount = 0;
       let requestOpen = true;
@@ -709,6 +711,9 @@ export class OneAlarmScheduler {
         }
       }
     };
+    // Logged before the state commits; a failed commit already throws loudly, so the line cannot hide a lost failure.
+    console.warn(JSON.stringify({ event: 'scheduler_task_failed', taskId: task.id, taskKind: task.kind, errorCode: errorCode(error),
+      httpStatus: Number.isSafeInteger(error?.status) ? error.status : null, attempt: attempts, exhausted }));
     return { state: { tasks, runtime, ave: state.ave }, value };
   }
 

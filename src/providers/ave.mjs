@@ -283,7 +283,7 @@ export class AveClient {
       try {
         // Workers' fetch rejects any receiver but the global scope.
         const fetchImpl = this.#fetch;
-        response = await fetchImpl(ORIGIN + path, { method: 'GET', headers: { 'X-API-KEY': this.#apiKey, Accept: 'application/json' }, redirect: 'error', signal: controller.signal });
+        response = await fetchImpl(ORIGIN + path, { method: 'GET', headers: { 'X-API-KEY': this.#apiKey, Accept: 'application/json' }, redirect: 'manual', signal: controller.signal });
       } catch (error) {
         if (timedOut) throw fail('TIMEOUT', 504);
         if (controller.signal.aborted) throw fail('ABORTED', 499);

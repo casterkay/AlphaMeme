@@ -4,6 +4,7 @@ const ACTIVE = new Set(['PENDING', 'SENDING', 'UNKNOWN']);
 const METHODS = new Set(['sendMessage', 'editMessageText', 'editMessageReplyMarkup', 'deleteMessage', 'answerCallbackQuery', 'sendDocument']);
 const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const messageKey = (row, payload) => payload.params.message_id == null ? null : `${row.chat_id}:${payload.params.message_id}`;
+const LOGGED_KINDS = new Set(['unknown', 'retryable', 'permanent', 'deleted']);
 const success = id => ({ status: 'success', checkpoint: `outbox:${id}`, complete: true });
 // A secret message is stored encrypted and never resent after an ambiguous send.
 const retriesAmbiguous = (row, payload) => row.ambiguous_retries < 1 && payload.purpose !== 'secret';
@@ -175,8 +176,12 @@ export class TelegramOutbox {
     }
     catch (error) {
       if (error?.code !== 'SCHEDULER_REQUEST_TIMEOUT' && !(error instanceof TypeError) && error?.name !== 'AbortError') throw error;
-      result = { ok: false, kind: 'unknown' };
+      result = { ok: false, kind: 'unknown', code: error?.code === 'SCHEDULER_REQUEST_TIMEOUT' ? 'SCHEDULER_REQUEST_TIMEOUT' : 'TELEGRAM_TRANSPORT_UNCERTAIN' };
     }
+    // Transport output is untrusted here: log only known shapes so no message text can reach the log.
+    if (!result.ok && result.kind !== 'not-modified') console.warn(JSON.stringify({ event: 'telegram_delivery_failed', method: payload.method,
+      kind: LOGGED_KINDS.has(result.kind) ? result.kind : null, code: /^[A-Z][A-Z_]{0,63}$/.test(result.code ?? '') ? result.code : null,
+      telegramErrorCode: Number.isSafeInteger(result.errorCode) ? result.errorCode : null, attempt: row.attempts }));
     this.storage.transactionSync(() => {
       // A lease recovery can supersede a late network completion; it cannot prove delivery ordering.
       const current = this.storage.sql.exec('SELECT * FROM outbox WHERE tenant_id = ? AND id = ?', this.tenantId, id).toArray()[0];

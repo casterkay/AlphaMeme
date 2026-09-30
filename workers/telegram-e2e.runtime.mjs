@@ -18,9 +18,10 @@ const jsonResponse=value=>new Response(JSON.stringify(value),{status:200,headers
 const schedulerTasks=(storage,tenantId)=>readSchedulerStateInTransaction(storage,tenantId).tasks;
 
 // A hand-written AVE endpoint: records each request's URL and key, never touches the network.
+// Building a real Request applies the Workers runtime's option checks, which a bare stub would skip.
 function aveStub(respond) {
   const calls=[];
-  return {calls,fetch:async(url,init)=>{calls.push({url:String(url),apiKey:init.headers['X-API-KEY']});return respond(String(url));}};
+  return {calls,fetch:async(url,init)=>{const request=new Request(url,init);calls.push({url:request.url,apiKey:request.headers.get('X-API-KEY')});return respond(request.url);}};
 }
 
 async function withRuntime(tenantId,operation) {
@@ -303,6 +304,19 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(['RECEIVED','RUNNING']).toContain(runtime.inbox.get(input.updateId).status);
       expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([{name:'ave-pending-api-key'}]);
       expect(runtime.control.snapshot().configured).toBe(false);
+    });
+  });
+
+  it('ends verification on its final attempt when AVE stays unavailable, scrubs the candidate and tells the user to resend',async()=>{
+    await withRuntime('22922',async({runtime,storage,tenantId,sent,receipt,drain})=>{
+      const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);await runtime.runCommand(input.updateId);
+      const ave=aveStub(()=>new Response('too many requests',{status:429,headers:{'retry-after':'30'}}));
+      await runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,{request,fetchImpl:ave.fetch,finalAttempt:true});await drain();
+      expect(ave.calls).toHaveLength(1);
+      expect(runtime.inbox.get(input.updateId)).toMatchObject({status:'FAILED',payload_enc:null});
+      expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
+      expect(runtime.control.snapshot().configured).toBe(false);
+      expect(sent.some(row=>row.params.text?.includes('AVE暂时不可用')&&row.params.text.includes('/setkey'))).toBe(true);
     });
   });
 
