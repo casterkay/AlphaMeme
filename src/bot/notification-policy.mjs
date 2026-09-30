@@ -163,7 +163,7 @@ export class NotificationPolicy {
       if (!controls.enabled) return { reason: 'alerts_off' };
       if (enqueued.has(key) || alerted(key)) return { reason: 'alerted' };
       if (Object.hasOwn(state.quiet, key)) return { reason: firstChains.includes(row.chain) ? 'quiet_first_chain' : row.auditedAt <= state.at ? 'quiet_before_baseline' : 'quiet_carried',
-        quietSince: state.quiet[key], baselineAt: state.at };
+        baselineAt: state.at };
       return { reason: batch.some(item => voiceKey(item) === key) ? 'batch_interval' : 'batch_full', nextBatchAt: state.nextBatchAt };
     });
     if (controls.enabled) {
