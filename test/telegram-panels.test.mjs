@@ -25,6 +25,22 @@ test('all native panels render both locales with bounded text and typed action d
   assert.ok(commands.includes('mute')&&commands.includes('wallet')&&!commands.includes('unmute'));
 });
 
+test('every panel ends with the standard footer and keeps navigation out of its body',()=>{
+  const home=item=>item.action==='panel.open'&&item.params.panel==='radar';
+  const nav=item=>item.action==='panel.refresh'||item.action==='panel.back'||home(item);
+  for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) for(const returning of [false,true]) {
+    const snapshot=fixture(), query={selectedToken:{chain:'sol',address:snapshot.candidates[0].address},...(returning?{returnTo:{panel:'audits',viewChain:'sol',query:{}}}:{})};
+    const result=renderPanel(snapshot,session(panel,query),locale), footer=result.keyboard.at(-1), label=`${panel} ${locale} ${returning}`;
+    assert.ok(footer.every(nav),label);
+    assert.ok(!result.keyboard.slice(0,-1).flat().some(nav),label);
+    const order=footer.map(item=>item.action==='panel.refresh'?0:item.action==='panel.back'?1:2);
+    assert.deepEqual(order,[...order].sort(),label);
+    assert.equal(footer.some(item=>item.action==='panel.back'),returning&&panel!=='radar',label);
+    assert.equal(footer.some(home),panel!=='radar',label);
+    assert.match(result.text,locale==='en'?/\n\nUpdated [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2} UTC$/:/\n\n更新于 \d{1,2}月\d{1,2}日 \d{2}:\d{2} UTC$/,label);
+  }
+});
+
 test('audit filters use effective marks while overview keeps original on-chain candidate count',()=>{
   const snapshot=fixture();snapshot.marks=[{chain:'sol',address:snapshot.candidates[0].address,decision:'passed',at:now-1,reviewRevision:'revision'}];
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'chain'})).length,12);

@@ -164,7 +164,9 @@ export class TelegramCommands {
       const viewChain = CONCRETE_CHAIN_PANELS.has(panel) && !CHAINS.includes(session.viewChain)
         ? (CHAINS.includes(control.activeChain) ? control.activeChain : DEFAULT_SCAN_CHAIN)
         : session.viewChain;
-      changes = { panel, viewChain, query: { ...session.query, schemaVersion: 1, page: 0, pendingInput: undefined, ...(params.query ?? {}), returnTo, ...(token ? { selectedToken: token } : {}) } };
+      // Radar is the root: Home starts navigation afresh instead of stacking a path back.
+      changes = panel === 'radar' ? { panel, viewChain, query: { schemaVersion: 1, page: 0 } }
+        : { panel, viewChain, query: { ...session.query, schemaVersion: 1, page: 0, pendingInput: undefined, ...(params.query ?? {}), returnTo, ...(token ? { selectedToken: token } : {}) } };
     } else if (action === 'panel.back') {
       const origin = session.query.returnTo;
       changes = origin ? { panel: origin.panel, viewChain: origin.viewChain, query: origin.query } : { panel: 'radar', query: { schemaVersion: 1, page: 0 } };

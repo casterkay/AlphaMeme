@@ -1,5 +1,5 @@
 import { NotificationPolicy } from './notification-policy.mjs';
-import { userText } from '../render/telegram.mjs';
+import { userText, chainLabel } from '../render/telegram.mjs';
 import { TelegramInbox } from './inbox.mjs';
 import { TelegramOutbox } from './outbox.mjs';
 import { createTelegramTransport } from './telegram-transport.mjs';
@@ -302,7 +302,7 @@ export class TelegramRuntime {
       const lines = [`<b>${title}</b>`, reason];
       const keyboard = notification.members.map((token, index) => {
         const candidate = this.storage.sql.exec('SELECT symbol FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, token.chain, token.address).toArray()[0];
-        const label = `${index + 1}. ${candidate?.symbol || token.address.slice(-8)} · ${token.chain}`;
+        const label = `${index + 1}. ${candidate?.symbol || token.address.slice(-8)} · ${chainLabel(token.chain)}`;
         lines.push(userText(label));
         return [{ text: `${index + 1}. ${(candidate?.symbol || token.address.slice(-8)).slice(0,30)}`, action: 'panel.open', params: { panel: 'detail' }, token: { chain: token.chain, address: token.address } }];
       });
