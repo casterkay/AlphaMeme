@@ -39,23 +39,51 @@ test('initial baseline stays quiet; newly eligible promotion produces one immuta
   assert.equal(f.policy.reconcileInTransaction().notifications.length,0,'continuous qualification is quiet beyond 24h');
 });
 
-test('each lead logs why it is held once per change, and an enqueued alert is logged', t => {
+const logLines = log => log.mock.calls.map(call => JSON.parse(call.arguments[0]));
+const holds = log => logLines(log).filter(line => line.event === 'notification_lead_held').map(line => `${line.address}:${line.reason}`);
+
+test('each lead logs why it is held once per change, and an enqueued alert is logged with its leads', t => {
   const log = t.mock.method(console, 'log', () => {});
-  const lines = () => log.mock.calls.map(call => JSON.parse(call.arguments[0]));
   const f = fixture(); f.candidate('old');
   f.policy.reconcileInTransaction(); f.policy.reconcileInTransaction();
-  assert.deepEqual(lines(), [{ event: 'notification_lead_held', chain: 'bsc', address: 'old', reason: 'baseline_quiet' }]);
+  assert.deepEqual(holds(log), ['old:quiet_before_baseline']);
   log.mock.resetCalls();
   f.advance(1); f.candidate('fresh');
   f.policy.reconcileInTransaction(); f.policy.reconcileInTransaction();
-  assert.deepEqual(lines(), [
-    { event: 'notification_lead_held', chain: 'bsc', address: 'fresh', reason: 'alerted' },
-    { event: 'notification_enqueued', id: 'notification:1:1', actionReason: 'CANDIDATE_NEW', members: 1 }
-  ]);
+  assert.deepEqual(holds(log), ['fresh:alerted']);
+  assert.deepEqual(logLines(log).filter(line => line.event === 'notification_enqueued'),
+    [{ event: 'notification_enqueued', id: 'notification:1:1', actionReason: 'CANDIDATE_NEW', addresses: ['fresh'] }]);
   log.mock.resetCalls();
   f.pref('telegram.notifications', false);
   f.policy.reconcileInTransaction();
-  assert.deepEqual(lines().map(line => `${line.address}:${line.reason}`).sort(), ['fresh:alerts_off', 'old:alerts_off']);
+  assert.deepEqual(holds(log).sort(), ['fresh:alerts_off', 'old:alerts_off']);
+});
+
+test('a lead that is not alert-eligible, or waits for the next batch, says so', t => {
+  const log = t.mock.method(console, 'log', () => {});
+  const f = fixture(); f.candidate('seed');
+  f.policy.reconcileInTransaction();
+  f.advance(1); f.candidate('first');
+  f.policy.reconcileInTransaction();
+  f.advance(1); f.candidate('second');
+  f.policy.reconcileInTransaction();
+  assert.ok(holds(log).includes('second:batch_interval'));
+  log.mock.resetCalls();
+  f.candidate('late', { status: 'LIVE_READY', age: 11 * 60_000 });
+  f.policy.reconcileInTransaction();
+  assert.deepEqual(holds(log), ['late:audit_too_old']);
+});
+
+test('an alert dropped before delivery is logged with the reason it no longer qualifies', t => {
+  const log = t.mock.method(console, 'log', () => {});
+  const f = fixture(); f.candidate('old');
+  f.policy.reconcileInTransaction();
+  f.advance(1); f.candidate('fresh');
+  const [notice] = f.policy.reconcileInTransaction().notifications;
+  f.candidate('fresh', { revision: 'r2' });
+  f.policy.reconcileInTransaction();
+  assert.deepEqual(logLines(log).filter(line => line.event === 'notification_dropped'),
+    [{ event: 'notification_dropped', id: notice.id, actionReason: 'CANDIDATE_NEW', addresses: ['fresh'], reason: 'lead_revised' }]);
 });
 
 test('delivery eligibility names the reason a pending alert may no longer be sent', () => {

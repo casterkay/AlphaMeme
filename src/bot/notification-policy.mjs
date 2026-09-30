@@ -85,16 +85,28 @@ export class NotificationPolicy {
     return 'action_reason_unknown';
   }
 
+  /** Why a lead is not alert-eligible at all; mirrors candidateEligible and voiceEligible. */
+  leadIneligibleReason(row, chains) {
+    const now = this.now();
+    if (!chains.includes(row.chain)) return 'other_chain';
+    if (row.ignored) return 'ignored';
+    if (row.qualified !== true) return 'excluded';
+    if (!Number.isFinite(row.auditedAt) || row.auditedAt <= 0 || row.auditedAt > now) return 'audit_time_invalid';
+    if (now - row.auditedAt > 10 * 60_000) return 'audit_too_old';
+    if (!(row.staleAt > now)) return 'stale';
+    return 'not_eligible';
+  }
+
   // Logs each lead's hold reason once per change, so a silent lead can be explained from the logs.
-  logHolds(rows, reasonFor) {
+  logHolds(rows, describe) {
     if (!loggedHolds.has(this.storage)) loggedHolds.set(this.storage, new Map());
     const logged = loggedHolds.get(this.storage), seen = new Set();
     for (const row of rows) {
-      const key = `${this.tenantId}:${voiceKey(row)}`, reason = reasonFor(row);
+      const key = `${this.tenantId}:${voiceKey(row)}`, { reason, ...detail } = describe(row);
       seen.add(key);
       if (logged.get(key) === reason) continue;
       logged.set(key, reason);
-      console.log(JSON.stringify({ event: 'notification_lead_held', chain: row.chain, address: row.address, reason }));
+      console.log(JSON.stringify({ event: 'notification_lead_held', chain: row.chain, address: row.address, reason, auditedAt: row.auditedAt ?? null, ...detail }));
     }
     for (const key of logged.keys()) if (key.startsWith(`${this.tenantId}:`) && !seen.has(key)) logged.delete(key);
   }
@@ -119,7 +131,12 @@ export class NotificationPolicy {
 
     // Persist updated baseline before eligibility reads it; immutable batch membership never changes.
     this.write(state);
-    state.pending = state.pending.filter(descriptor => this.eligible({ delivery_class: descriptor.deliveryClass, action_reason: descriptor.actionReason }, { notification: descriptor }, { issues }));
+    state.pending = state.pending.filter(descriptor => {
+      const reason = this.ineligibleReason({ delivery_class: descriptor.deliveryClass, action_reason: descriptor.actionReason }, { notification: descriptor }, { issues });
+      if (reason !== null) console.log(JSON.stringify({ event: 'notification_dropped', id: descriptor.id, actionReason: descriptor.actionReason,
+        addresses: (descriptor.members || []).map(member => member.address), reason }));
+      return reason === null;
+    });
     const enqueue = (reason, members, issue = null) => {
       const descriptor = { id: `notification:${state.generation}:${++state.sequence}`, deliveryClass: 'ACTION_REQUIRED', actionReason: reason, members, createdAt: now, expiresAt: now + 10 * 60_000, generation: state.generation, ...(issue ? { issue } : {}) };
       state.pending.push(descriptor);
@@ -139,15 +156,20 @@ export class NotificationPolicy {
     const newLeads = controls.enabled ? eligibleRows.filter(row => !Object.hasOwn(state.quiet, voiceKey(row)) && !alerted(voiceKey(row))) : [];
     const batch = newLeads.slice(0, 10), batchOpen = now >= state.nextBatchAt;
     const enqueued = new Set(batch.length && batchOpen ? batch.map(voiceKey) : []);
-    this.logHolds(eligibleRows, row => {
+    const eligibleKeys = new Set(eligibleRows.map(voiceKey));
+    this.logHolds(rows.filter(row => row.status === 'LIVE_READY' || eligibleKeys.has(voiceKey(row))), row => {
       const key = voiceKey(row);
-      return !controls.enabled ? 'alerts_off' : enqueued.has(key) || alerted(key) ? 'alerted' : Object.hasOwn(state.quiet, key) ? 'baseline_quiet'
-        : !batch.some(item => voiceKey(item) === key) ? 'batch_full' : 'batch_interval';
+      if (!eligibleKeys.has(key)) return { reason: this.leadIneligibleReason(row, controls.chains) };
+      if (!controls.enabled) return { reason: 'alerts_off' };
+      if (enqueued.has(key) || alerted(key)) return { reason: 'alerted' };
+      if (Object.hasOwn(state.quiet, key)) return { reason: firstChains.includes(row.chain) ? 'quiet_first_chain' : row.auditedAt <= state.at ? 'quiet_before_baseline' : 'quiet_carried',
+        quietSince: state.quiet[key], baselineAt: state.at };
+      return { reason: batch.some(item => voiceKey(item) === key) ? 'batch_interval' : 'batch_full', nextBatchAt: state.nextBatchAt };
     });
     if (controls.enabled) {
       if (enqueued.size) {
         const descriptor = enqueue('CANDIDATE_NEW', batch.map(row => ({ chain: row.chain, address: row.address, revision: row.revision })));
-        console.log(JSON.stringify({ event: 'notification_enqueued', id: descriptor.id, actionReason: 'CANDIDATE_NEW', members: batch.length }));
+        console.log(JSON.stringify({ event: 'notification_enqueued', id: descriptor.id, actionReason: 'CANDIDATE_NEW', addresses: batch.map(row => row.address) }));
         state.nextBatchAt = now + 60_000;
       }
       const events = this.query("SELECT id,at,chain,address FROM events WHERE tenant_id=? AND type='RISK_WORSENED' AND at>? ORDER BY at,id", Math.max(state.at, now - EVENT_TTL));

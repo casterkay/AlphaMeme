@@ -40,7 +40,6 @@ export class TelegramRuntime {
     this.notifications = new NotificationPolicy({ storage, tenantId, now });
     this.outbox = new TelegramOutbox({ storage, tenantId, now,
       transport: input => typeof env.TELEGRAM_BOT_TOKEN === 'string' && env.TELEGRAM_BOT_TOKEN.trim() ? createTelegramTransport({ botToken: env.TELEGRAM_BOT_TOKEN })(input) : Promise.resolve({ ok: false, kind: 'permanent', code: 'TELEGRAM_NOT_CONFIGURED' }),
-      eligible: (row, payload) => this.deliveryEligible(row, payload),
       ineligibleReason: (row, payload) => this.deliveryIneligibleReason(row, payload),
       reveal: params => this.revealSecretParams(params),
       onConfirmedInTransaction: value => {
@@ -281,8 +280,6 @@ export class TelegramRuntime {
     if (auth && JSON.parse(auth.value_json).keyEpoch === control.keyEpoch && JSON.parse(auth.value_json).unusable) issues.push({ key: 'ave-unusable', reason: 'KEY_UNUSABLE', nextAction: '/onboard' });
     return issues;
   }
-
-  deliveryEligible(row, payload) { return this.deliveryIneligibleReason(row, payload) === null; }
 
   deliveryIneligibleReason(row, payload) {
     if (payload.token && payload.projectionRevision !== reviewProjectionRevision(this.storage, this.tenantId, payload.token, this.now())) return 'projection_changed';
