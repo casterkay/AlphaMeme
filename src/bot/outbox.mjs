@@ -12,12 +12,13 @@ const retriesAmbiguous = (row, payload) => row.ambiguous_retries < 1 && payload.
 /** Tenant-local durable delivery. Call enqueueInTransaction inside the business transaction. */
 export class TelegramOutbox {
   // reveal(params) runs inside the send and may decrypt a secret for that one request; null refuses it.
-  constructor({ storage, tenantId, transport, now = Date.now, eligible = () => true, onConfirmedInTransaction = () => {}, reveal = async params => params }) {
+  constructor({ storage, tenantId, transport, now = Date.now, eligible = () => true, ineligibleReason = () => 'ineligible', onConfirmedInTransaction = () => {}, reveal = async params => params }) {
     this.storage = storage;
     this.tenantId = tenantId;
     this.transport = transport;
     this.now = now;
     this.eligible = eligible;
+    this.ineligibleReason = ineligibleReason;
     this.onConfirmedInTransaction = onConfirmedInTransaction;
     this.reveal = reveal;
   }
@@ -54,19 +55,30 @@ export class TelegramOutbox {
 
   cancel(row, payload) { this.update(row, 'CANCELLED', this.terminalAt(payload)); }
 
-  valid(row, payload) {
-    if (payload.expiresAt <= this.now()) return false;
+  // A message is cancelled, never sent, when it stops being valid; say why so no alert vanishes silently.
+  cancelInvalid(row, payload) {
+    const reason = this.invalidReason(row, payload) ?? 'unknown';
+    this.cancel(row, payload);
+    console.log(JSON.stringify({ event: 'telegram_delivery_cancelled', method: payload.method, deliveryClass: row.delivery_class,
+      actionReason: row.action_reason ?? null, reason }));
+  }
+
+  valid(row, payload) { return this.invalidReason(row, payload) === null; }
+
+  /** Why a message may no longer be sent, or null while it may. */
+  invalidReason(row, payload) {
+    if (payload.expiresAt <= this.now()) return 'expired';
     if (row.ui_session_id && payload.sessionVersion !== null) {
       const session = this.storage.sql.exec('SELECT * FROM ui_sessions WHERE tenant_id = ? AND id = ?', this.tenantId, row.ui_session_id).toArray()[0];
-      if (!session || session.version !== payload.sessionVersion) return false;
+      if (!session || session.version !== payload.sessionVersion) return 'session_changed';
     }
     if (payload.token && row.desired_revision) {
       const candidate = this.storage.sql.exec('SELECT review_revision FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ?', this.tenantId, payload.token.chain, payload.token.address).toArray()[0];
-      if (!candidate || candidate.review_revision !== row.desired_revision) return false;
+      if (!candidate || candidate.review_revision !== row.desired_revision) return 'review_changed';
     }
     const allowed = this.eligible(structuredClone(row), structuredClone(payload));
     if (typeof allowed !== 'boolean') throw new TypeError('Outbox eligibility must return a synchronous boolean');
-    return allowed;
+    return allowed ? null : String(this.ineligibleReason(structuredClone(row), structuredClone(payload)) ?? 'ineligible');
   }
 
   entries(rows) { return rows.map(row => ({ row, payload: this.payload(row) })); }
@@ -128,7 +140,7 @@ export class TelegramOutbox {
       if (!ACTIVE.has(row.status) || row.status === 'SENDING' || row.status === 'UNKNOWN') continue;
       const payload = this.payload(row);
       if (!payload) this.update(row, 'FAILED');
-      else if (!this.valid(row, payload)) this.cancel(row, payload);
+      else if (!this.valid(row, payload)) this.cancelInvalid(row, payload);
     }
     const entries = this.entries(this.activeRows());
     const blocking = this.blockingIndex(entries);
@@ -159,7 +171,7 @@ export class TelegramOutbox {
       const payload = entry.payload;
       if (!payload) { this.update(row, 'FAILED'); return null; }
       if (row.status === 'UNKNOWN' && !retriesAmbiguous(row, payload)) return null;
-      if (!this.valid(row, payload)) { if (row.status !== 'UNKNOWN') this.cancel(row, payload); return null; }
+      if (!this.valid(row, payload)) { if (row.status !== 'UNKNOWN') this.cancelInvalid(row, payload); return null; }
       if (this.blocked(entry, this.blockingIndex(entries))) return null;
       const ambiguous = row.ambiguous_retries + (row.status === 'UNKNOWN' ? 1 : 0);
       this.storage.sql.exec('UPDATE outbox SET status = ?, attempts = ?, ambiguous_retries = ?, next_at = NULL WHERE tenant_id = ? AND id = ?', 'SENDING', row.attempts + 1, ambiguous, this.tenantId, row.id);

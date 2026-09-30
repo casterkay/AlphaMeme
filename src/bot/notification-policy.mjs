@@ -7,6 +7,8 @@ const STATE_KEY = 'notification.baseline';
 const EVENT_TTL = 30 * 60_000;
 const ISSUE_REASONS = new Set(['KEY_UNUSABLE', 'UNRECOVERABLE_STATE', 'DELIVERY_UNCERTAIN']);
 const decode = value => value == null ? null : JSON.parse(value);
+// The last hold reason logged per lead, per Durable Object storage, so a steady state logs once, not on every reconcile.
+const loggedHolds = new WeakMap();
 const frozen = value => {
   if (value && typeof value === 'object') { for (const child of Object.values(value)) frozen(child); Object.freeze(value); }
   return value;
@@ -50,23 +52,51 @@ export class NotificationPolicy {
   candidateEligible(row, chains) { return row && chains.includes(row.chain) && !row.ignored && voiceEligible(row, this.now()); }
   relevantRisk(row, state) { return row && (row.favorite || row.approved || Object.hasOwn(state.notified, voiceKey(row))); }
 
-  eligible(outbox, payload, { issues = [] } = {}) {
-    if (['USER_RESPONSE', 'PANEL_UPDATE'].includes(outbox.delivery_class)) return true;
+  eligible(outbox, payload, options) { return this.ineligibleReason(outbox, payload, options) === null; }
+
+  /** Why an outbox row may not be sent now, or null when it may. */
+  ineligibleReason(outbox, payload, { issues = [] } = {}) {
+    if (['USER_RESPONSE', 'PANEL_UPDATE'].includes(outbox.delivery_class)) return null;
     const descriptor = payload.notification, state = this.read(), controls = this.controls();
-    if (outbox.delivery_class !== 'ACTION_REQUIRED' || !controls.enabled || !descriptor || state?.generation !== descriptor.generation || descriptor.expiresAt <= this.now()) return false;
+    if (outbox.delivery_class !== 'ACTION_REQUIRED') return 'delivery_class_unknown';
+    if (!controls.enabled) return 'alerts_off';
+    if (!descriptor) return 'descriptor_missing';
+    if (state?.generation !== descriptor.generation) return 'baseline_reset';
+    if (descriptor.expiresAt <= this.now()) return 'expired';
     const persisted = state.pending.find(item => item.id === descriptor.id);
-    if (!persisted || JSON.stringify(persisted) !== JSON.stringify(descriptor) || descriptor.actionReason !== outbox.action_reason) return false;
-    if (descriptor.actionReason === 'ACCOUNT_ACTION_REQUIRED') return issues.some(issue => issue.key === descriptor.issue.key && issue.reason === descriptor.issue.reason && ISSUE_REASONS.has(issue.reason) && issue.nextAction === descriptor.issue.nextAction);
+    if (!persisted || JSON.stringify(persisted) !== JSON.stringify(descriptor) || descriptor.actionReason !== outbox.action_reason) return 'no_longer_pending';
+    if (descriptor.actionReason === 'ACCOUNT_ACTION_REQUIRED') return issues.some(issue => issue.key === descriptor.issue.key && issue.reason === descriptor.issue.reason && ISSUE_REASONS.has(issue.reason) && issue.nextAction === descriptor.issue.nextAction) ? null : 'issue_resolved';
     const current = new Map(this.candidates().map(row => [voiceKey(row), row]));
-    if (descriptor.actionReason === 'CANDIDATE_NEW') return descriptor.members.length > 0 && descriptor.members.every(member => {
-      const row = current.get(voiceKey(member));
-      return this.candidateEligible(row, controls.chains) && row.revision === member.revision;
-    });
-    if (descriptor.actionReason === 'RISK_WORSENED') return descriptor.members.length === 1 && descriptor.members.every(member => {
-      const row = current.get(voiceKey(member));
-      return this.relevantRisk(row, state) && row.revision === member.revision;
-    });
-    return false;
+    if (descriptor.actionReason === 'CANDIDATE_NEW') {
+      if (!descriptor.members.length) return 'no_members';
+      for (const member of descriptor.members) {
+        const row = current.get(voiceKey(member));
+        if (!this.candidateEligible(row, controls.chains)) return 'lead_not_eligible';
+        if (row.revision !== member.revision) return 'lead_revised';
+      }
+      return null;
+    }
+    if (descriptor.actionReason === 'RISK_WORSENED') {
+      if (descriptor.members.length !== 1) return 'no_members';
+      const row = current.get(voiceKey(descriptor.members[0]));
+      if (!this.relevantRisk(row, state)) return 'risk_not_relevant';
+      return row.revision === descriptor.members[0].revision ? null : 'lead_revised';
+    }
+    return 'action_reason_unknown';
+  }
+
+  // Logs each lead's hold reason once per change, so a silent lead can be explained from the logs.
+  logHolds(rows, reasonFor) {
+    if (!loggedHolds.has(this.storage)) loggedHolds.set(this.storage, new Map());
+    const logged = loggedHolds.get(this.storage), seen = new Set();
+    for (const row of rows) {
+      const key = `${this.tenantId}:${voiceKey(row)}`, reason = reasonFor(row);
+      seen.add(key);
+      if (logged.get(key) === reason) continue;
+      logged.set(key, reason);
+      console.log(JSON.stringify({ event: 'notification_lead_held', chain: row.chain, address: row.address, reason }));
+    }
+    for (const key of logged.keys()) if (key.startsWith(`${this.tenantId}:`) && !seen.has(key)) logged.delete(key);
   }
 
   reconcileInTransaction({ issues = [] } = {}) {
@@ -102,16 +132,22 @@ export class NotificationPolicy {
       if (issue) state.problemNotified[issue.key] = now;
       return descriptor;
     };
+    const eligibleRows = rows.filter(row => this.candidateEligible(row, controls.chains));
+    const candidatePending = new Set(state.pending.filter(item => item.actionReason === 'CANDIDATE_NEW').flatMap(item => item.members.map(voiceKey)));
+    const alerted = key => candidatePending.has(key) || (Number.isFinite(state.notified[key]) && now - state.notified[key] < VOICE_TTL)
+      || Object.hasOwn(state.eventDedup, `CANDIDATE_NEW:${key}`);
+    const newLeads = controls.enabled ? eligibleRows.filter(row => !Object.hasOwn(state.quiet, voiceKey(row)) && !alerted(voiceKey(row))) : [];
+    const batch = newLeads.slice(0, 10), batchOpen = now >= state.nextBatchAt;
+    const enqueued = new Set(batch.length && batchOpen ? batch.map(voiceKey) : []);
+    this.logHolds(eligibleRows, row => {
+      const key = voiceKey(row);
+      return !controls.enabled ? 'alerts_off' : enqueued.has(key) || alerted(key) ? 'alerted' : Object.hasOwn(state.quiet, key) ? 'baseline_quiet'
+        : !batch.some(item => voiceKey(item) === key) ? 'batch_full' : 'batch_interval';
+    });
     if (controls.enabled) {
-      const candidatePending = new Set(state.pending.filter(item => item.actionReason === 'CANDIDATE_NEW').flatMap(item => item.members.map(voiceKey)));
-      const batch = rows.filter(row => {
-        const key = voiceKey(row);
-        return this.candidateEligible(row, controls.chains) && !Object.hasOwn(state.quiet, key) && !candidatePending.has(key)
-          && !(Number.isFinite(state.notified[key]) && now - state.notified[key] < VOICE_TTL)
-          && !Object.hasOwn(state.eventDedup, `CANDIDATE_NEW:${key}`);
-      }).slice(0, 10);
-      if (batch.length && now >= state.nextBatchAt) {
-        enqueue('CANDIDATE_NEW', batch.map(row => ({ chain: row.chain, address: row.address, revision: row.revision })));
+      if (enqueued.size) {
+        const descriptor = enqueue('CANDIDATE_NEW', batch.map(row => ({ chain: row.chain, address: row.address, revision: row.revision })));
+        console.log(JSON.stringify({ event: 'notification_enqueued', id: descriptor.id, actionReason: 'CANDIDATE_NEW', members: batch.length }));
         state.nextBatchAt = now + 60_000;
       }
       const events = this.query("SELECT id,at,chain,address FROM events WHERE tenant_id=? AND type='RISK_WORSENED' AND at>? ORDER BY at,id", Math.max(state.at, now - EVENT_TTL));

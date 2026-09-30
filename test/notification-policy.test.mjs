@@ -39,6 +39,39 @@ test('initial baseline stays quiet; newly eligible promotion produces one immuta
   assert.equal(f.policy.reconcileInTransaction().notifications.length,0,'continuous qualification is quiet beyond 24h');
 });
 
+test('each lead logs why it is held once per change, and an enqueued alert is logged', t => {
+  const log = t.mock.method(console, 'log', () => {});
+  const lines = () => log.mock.calls.map(call => JSON.parse(call.arguments[0]));
+  const f = fixture(); f.candidate('old');
+  f.policy.reconcileInTransaction(); f.policy.reconcileInTransaction();
+  assert.deepEqual(lines(), [{ event: 'notification_lead_held', chain: 'bsc', address: 'old', reason: 'baseline_quiet' }]);
+  log.mock.resetCalls();
+  f.advance(1); f.candidate('fresh');
+  f.policy.reconcileInTransaction(); f.policy.reconcileInTransaction();
+  assert.deepEqual(lines(), [
+    { event: 'notification_lead_held', chain: 'bsc', address: 'fresh', reason: 'alerted' },
+    { event: 'notification_enqueued', id: 'notification:1:1', actionReason: 'CANDIDATE_NEW', members: 1 }
+  ]);
+  log.mock.resetCalls();
+  f.pref('telegram.notifications', false);
+  f.policy.reconcileInTransaction();
+  assert.deepEqual(lines().map(line => `${line.address}:${line.reason}`).sort(), ['fresh:alerts_off', 'old:alerts_off']);
+});
+
+test('delivery eligibility names the reason a pending alert may no longer be sent', () => {
+  const f = fixture(); f.candidate('old');
+  f.policy.reconcileInTransaction();
+  f.advance(1); f.candidate('fresh');
+  const [notice] = f.policy.reconcileInTransaction().notifications;
+  const outbox = { delivery_class: 'ACTION_REQUIRED', action_reason: 'CANDIDATE_NEW' };
+  assert.equal(f.policy.ineligibleReason(outbox, { notification: notice }), null);
+  f.candidate('fresh', { revision: 'r2' });
+  assert.equal(f.policy.ineligibleReason(outbox, { notification: notice }), 'lead_revised');
+  f.pref('telegram.notifications', false);
+  assert.equal(f.policy.ineligibleReason(outbox, { notification: notice }), 'alerts_off');
+  assert.equal(f.policy.eligible(outbox, { notification: notice }), false);
+});
+
 test('alerts are on until the tenant explicitly turns them off', () => {
   const f = fixture();
   f.sql("DELETE FROM preferences WHERE tenant_id='123' AND key='telegram.notifications'");
