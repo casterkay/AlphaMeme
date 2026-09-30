@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { scannerSettings as config } from '../src/scanner-settings.mjs';
 import {
-  discoveryScreen, analyzeWallets, observeFiveMinutes, deepScreen, empiricalSellability, marketBehaviorScreen
+  discoveryScreen, analyzeWallets, observeFiveMinutes, deepScreen, empiricalSellability, marketBehaviorScreen, createdAt
 } from '../src/scoring/index.mjs';
 
 const nowSec = 1_800_000_000;
@@ -283,4 +283,54 @@ test('deep screen hard-fails unrenounced ownership and unlocked LP', () => {
   assert.ok(result.failed.includes('ownerRenounced'));
   assert.ok(result.failed.includes('lpLocked'));
   assert.ok(result.failed.includes('wash'));
+});
+
+// Rows exactly as AveClient parses an AVE hot list, so the screen sees production's fields.
+async function aveHotListRows(tokens) {
+  const { AveClient } = await import('../src/providers/ave.mjs');
+  const client = new AveClient({ apiKey: 'scoring-test-key-0001', fetchImpl: async () => new Response(JSON.stringify({ status: 1, data: { tokens } })) });
+  return (await client.trending('arc')).rows;
+}
+
+function aveToken(index, ageHours, overrides = {}) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  return { token: `0x${String(index).padStart(40, 'a')}`, chain: 'arc', symbol: `T${index}`, name: 'Arc token', current_price_usd: '0.5',
+    market_cap: '50000', main_pair_tvl: '12000', tvl: '12000', token_tx_volume_usd_5m: '900', token_buy_volume_u_5m: '500',
+    token_sell_volume_u_5m: '400', updated_at: nowSec - 1, launch_at: nowSec - Math.round(ageHours * 3600), ...overrides };
+}
+
+test('the AVE screen admits healthy tokens up to the 7-day age limit on token-level facts alone', async () => {
+  const ages = [0.5, 2, 5.9, 6.1, 24, 72, 167];
+  const rows = await aveHotListRows(ages.map((age, index) => aveToken(index + 1, age)));
+  for (const [index, row] of rows.entries()) {
+    const screen = discoveryScreen(row, { ...config, chain: 'arc' }, Date.now() / 1000);
+    assert.equal(screen.pass, true, `age ${ages[index]}h: ${screen.reasons.join(' | ')}`);
+  }
+  const [tooOld] = await aveHotListRows([aveToken(9, 169)]);
+  assert.deepEqual(discoveryScreen(tooOld, { ...config, chain: 'arc' }, Date.now() / 1000).reasons, ['超过观察年龄上限']);
+});
+
+test('the AVE screen still demands more current activity from older tokens', async () => {
+  // $150 of 5-minute volume clears the 1-6 h bar ($100, 0.5% of $12k = $60) but not the 6 h+ bar ($250, 1% = $120).
+  const [mature, old] = await aveHotListRows([aveToken(1, 3, { token_tx_volume_usd_5m: '150' }), aveToken(2, 30, { token_tx_volume_usd_5m: '150' })]);
+  assert.equal(discoveryScreen(mature, { ...config, chain: 'arc' }, Date.now() / 1000).pass, true);
+  assert.deepEqual(discoveryScreen(old, { ...config, chain: 'arc' }, Date.now() / 1000).reasons, ['老币当前成交活跃度不足']);
+});
+
+test('the AVE screen does not screen by pool: a Uniswap v4 hook pool is neither required nor rejected', async () => {
+  for (const ageHours of [2, 30]) {
+    const [row] = await aveHotListRows([aveToken(1, ageHours)]);
+    const withHookPool = { ...row, pairs: [{ chain: 'arc', address: row.address, pair: `0x${'b'.repeat(64)}`, amm: 'uniswap v4' }] };
+    const screen = discoveryScreen(withHookPool, { ...config, chain: 'arc' }, Date.now() / 1000);
+    assert.equal(screen.pass, true, `age ${ageHours}h: ${screen.reasons.join(' | ')}`);
+  }
+});
+
+test('an AVE token without a launch time is dated by its creation time, as the lead shows it', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const [row] = await aveHotListRows([aveToken(1, 0, { launch_at: null, created_at: nowSec - 30 * 3600 })]);
+  const screen = discoveryScreen(row, { ...config, chain: 'arc' }, Date.now() / 1000);
+  assert.equal(screen.pass, true, screen.reasons.join(' | '));
+  assert.equal(screen.ageBasis, 'token');
+  assert.equal(createdAt({ ...row, pool_created_at: nowSec - 3600 }), nowSec - 30 * 3600);
 });
