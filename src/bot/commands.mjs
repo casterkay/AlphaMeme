@@ -13,6 +13,7 @@ const CONCRETE_CHAIN_PANELS = new Set(['radar','feed','audits','stats']);
 const CONTROL = new Set(['pause','resume','disconnect','mute']);
 const text = (lang, zh, en) => lang === 'en' ? en : zh;
 const INPUT_KINDS = new Set(['search','note','note_target','trade_usd','trade_percent']);
+const WALLET_PANELS = new Set(['wallet','wallet_export','wallet_remove']);
 const REFUSALS = {
   NOT_TRADABLE: ['此链不支持交易。', 'Trading is not available on this chain.'],
   NO_WALLET: ['请先在 /wallet 创建交易钱包。', 'Create a trading wallet under /wallet first.'],
@@ -222,7 +223,11 @@ export class TelegramCommands {
     if (!this.trading) throw new ReviewConflict('trading_unavailable');
     const returnTo = session.panel === 'trade' ? session.query.returnTo : { panel: session.panel, viewChain: session.viewChain, query: { ...session.query, pendingInput: undefined } };
     const show = trade => ({ panel: 'trade', query: { schemaVersion: 1, page: 0, tradeId: trade.id, returnTo } });
-    const wallet = { panel: 'wallet', query: { schemaVersion: 1, page: 0, returnTo } };
+    // A wallet action lands on the wallet, and Back leaves the wallet: it must never
+    // reopen a spent dialog such as "Send the private key" or a removed wallet's warning.
+    let exit = { panel: session.panel, viewChain: session.viewChain, query: session.query };
+    while (exit && WALLET_PANELS.has(exit.panel)) exit = exit.query?.returnTo;
+    const wallet = { panel: 'wallet', query: { schemaVersion: 1, page: 0, ...(exit ? { returnTo: { ...exit, query: { ...exit.query, pendingInput: undefined } } } : {}) } };
     try {
       if (action === 'trade.buy' || action === 'trade.sell') {
         if (!token) throw new ReviewConflict('invalid_token');

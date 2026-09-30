@@ -26,6 +26,9 @@ test('money keeps value within rounding error and order across magnitudes', () =
     const text = money(value, 'en'), parsed = parseMoney(text);
     assert.ok(Math.abs(parsed - value) <= value * 0.005 + Number.EPSILON, `${value} → ${text}`);
     assert.ok(text.replace(/[^\d]/g, '').replace(/^0+/, '').replace(/0+$/, '').length <= 3, text);
+    // A mantissa of 1,000 or more means the unit should have rolled over (e.g. $1,000K).
+    const [, mantissa, unit] = /^\$([\d.,]+)([KMB]?)$/.exec(text);
+    assert.ok(unit === 'B' || Number(mantissa.replaceAll(',', '')) < 1000, text);
     assert.ok(parsed >= previous, `${text} is below the previous sample`);
     previous = parsed;
     assert.equal(money(-value, 'en'), `-${text}`);

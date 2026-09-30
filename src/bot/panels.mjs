@@ -2,7 +2,7 @@ import { backendDisposition, effectiveStatus } from '../scoring/manual-review.mj
 import { SCAN_CHAINS } from '../chains.mjs';
 import { tokenIdentity, safeTelegramText } from './snapshot.mjs';
 import { TRADING_PANELS, TRADING_PANEL_NAMES, tokenTradeControls, renderTradingPanel } from './trading-panels.mjs';
-import { localize, userText, chainLabel, button, urlButton, money, numberText, percent, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, ICONS } from '../render/telegram.mjs';
+import { localize, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, ICONS } from '../render/telegram.mjs';
 
 export const PANEL_NAMES = Object.freeze(['radar','feed','audits','saved','events','status','sources','delivery','settings','chains','onboard','help','detail','evidence','view_chain','filter','sort','language','disconnect','stats','horizon','cohort',...TRADING_PANELS]);
 export const AUDIT_FILTERS = Object.freeze(['all','lead','chain','waiting','passed','ignored','rejected','fresh','favorite']);
@@ -130,7 +130,7 @@ function detailPanel(snapshot,session,locale) {
   if (!row) return finishPanel(name('detail',locale),[L('未找到，请从列表选择代币','Not found; choose a token from a list')],[],snapshot,session,locale,{refresh:false});
   const mark = markFor(snapshot,row), annotation = annotationFor(snapshot,row), identity = token(row), deep = row.deep || {};
   const checks = Object.values(deep.checks || {}), unknown = deep.unknownFields || [], blocking = deep.blockingUnknownFields || [];
-  const header = [`${userText(row.symbol || '?',30)} · ${chainLabel(row.chain)} · ${state(snapshot,row,locale)}`, `CA: <code>${userText(row.address,80)}</code>`,`${L('审计','Audit')}: ${relativeTime(row.auditedAt,snapshot.at,locale)}`];
+  const header = [`${userText(row.symbol || '?',30)} · ${chainLabel(row.chain)} · ${state(snapshot,row,locale)}`, `CA: <code>${userText(row.address,80)}</code>`,`${L('审计','Audit')}: ${session.panel === 'evidence' ? `${timestamp(row.auditedAt,locale)} · ` : ''}${relativeTime(row.auditedAt,snapshot.at,locale)}`];
   const counts = `${L('通过/未通过检查','Passed/not-passed checks')}: ${checks.filter(value => value === true).length}/${checks.filter(value => value === false).length}\n${L('明确失败/阻断未知/其他未知/冲突','Explicit failures/blocking unknown/other unknown/conflicts')}: ${(deep.failed || []).length}/${blocking.length}/${unknown.filter(value => !blocking.includes(value)).length}/${(row.secondary?.conflicts || []).length}`;
   if (mark?.decision === 'passed' && effectiveStatus(row,mark,snapshot.at) !== 'passed') header.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
   if (session.panel === 'evidence') {

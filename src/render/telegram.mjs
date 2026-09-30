@@ -9,7 +9,7 @@ export const chainLabel = chain => CHAIN_LABELS[chain] || chain;
 export const button = (text, action, params = {}, token) => ({ text, action, params, ...(token ? { token } : {}) });
 export const urlButton = (text, value) => { const url = safeTelegramUrl(value); return url ? { text, url } : null; };
 
-// The only source of icons. At most one status icon per line; none decorative.
+// The only source of icons. Each marks a state or a destination; none is decorative.
 export const ICONS = Object.freeze({
   refresh: '🔄', back: '⬅️', home: '🏠',
   scanning: '🟢', paused: '⏸️', disconnected: '🔌', alertsOn: '🔔', alertsOff: '🔕',
@@ -41,6 +41,11 @@ export function percent(value, locale = 'zh', signed = false) {
   if (!finite(value)) return unknownText(locale);
   const hundredths = value * 100;
   return `${numberFormat(locale, { maximumFractionDigits: Math.abs(hundredths) >= 100 ? 0 : 1, signDisplay: signed ? 'exceptZero' : 'negative' }).format(hundredths)}%`;
+}
+
+/** Exact UTC timestamp for the audit record (evidence pages). */
+export function timestamp(value, locale = 'zh') {
+  return validTime(value) ? new Date(value).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC') : localize(locale, '尚无记录', 'No record');
 }
 
 /** A length of time in its largest whole unit: 45s, 4m, 2h, 3d. */
