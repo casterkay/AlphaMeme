@@ -1,0 +1,27 @@
+docs/TELEGRAM-UX-PLAN.md
+  s_6295713717bc33::t_b5d1d40fd97fe8 191-192
+  s_6295713717bc33::t_4623c1bd649b46 1-2,4-7,11-29,32-190,193-267,269,309-334,336-381,387-398,405-420,427,431-434,436-438,442
+  s_6295713717bc33::t_f70606d48d31ce 3,8-10,30-31,268,270-308,382-386,399-404,421-426,428-430,435,439-441
+  s_6295713717bc33::t_b5bfadb1d3ff87 335
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3ab2d9253d79701b884665fd909e4e6a3dc0a95f",
+  "prompts": {},
+  "humans": {
+    "h_0528fe13c98664": {
+      "author": "casterkay <poetrycoder>"
+    }
+  },
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
