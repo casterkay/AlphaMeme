@@ -1,19 +1,20 @@
 import { backendDisposition, effectiveStatus } from '../scoring/manual-review.mjs';
 import { SCAN_CHAINS } from '../chains.mjs';
 import { tokenIdentity, safeTelegramText } from './snapshot.mjs';
+import { TRADING_PANELS, TRADING_PANEL_NAMES, tokenTradeControls, renderTradingPanel } from './trading-panels.mjs';
 import { localize, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, age, truth, textPages, finishPanel, officialXUrl } from '../render/telegram.mjs';
 
-export const PANEL_NAMES = Object.freeze(['radar','feed','audits','saved','events','status','sources','delivery','settings','chains','onboard','help','detail','evidence','view_chain','filter','sort','language','disconnect','stats','horizon','cohort']);
+export const PANEL_NAMES = Object.freeze(['radar','feed','audits','saved','events','status','sources','delivery','settings','chains','onboard','help','detail','evidence','view_chain','filter','sort','language','disconnect','stats','horizon','cohort',...TRADING_PANELS]);
 export const AUDIT_FILTERS = Object.freeze(['all','lead','chain','waiting','passed','ignored','rejected','fresh','favorite']);
 export const AUDIT_SORTS = Object.freeze(['audit_desc','score_desc','market_desc','market_asc','liquidity_desc']);
 export const FEED_SORTS = Object.freeze(['priority','volume']);
 const AVE_KEY_URL = 'https://cloud.ave.ai/login';
-const aveTokenUrl = row => row.aveUrl || null;
 const names = {
   radar:['雷达总览','Radar overview'], feed:['AVE热榜','AVE hot list'], audits:['近30分钟线索与核验','Leads and checks, last 30 min'], saved:['收藏与备注','Favorites and notes'], events:['雷达事件','Radar events'], status:['运行状态','Service status'], sources:['来源详情','Source details'], delivery:['投递问题','Delivery issues'], settings:['设置','Settings'], chains:['选择扫描链','Choose scan chain'], onboard:['连接AVE','Connect AVE'], help:['帮助与密钥安全','Help and key safety'], detail:['代币详情','Token detail'], evidence:['检查证据','Evidence'], view_chain:['查看链','View chain'], filter:['筛选','Filter'], sort:['排序','Order'], language:['语言','Language'], disconnect:['断开连接','Disconnect'], stats:['筛选后表现验证','Post-screen performance'], horizon:['观察窗口','Window'], cohort:['样本组别','Cohort'],
   all:['全部','All'], lead:['市场线索，安全待核验','Market lead; security unverified'], chain:['链上候选，待人工看X','On-chain candidate; review X'], waiting:['等待复查','Waiting for recheck'], passed:['人工通过','Manually approved'], ignored:['已忽略','Ignored'], rejected:['已排除','Rejected'], fresh:['5分钟内审计','Audited within 5 min'], favorite:['收藏','Favorites'], notes:['有备注','With notes'],
   audit_desc:['最新审计','Newest audit'], score_desc:['发现评分','Discovery score'], market_desc:['市值↓','Market cap ↓'], market_asc:['市值↑','Market cap ↑'], liquidity_desc:['流动性↓','Liquidity ↓'], priority:['通过筛选优先','Screen passes first'], volume:['5分钟成交额','5-minute volume'],
-  candidates:['候选事件','Candidates'], risk:['风险变化','Risk changes'], service:['服务事件','Service'], unknown:['未知','Unknown']
+  candidates:['候选事件','Candidates'], risk:['风险变化','Risk changes'], service:['服务事件','Service'], unknown:['未知','Unknown'],
+  ...TRADING_PANEL_NAMES
 };
 const name = (key, locale) => names[key] ? localize(locale, ...names[key]) : safeTelegramText(key, 80);
 const id = row => tokenIdentity(row.chain, row.address);
@@ -154,13 +155,12 @@ function detailPanel(snapshot,session,locale) {
   if (backendDisposition(row) === 'lead') blocks.push(L('市场线索：仅通过AVE行情筛选。GoPlus/DexScreener安全核验结果见“检查证据”；未核验不代表安全。','Market lead: passed the AVE market screen only. GoPlus/DexScreener results are under Evidence; unverified does not mean safe.'));
   blocks.push(`${L('人工标记','Manual mark')}: ${mark?.decision ? name(mark.decision,locale) : L('未标记','None')} · ${L('收藏','Favorite')}: ${truth(annotation?.favorite === true,locale)}`);
   if (annotation?.note) blocks.push(`${L('备注','Note')}: ${userText(annotation.note,140)}${annotation.note.length>140 ? L('…（完整备注见检查证据）','… (full note in Evidence)') : ''}`);
-  blocks.push(L('人工通过不会改变筛选结果或执行交易。','Manual approval does not change screening results or execute trades.'));
+  blocks.push(L('人工通过不会改变筛选结果或执行交易；交易只在你确认报价后执行。','Manual approval does not change screening results or execute trades; a trade runs only after you confirm its quote.'));
   const x = officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter), site = row.info?.website;
   if (!x || !site) blocks.push(L('部分官方链接不可用。','Some official links are unavailable.'));
-  // A vetoed token keeps its evidence but loses the trade link.
-  const trade = row.status === 'HARD_REJECT' ? null : urlButton(L('在AVE交易','Trade on AVE'),aveTokenUrl(row));
-  if (row.status === 'HARD_REJECT') blocks.push(L('安全核验未通过，已隐藏交易入口。','Safety check failed; the trade link is hidden.'));
-  const keyboard = [[urlButton(L('查看X','View X'),x),trade],[urlButton(L('官网','Website'),site)],[button(name('evidence',locale),'panel.open',{panel:'evidence'},identity)]];
+  const trading = tokenTradeControls(snapshot,row,locale,identity);
+  blocks.push(...trading.blocks);
+  const keyboard = [...trading.keyboard,[urlButton(L('查看X','View X'),x)],[urlButton(L('官网','Website'),site)],[button(name('evidence',locale),'panel.open',{panel:'evidence'},identity)]];
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };
   if (mark?.decision) keyboard.push([button(mark.decision === 'passed' ? L('撤销人工通过','Undo approval') : L('取消忽略','Stop ignoring'),'mark.clear',binding,identity)]);
   else if (row.reviewRevision && backendDisposition(row) === 'chain' && row.auditedAt && snapshot.at-row.auditedAt <= 600_000) keyboard.push([button(L('人工通过','Approve manually'),'mark.set_passed',binding,identity)]);
@@ -207,11 +207,11 @@ function eventsPanel(snapshot,session,locale) {
 }
 
 const HELP_COMMANDS = [
-  ['start','雷达总览','Radar overview'],['radar','雷达总览','Radar overview'],['help','帮助与密钥安全','Help and key safety'],['status','运行状态','Service status'],['settings','设置','Settings'],['chains','选择扫描链','Choose scan chain'],['feed','AVE热榜','AVE hot list'],['audits','近30分钟线索与核验','Leads and checks, last 30 min'],['candidates','近30分钟线索与核验','Leads and checks, last 30 min'],['saved','收藏与备注','Favorites and notes'],['events','雷达事件','Radar events'],['stats','筛选后表现','Post-screen performance'],['note','编辑代币备注','Edit a token note'],['export','导出记录','Export records'],['onboard','连接AVE','Connect AVE'],['setkey','提交AVE密钥','Submit AVE key'],['pause','暂停扫描','Pause scanning'],['resume','恢复扫描','Resume scanning'],['disconnect','断开并删除密钥','Disconnect and delete key'],['mute','关闭提醒','Mute alerts'],['unmute','开启提醒','Enable alerts'],['lang','选择语言','Choose language'],['cancel','取消输入','Cancel input']
+  ['start','雷达总览','Radar overview'],['radar','雷达总览','Radar overview'],['help','帮助与密钥安全','Help and key safety'],['status','运行状态','Service status'],['settings','设置','Settings'],['chains','选择扫描链','Choose scan chain'],['feed','AVE热榜','AVE hot list'],['audits','近30分钟线索与核验','Leads and checks, last 30 min'],['candidates','近30分钟线索与核验','Leads and checks, last 30 min'],['saved','收藏与备注','Favorites and notes'],['events','雷达事件','Radar events'],['stats','筛选后表现','Post-screen performance'],['note','编辑代币备注','Edit a token note'],['export','导出记录','Export records'],['onboard','连接AVE','Connect AVE'],['setkey','提交AVE密钥','Submit AVE key'],['pause','暂停扫描','Pause scanning'],['resume','恢复扫描','Resume scanning'],['disconnect','断开并删除密钥','Disconnect and delete key'],['mute','开关提醒','Turn alerts on or off'],['lang','选择语言','Choose language'],['cancel','取消输入','Cancel input'],['wallet','交易钱包','Trading wallet']
 ];
 export function telegramCommandDescriptions(locale='zh') { return HELP_COMMANDS.map(([command,zh,en]) => ({command,description:localize(locale,zh,en)})); }
 export function keySafetyCopy(locale='zh') {
-  return localize(locale,'API Key明文会经过Telegram并可能留在聊天记录中。我们会尝试删除含Key消息，但无法保证删除。请自行检查并删除。服务端只保存加密Key，从不回显。只读，不执行交易。','Your plaintext key passes through Telegram and may remain in chat history. We try to delete the message but cannot guarantee deletion; check and delete it yourself. The service stores the key encrypted and never displays it. Read-only; no trades.');
+  return localize(locale,'API Key明文会经过Telegram并可能留在聊天记录中。我们会尝试删除含Key消息，但无法保证删除。请自行检查并删除。服务端只保存加密Key，从不回显。AVE Key只读，不能交易。','Your plaintext key passes through Telegram and may remain in chat history. We try to delete the message but cannot guarantee deletion; check and delete it yourself. The service stores the key encrypted and never displays it. The AVE key is read-only; it cannot trade.');
 }
 
 function statusPanel(snapshot,session,locale) {
@@ -269,26 +269,27 @@ export function renderPanel(snapshot,session,locale='zh') {
   if(['status','sources','delivery'].includes(session.panel)) return statusPanel(snapshot,session,locale);
   if(session.panel === 'stats') return renderStatisticsPanel(snapshot,session,locale);
   if(session.panel === 'events') return eventsPanel(snapshot,session,locale);
+  if(TRADING_PANELS.includes(session.panel)) return renderTradingPanel(snapshot,session,locale);
   let blocks=[],keyboard=[];
   if(session.panel === 'radar') {
     if(!control.configured && !snapshot.candidates.length) {
-      blocks=[L('连接 AVE 后开始扫描。只读研究，不执行交易。','Connect AVE to start scanning. Read-only research; no trading.')];
+      blocks=[L('连接 AVE 后开始扫描。AVE仅用于只读研究；交易使用独立的热钱包（/wallet），每笔需你确认。','Connect AVE to start scanning. AVE is used for read-only research; trading uses a separate hot wallet (/wallet) and needs your confirmation for each trade.')];
       keyboard=[[open('onboard',locale)],[open('language',locale),open('help',locale)],[open('saved',locale),open('status',locale)]];
     } else {
       const recent=snapshot.candidates.filter(row=>row.chain === session.viewChain && row.auditedAt>=snapshot.at-1_800_000),metrics=snapshot.metrics || {},queue=snapshot.queue.filter(row=>row.chain === session.viewChain);
-      blocks=[chainLabel(session.viewChain),`${control.paused ? L('扫描已暂停','Scanning paused') : L('扫描运行中','Scanning running')} · ${control.configured ? L('AVE已连接','AVE connected') : L('AVE未连接，显示历史数据','AVE disconnected; historical data')} · ${control.notifications ? L('提醒已开启','Alerts on') : L('提醒已关闭','Alerts off')}`,`${L('累计成功扫描','Successful scans')}: ${numberText(metrics.scanCount,locale)}`,`${L('本轮发现/初筛通过','Cycle discovered/prefilter passed')}: ${numberText(metrics.discoveredCount,locale)}/${numberText(metrics.prequalifiedCount,locale)}`,`${L('近30分钟线索/已否决','Last 30m leads/vetoed')}: ${recent.filter(row=>backendDisposition(row)==='lead').length}/${recent.filter(row=>row.status==='HARD_REJECT').length}`,`${L('队列/到期','Queue/due')}: ${queue.length}/${queue.filter(row=>row.nextAuditAt!==null && row.nextAuditAt<=snapshot.at).length}`,L('只读研究，不执行交易。','Read-only research; no trading.')];
+      blocks=[chainLabel(session.viewChain),`${control.paused ? L('扫描已暂停','Scanning paused') : L('扫描运行中','Scanning running')} · ${control.configured ? L('AVE已连接','AVE connected') : L('AVE未连接，显示历史数据','AVE disconnected; historical data')} · ${control.notifications ? L('提醒已开启','Alerts on') : L('提醒已关闭','Alerts off')}`,`${L('累计成功扫描','Successful scans')}: ${numberText(metrics.scanCount,locale)}`,`${L('本轮发现/初筛通过','Cycle discovered/prefilter passed')}: ${numberText(metrics.discoveredCount,locale)}/${numberText(metrics.prequalifiedCount,locale)}`,`${L('近30分钟线索/已否决','Last 30m leads/vetoed')}: ${recent.filter(row=>backendDisposition(row)==='lead').length}/${recent.filter(row=>row.status==='HARD_REJECT').length}`,`${L('队列/到期','Queue/due')}: ${queue.length}/${queue.filter(row=>row.nextAuditAt!==null && row.nextAuditAt<=snapshot.at).length}`,L('研究雷达；交易需在代币详情中确认报价（/wallet）。','Research radar; trades run only after you confirm a quote on a token detail (/wallet).')];
       keyboard=[[open('feed',locale),open('audits',locale)],[open('stats',locale),open('saved',locale)],[open('events',locale),open('status',locale)],[open('view_chain',locale),open('settings',locale)]];
     }
   } else if(session.panel === 'settings') {
     blocks=[`${L('扫描链','Scan chain')}: ${chainLabel(control.scanChain)}`,control.configured ? L('AVE已连接','AVE connected') : L('尚未连接AVE','AVE not connected'),`${L('扫描','Scanning')}: ${control.paused ? L('已暂停','Paused') : L('运行中','Running')}`,`${L('提醒','Alerts')}: ${control.notifications ? L('已开启','On') : L('已关闭','Off')}`,`${L('语言','Language')}: ${locale==='en' ? 'English' : '中文'}`];
-    keyboard=[[open('chains',locale),open('onboard',locale)],[button(control.paused ? L('恢复扫描','Resume scanning') : L('暂停扫描','Pause scanning'),control.paused ? 'scan.resume' : 'scan.pause'),button(control.notifications ? L('关闭提醒','Mute alerts') : L('开启提醒','Enable alerts'),'notifications.set',{value:!control.notifications})],[open('language',locale),button(L('导出记录','Export records'),'export.create')],[open('status',locale),home(locale)]];
+    keyboard=[[open('chains',locale),open('onboard',locale)],[button(control.paused ? L('恢复扫描','Resume scanning') : L('暂停扫描','Pause scanning'),control.paused ? 'scan.resume' : 'scan.pause'),button(control.notifications ? L('关闭提醒','Mute alerts') : L('开启提醒','Enable alerts'),'notifications.set',{value:!control.notifications})],[open('language',locale),button(L('导出记录','Export records'),'export.create')],[open('wallet',locale),open('trade_settings',locale)],[open('status',locale),home(locale)]];
     if(control.configured) keyboard.push([open('disconnect',locale)]);
   } else if(session.panel === 'chains') {
     blocks=[L('一次扫描一条链。切换后旧链的研究记录保留，扫描立即转到新链。','One chain is scanned at a time. Switching keeps the old chain\'s records and moves scanning to the new chain.')];
     keyboard=SCAN_CHAINS.map(value=>[button(`${control.scanChain===value?'✓ ':''}${chainLabel(value)}`,'chains.set',{value})]);
     keyboard.push([back(locale)]);
   } else if(session.panel === 'disconnect') {
-    blocks=[L('停止扫描，删除AVE API密钥；保留研究记录。','Stop scanning and delete the AVE API key; research records stay.')];
+    blocks=[L('停止扫描，删除AVE API密钥；保留研究记录。交易钱包不受影响（在 /wallet 中移除）。','Stop scanning and delete the AVE API key; research records stay. The trading wallet is not affected (remove it under /wallet).')];
     keyboard=[[button(L('断开并删除密钥','Disconnect and delete key'),'connection.disconnect')],[back(locale)]];
   } else if(session.panel === 'onboard') {
     blocks.push(control.configured ? L('AVE已连接；提交新密钥验证通过前，原连接保持不变。','AVE connected; the current connection stays until a new key passes verification.') : L('尚未连接AVE。','AVE is not connected.'));
@@ -298,7 +299,7 @@ export function renderPanel(snapshot,session,locale='zh') {
     if(control.configured) keyboard.push([home(locale),open('chains',locale)],[open('feed',locale),!control.notifications?button(L('开启提醒','Enable alerts'),'notifications.set',{value:true}):null]);
     keyboard.push([open('status',locale),open('settings',locale)]);
   } else if(session.panel === 'help') {
-    const pages=[HELP_COMMANDS.slice(0,12).map(([command,zh,en])=>`/${command} — ${L(zh,en)}`),HELP_COMMANDS.slice(12).map(([command,zh,en])=>`/${command} — ${L(zh,en)}`),[L('只读研究，不执行交易；非投资建议。','Read-only research; no trades. Not investment advice.'),keySafetyCopy(locale),L('/chains 选择扫描链；查看链不改变扫描。/lang [zh|en] 设置语言。/note <简称或CA> 编辑备注；/cancel 取消输入。','/chains picks the scan chain; viewing a chain does not change it. /lang [zh|en] sets language. /note <symbol or CA> edits a note; /cancel cancels input.'),L('线索仅通过AVE行情筛选，不代表安全；交易请在AVE页面自行确认。暂停扫描和关闭提醒是独立控制。历史消息不是实时状态，请刷新。','Leads passed the AVE market screen only and are not proven safe; confirm any trade yourself on AVE. Pause and mute are independent controls. Historical messages are not live state; refresh them.')]];
+    const pages=[HELP_COMMANDS.slice(0,12).map(([command,zh,en])=>`/${command} — ${L(zh,en)}`),HELP_COMMANDS.slice(12).map(([command,zh,en])=>`/${command} — ${L(zh,en)}`),[L('AVE只读研究；交易仅通过 /wallet 的热钱包，每笔需确认报价；非投资建议。','AVE research is read-only; trading uses only the /wallet hot wallet and needs each quote confirmed. Not investment advice.'),keySafetyCopy(locale),L('/chains 选择扫描链；查看链不改变扫描。/lang [zh|en] 设置语言。/note <简称或CA> 编辑备注；/cancel 取消输入。','/chains picks the scan chain; viewing a chain does not change it. /lang [zh|en] sets language. /note <symbol or CA> edits a note; /cancel cancels input.'),L('线索仅通过AVE行情筛选，不代表安全；交易前请自行核查。安全核验否决的代币禁止买入，仍可卖出。暂停扫描和关闭提醒是独立控制。历史消息不是实时状态，请刷新。','Leads passed the AVE market screen only and are not proven safe; check before any trade. Tokens vetoed by the safety check cannot be bought but can still be sold. Pause and mute are independent controls. Historical messages are not live state; refresh them.')]];
     const paging=pagination(pages.length,query.page,1,locale);blocks=pages[paging.page];keyboard=[paging.keyboard,[open('onboard',locale),home(locale)]];
   }
   return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale);

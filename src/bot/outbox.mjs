@@ -6,16 +6,20 @@ const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const messageKey = (row, payload) => payload.params.message_id == null ? null : `${row.chat_id}:${payload.params.message_id}`;
 const LOGGED_KINDS = new Set(['unknown', 'retryable', 'permanent', 'deleted']);
 const success = id => ({ status: 'success', checkpoint: `outbox:${id}`, complete: true });
+// A secret message is stored encrypted and never resent after an ambiguous send.
+const retriesAmbiguous = (row, payload) => row.ambiguous_retries < 1 && payload.purpose !== 'secret';
 
 /** Tenant-local durable delivery. Call enqueueInTransaction inside the business transaction. */
 export class TelegramOutbox {
-  constructor({ storage, tenantId, transport, now = Date.now, eligible = () => true, onConfirmedInTransaction = () => {} }) {
+  // reveal(params) runs inside the send and may decrypt a secret for that one request; null refuses it.
+  constructor({ storage, tenantId, transport, now = Date.now, eligible = () => true, onConfirmedInTransaction = () => {}, reveal = async params => params }) {
     this.storage = storage;
     this.tenantId = tenantId;
     this.transport = transport;
     this.now = now;
     this.eligible = eligible;
     this.onConfirmedInTransaction = onConfirmedInTransaction;
+    this.reveal = reveal;
   }
 
   rows() { return this.storage.sql.exec('SELECT rowid AS sequence, * FROM outbox WHERE tenant_id = ? ORDER BY rowid', this.tenantId).toArray(); }
@@ -129,7 +133,7 @@ export class TelegramOutbox {
     const entries = this.entries(this.activeRows());
     const blocking = this.blockingIndex(entries);
     return entries.filter(entry => entry.payload
-      && (entry.row.status === 'PENDING' || (entry.row.status === 'UNKNOWN' && entry.row.ambiguous_retries < 1 && this.valid(entry.row, entry.payload)))
+      && (entry.row.status === 'PENDING' || (entry.row.status === 'UNKNOWN' && retriesAmbiguous(entry.row, entry.payload) && this.valid(entry.row, entry.payload)))
       && !this.blocked(entry, blocking))
       .map(({ row }) => createTaskDescriptor({ id: `outbox:${row.id}`, kind: 'outbox', dueAt: row.next_at ?? this.now(), enabled: true, aveCost: 0 }));
   }
@@ -154,7 +158,7 @@ export class TelegramOutbox {
       if (!row || !['PENDING', 'UNKNOWN'].includes(row.status) || (row.next_at ?? 0) > this.now()) return null;
       const payload = entry.payload;
       if (!payload) { this.update(row, 'FAILED'); return null; }
-      if (row.status === 'UNKNOWN' && row.ambiguous_retries >= 1) return null;
+      if (row.status === 'UNKNOWN' && !retriesAmbiguous(row, payload)) return null;
       if (!this.valid(row, payload)) { if (row.status !== 'UNKNOWN') this.cancel(row, payload); return null; }
       if (this.blocked(entry, this.blockingIndex(entries))) return null;
       const ambiguous = row.ambiguous_retries + (row.status === 'UNKNOWN' ? 1 : 0);
@@ -164,7 +168,12 @@ export class TelegramOutbox {
     if (!claim) return success(id);
     const { row, payload } = claim;
     let result;
-    try { result = await request(({ signal }) => this.transport({ method: payload.method, params: structuredClone(payload.params), signal })); }
+    try {
+      result = await request(async ({ signal }) => {
+        const params = await this.reveal(structuredClone(payload.params));
+        return params === null ? { ok: false, kind: 'permanent', code: 'SECRET_UNAVAILABLE' } : this.transport({ method: payload.method, params, signal });
+      });
+    }
     catch (error) {
       if (error?.code !== 'SCHEDULER_REQUEST_TIMEOUT' && !(error instanceof TypeError) && error?.name !== 'AbortError') throw error;
       result = { ok: false, kind: 'unknown', code: error?.code === 'SCHEDULER_REQUEST_TIMEOUT' ? 'SCHEDULER_REQUEST_TIMEOUT' : 'TELEGRAM_TRANSPORT_UNCERTAIN' };
@@ -195,6 +204,28 @@ export class TelegramOutbox {
       }
     });
     return success(id);
+  }
+
+  /** Drop the encrypted secret from every secret row that can no longer be sent. */
+  scrubSecretsInTransaction() {
+    const rows = this.storage.sql.exec("SELECT id FROM outbox WHERE tenant_id = ? AND substr(id,1,14) = 'wallet-export:' AND status NOT IN ('PENDING','SENDING') AND instr(payload_json, '\"secret\":\"') > 0", this.tenantId).toArray();
+    for (const row of rows) this.forgetSecretInTransaction(row.id);
+  }
+
+  forgetSecretInTransaction(id) {
+    const row = this.storage.sql.exec('SELECT payload_json FROM outbox WHERE tenant_id = ? AND id = ?', this.tenantId, id).toArray()[0];
+    const payload = row ? JSON.parse(row.payload_json) : null;
+    if (payload?.purpose !== 'secret' || payload.params?.secret == null) return;
+    this.storage.sql.exec('UPDATE outbox SET payload_json = ? WHERE tenant_id = ? AND id = ?', JSON.stringify({ ...payload, params: { ...payload.params, secret: null } }), this.tenantId, id);
+  }
+
+  /** Cancel secret messages not yet sent (for example after their key was removed). */
+  cancelPendingSecretsInTransaction() {
+    for (const row of this.activeRows()) {
+      const payload = this.payload(row);
+      if (row.status === 'PENDING' && payload?.purpose === 'secret') this.cancel(row, payload);
+    }
+    this.scrubSecretsInTransaction();
   }
 
   issues() {

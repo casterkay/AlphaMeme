@@ -269,6 +269,7 @@ export class RadarAgent extends DurableObject {
           return outbox.deliverOne(task.id.slice('outbox:'.length), { request });
         }),
         credential: this.#credentialVerificationHandler(store),
+        trade: externalRequestHandler(({ task, request }) => this.#telegram(store.tenantId).trading.runStep(task.id, { request, fetchImpl: globalThis.fetch })),
         scan: this.#recoverableScanHandler(store),
         ...this.#schedulerHandlers
       },

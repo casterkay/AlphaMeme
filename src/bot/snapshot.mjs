@@ -49,7 +49,6 @@ export function projectTelegramCandidate(source) {
   row.address = safeTelegramText(source.address, 80);
   row.symbol = safeTelegramText(source.symbol, 30) || '?';
   row.name = safeTelegramText(source.name, 80);
-  row.aveUrl = safeTelegramUrl(source.aveUrl);
   row.info.website = safeTelegramUrl(source.info?.website);
   row.status = template.status;
   row.deep.chainPass = template.deep.chainPass;
@@ -86,7 +85,7 @@ export function projectTelegramFeedRow(source, chain) {
     chain, address: safeTelegramText(source.address,80), symbol:safeTelegramText(source.symbol,30), name:safeTelegramText(source.name,80),
     ...Object.fromEntries(numbers.map(key => [key, typeof source[key] === 'number' && Number.isFinite(source[key]) ? source[key] : null])),
     ageBasis: safeTelegramText(source.ageBasis,16), priorityBand:source.priorityBand === true, pass:source.pass === true,
-    reasons:(source.reasons || []).slice(0,3).map(value => safeTelegramText(value,120)), aveUrl:safeTelegramUrl(source.aveUrl)
+    reasons:(source.reasons || []).slice(0,3).map(value => safeTelegramText(value,120))
   };
 }
 
@@ -132,7 +131,7 @@ export function readTelegramSnapshot(storage, tenant, now = Date.now()) {
     const delivery = storage.sql.exec("SELECT status,delivery_class,action_reason,next_at FROM outbox WHERE tenant_id = ? AND status IN ('UNKNOWN','FAILED') ORDER BY rowid", tenantId).toArray().map(row => ({ status: row.status, purpose: safeTelegramText(row.delivery_class, 32), reason: safeTelegramText(row.action_reason, 80), nextAt: row.next_at }));
     const global = state['runtime.global'] || {};
     const metrics = Object.fromEntries(['scanCount', 'discoveredCount', 'prequalifiedCount', 'lastAttemptAt', 'lastSuccessAt', 'nextCycleAt'].map(key => [key, typeof global[key] === 'number' ? global[key] : null]));
-    const control = { ...scheduler.runtime.eligibility, ...scheduler.runtime.control, scanChain: scheduler.runtime.control.activeChain ?? DEFAULT_SCAN_CHAIN, notifications: preferences['telegram.notifications'] === true };
+    const control = { ...scheduler.runtime.eligibility, ...scheduler.runtime.control, scanChain: scheduler.runtime.control.activeChain ?? DEFAULT_SCAN_CHAIN, notifications: preferences['telegram.notifications'] !== false };
     return {
       at: now, language: preferences['telegram.language'] === 'en' ? 'en' : 'zh', control,
       candidates, annotations, marks, events, queue, delivery, metrics,

@@ -644,7 +644,7 @@ export class SqliteRecoverableScannerStore {
       info: parseJson(row.info_json, 'candidate info'), reviewEvidence: row.review_evidence, reviewRevision: row.review_revision,
       priorityBand: row.priority_band === 1, discoveryScore: row.discovery_score, marketCap: row.market_cap, liquidity: row.liquidity,
       price: row.price, createdAt: row.created_at, ageSec: row.age_sec, holders: row.holders, volume1h: row.volume_1h,
-      buys: row.buys, sells: row.sells, twitter: row.twitter, aveUrl: row.ave_url, auditedAt: row.audited_at, staleAt: row.stale_at,
+      buys: row.buys, sells: row.sells, twitter: row.twitter, auditedAt: row.audited_at, staleAt: row.stale_at,
       decisionReason: row.decision_reason, auditError: row.audit_error, deep: parseJson(row.deep_json, 'candidate deep state'),
       secondary: JSON.parse(row.secondary_json), social: parseJson(row.social_json, 'candidate social state'),
       auditHealth: parseJson(row.audit_health_json, 'candidate audit health'), metadata: parseJson(row.metadata_json, 'candidate metadata')
@@ -734,20 +734,20 @@ export class SqliteRecoverableScannerStore {
            decision_reason = excluded.decision_reason, audit_error = excluded.audit_error, deep_json = excluded.deep_json,
            secondary_json = excluded.secondary_json, audit_health_json = excluded.audit_health_json`;
     this.storage.sql.exec(
-      `INSERT INTO candidates (tenant_id, chain, address, symbol, name, info_json, review_evidence, status, priority_band, discovery_score, market_cap, liquidity, price, created_at, age_sec, holders, volume_1h, buys, sells, twitter, ave_url, audited_at, stale_at, review_revision, decision_reason, audit_error, deep_json, secondary_json, social_json, audit_health_json, metadata_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO candidates (tenant_id, chain, address, symbol, name, info_json, review_evidence, status, priority_band, discovery_score, market_cap, liquidity, price, created_at, age_sec, holders, volume_1h, buys, sells, twitter, audited_at, stale_at, review_revision, decision_reason, audit_error, deep_json, secondary_json, social_json, audit_health_json, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(tenant_id, chain, address) DO UPDATE SET
          symbol = excluded.symbol, name = excluded.name, info_json = excluded.info_json, status = excluded.status,
          priority_band = excluded.priority_band, discovery_score = excluded.discovery_score,
          market_cap = excluded.market_cap, liquidity = excluded.liquidity, price = excluded.price, created_at = excluded.created_at,
          age_sec = excluded.age_sec, holders = excluded.holders, volume_1h = excluded.volume_1h, buys = excluded.buys,
-         sells = excluded.sells, twitter = excluded.twitter, ave_url = excluded.ave_url, audited_at = excluded.audited_at,
+         sells = excluded.sells, twitter = excluded.twitter, audited_at = excluded.audited_at,
          stale_at = excluded.stale_at, social_json = excluded.social_json, metadata_json = excluded.metadata_json${evidenceUpdate}`,
       candidate.tenantId, candidate.chain, candidate.address, stringOrNull(candidate.symbol), stringOrNull(candidate.name),
       JSON.stringify(candidate.info || {}), stringOrNull(candidate.reviewEvidence), candidate.status, candidate.priorityBand ? 1 : 0,
       numberOrNull(candidate.discoveryScore), numberOrNull(candidate.marketCap), numberOrNull(candidate.liquidity), numberOrNull(candidate.price),
       integerOrNull(candidate.createdAt), numberOrNull(candidate.ageSec), integerOrNull(candidate.holders), numberOrNull(candidate.volume1h),
-      integerOrNull(candidate.buys), integerOrNull(candidate.sells), stringOrNull(candidate.twitter), stringOrNull(candidate.aveUrl),
+      integerOrNull(candidate.buys), integerOrNull(candidate.sells), stringOrNull(candidate.twitter),
       integerOrNull(candidate.auditedAt), integerOrNull(candidate.staleAt), stringOrNull(candidate.reviewRevision),
       stringOrNull(candidate.decisionReason), stringOrNull(candidate.auditError), JSON.stringify(candidate.deep || {}),
       JSON.stringify(candidate.secondary || null), JSON.stringify(candidate.social || {}), JSON.stringify(candidate.auditHealth || {}),

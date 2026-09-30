@@ -166,7 +166,6 @@ test('a fresh AVE trending row that passes the screen becomes a lead with an eve
   assert.equal(lead.staleAt, NOW + scannerSettings.liveLeadRetentionMs);
   assert.equal(lead.metadata.qualifiedAt, NOW);
   assert.equal(lead.secondary, null);
-  assert.equal(lead.aveUrl, `https://pro.ave.ai/token/${A}-bsc?ref=0001`);
   assert.deepEqual(radarFixture.events().map(({ type, address: token }) => ({ type, token })), [{ type: 'CANDIDATE_NEW', token: A }]);
   assert.equal(JSON.parse(radarFixture.events()[0].data_json).reviewRevision, lead.reviewRevision);
   const outcome = radarFixture.outcome(A);

@@ -1,5 +1,6 @@
 import { activateAveKey, releaseAveKey } from '../ave-admission.mjs';
 import { isScanChain } from '../chains.mjs';
+import { CONNECTION_KEY_NAMES } from '../auth/connection.mjs';
 import {
   readSchedulerStateInTransaction,
   writeSchedulerStateInTransaction
@@ -192,7 +193,8 @@ export class SqliteControlStateStore {
       const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
       const next = mutator(state);
       if (effects.deleteKeys) {
-        this.storage.sql.exec('DELETE FROM keys WHERE tenant_id = ?', this.tenantId);
+        // Disconnecting AVE deletes only AVE keys; the trading wallet is removed only under /wallet.
+        this.storage.sql.exec('DELETE FROM keys WHERE tenant_id = ? AND name IN (?, ?)', this.tenantId, CONNECTION_KEY_NAMES.ACTIVE_KEY_NAME, CONNECTION_KEY_NAMES.PENDING_KEY_NAME);
       }
       if (effects.discardCheckpoints) {
         this.storage.sql.exec('DELETE FROM cycle_checkpoint WHERE tenant_id = ?', this.tenantId);

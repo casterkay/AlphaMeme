@@ -21,7 +21,7 @@ export class NotificationPolicy {
   controls() {
     const preferences = Object.fromEntries(this.query('SELECT key,value_json FROM preferences WHERE tenant_id=?').map(row => [row.key, decode(row.value_json)]));
     const scanChain = readSchedulerStateInTransaction(this.storage, this.tenantId).runtime.control.activeChain ?? DEFAULT_SCAN_CHAIN;
-    return { enabled: preferences['telegram.notifications'] === true, chains: [scanChain] };
+    return { enabled: preferences['telegram.notifications'] !== false, chains: [scanChain] };
   }
   candidates() {
     const excluded = new Set(this.query('SELECT chain,address FROM risk_exclusions WHERE tenant_id=?').map(voiceKey));

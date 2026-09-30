@@ -4,7 +4,7 @@ import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } fro
 const INPUT_TTL = 15 * 60_000;
 const TOMBSTONE_TTL = 7 * 24 * 60 * 60_000;
 const TERMINAL = new Set(['DONE', 'FAILED', 'CANCELLED']);
-const CONTROLS = new Set(['pause', 'resume', 'disconnect', 'chains', 'feed', 'mute', 'unmute']);
+const CONTROLS = new Set(['pause', 'resume', 'disconnect', 'chains', 'feed', 'mute']);
 const CREDENTIALS = new Set(['onboard', 'setkey', 'disconnect']);
 
 /** A durable command log. Call transaction methods only inside storage.transactionSync. */
