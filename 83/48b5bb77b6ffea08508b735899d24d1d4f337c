@@ -1,0 +1,33 @@
+src/render/telegram.mjs
+  s_6295713717bc33::t_6c4e124f90d933 12,46-48
+  s_6295713717bc33::t_421d5f5463a5fc 49-50
+src/bot/commands.mjs
+  s_6295713717bc33::t_6c4e124f90d933 16,226-230
+src/bot/panels.mjs
+  s_6295713717bc33::t_6c4e124f90d933 5,133
+test/telegram-format.test.mjs
+  s_6295713717bc33::t_951fecfbb46e2f 29-31
+workers/trading.runtime.mjs
+  s_6295713717bc33::t_951fecfbb46e2f 462-481
+test/trading-panels.test.mjs
+  s_6295713717bc33::t_951fecfbb46e2f 64-73
+test/telegram-panels.test.mjs
+  s_6295713717bc33::t_951fecfbb46e2f 28-30,43
+  s_6295713717bc33::t_4b3494fdb08820 174-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8348b5bb77b6ffea08508b735899d24d1d4f337c",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
