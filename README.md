@@ -109,7 +109,7 @@ If you deployed the GMGN version, delete it first; the schema moved to v2 withou
 
 1. `/start`，然后 `/onboard`：登录 [AVE Cloud](https://cloud.ave.ai/login) 复制 Data API Key。
 2. 发送 `/setkey <key>`：验证读取一次（5 个额度）后开始扫描 Arc。含密钥的消息会尝试删除，请自行确认已删除。
-3. `/unmute` 开启线索提醒；`/chains` 切换扫描链；`/feed` 查看热榜；`/audits` 查看线索与核验；`/status` 查看运行与额度。
+3. 线索提醒默认开启，`/mute` 可关闭或重新开启；`/chains` 切换扫描链；`/feed` 查看热榜；`/audits` 查看线索与核验；`/status` 查看运行与额度。
 4. 可选：`/wallet` 创建交易钱包并充值，然后在代币详情中买卖。
 
 `/help` 列出全部命令。运维细节见 [docs/TELEGRAM-M3-OPERATIONS.md](docs/TELEGRAM-M3-OPERATIONS.md)。

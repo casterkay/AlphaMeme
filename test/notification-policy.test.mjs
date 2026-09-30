@@ -39,6 +39,14 @@ test('initial baseline stays quiet; newly eligible promotion produces one immuta
   assert.equal(f.policy.reconcileInTransaction().notifications.length,0,'continuous qualification is quiet beyond 24h');
 });
 
+test('alerts are on until the tenant explicitly turns them off', () => {
+  const f = fixture();
+  f.sql("DELETE FROM preferences WHERE tenant_id='123' AND key='telegram.notifications'");
+  assert.equal(f.policy.controls().enabled, true);
+  f.pref('telegram.notifications', false);
+  assert.equal(f.policy.controls().enabled, false);
+});
+
 test('routine changes, samples, ordinary rejects and recoverable issues never notify', () => {
   const f = fixture(); f.policy.baselineInTransaction(); f.advance(1);
   for (const type of ['LIVE_CHANGED','SAMPLE_COMPLETE','HARD_REJECT','SCAN_SUMMARY','DEGRADED','RATE_LIMITED']) f.event(type,type,'a');

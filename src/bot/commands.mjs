@@ -10,7 +10,7 @@ import { saveTradingWalletInTransaction, removeTradingWalletInTransaction, tradi
 
 const ROOTS = new Set(['start','radar','help','status','settings','chains','feed','audits','candidates','saved','events','stats','onboard','wallet']);
 const CONCRETE_CHAIN_PANELS = new Set(['radar','feed','audits','stats']);
-const CONTROL = new Set(['pause','resume','disconnect','mute','unmute']);
+const CONTROL = new Set(['pause','resume','disconnect','mute']);
 const text = (lang, zh, en) => lang === 'en' ? en : zh;
 const INPUT_KINDS = new Set(['search','note','note_target','trade_usd','trade_percent']);
 const REFUSALS = {
@@ -82,11 +82,14 @@ export class TelegramCommands {
     if (command === 'pause') this.controls.pause();
     else if (command === 'resume') this.controls.resume();
     else if (command === 'disconnect') this.controls.disconnect();
-    else if (command === 'mute' || command === 'unmute') {
-      this.setPreference('notifications', command === 'unmute');
-      this.setPreference('notificationsVersion', this.preference('notificationsVersion', 0) + 1);
-      this.controls.resetNotificationBaseline?.();
-    }
+    // /mute toggles alerts, which are on until a tenant turns them off.
+    else if (command === 'mute') this.setNotifications(this.preference('notifications', true) === false);
+  }
+
+  setNotifications(enabled) {
+    this.setPreference('notifications', enabled);
+    this.setPreference('notificationsVersion', this.preference('notificationsVersion', 0) + 1);
+    this.controls.resetNotificationBaseline?.();
   }
 
   processInTransaction(row, prepared = null) {
@@ -183,7 +186,7 @@ export class TelegramCommands {
     else if (['mark.set_passed','mark.set_ignored','mark.clear'].includes(action)) setManualMarkInTransaction(this.storage, this.tenantId, { token, decision: action === 'mark.clear' ? null : action === 'mark.set_passed' ? 'passed' : 'ignored', expectedMarkVersion: binding.expectedMarkVersion, reviewRevision: binding.reviewRevision }, this.now());
     else if (action === 'favorite.set' || action === 'note.clear') annotateInTransaction(this.storage, this.tenantId, { token, field: action === 'favorite.set' ? 'favorite' : 'note', value: action === 'favorite.set' ? params.value : '', expectedVersion: params.expectedAnnotationVersion }, this.now());
     else if (action === 'scan.pause' || action === 'scan.resume') this.applyControl(action.split('.')[1]);
-    else if (action === 'notifications.set') { if (typeof params.value !== 'boolean') throw new ReviewConflict('invalid_notifications'); this.applyControl(params.value ? 'unmute' : 'mute'); }
+    else if (action === 'notifications.set') { if (typeof params.value !== 'boolean') throw new ReviewConflict('invalid_notifications'); this.setNotifications(params.value); }
     else if (action === 'delivery.acknowledge') this.outbox.acknowledgeIssuesInTransaction();
     else if (action === 'connection.disconnect') { this.applyControl('disconnect'); changes = { panel: 'settings', query: {} }; }
     else if (action === 'language.set') { if (!['zh','en'].includes(params.value)) throw new ReviewConflict('invalid_language'); this.setPreference('language', params.value); changes = { panel: 'settings', query: {} }; }
