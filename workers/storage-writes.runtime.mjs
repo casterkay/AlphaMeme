@@ -6,13 +6,14 @@ const HOT_LIST_SIZE = 100;
 const PASSING = 10;
 const WARM_UP_CYCLES = 6;
 const MEASURED_CYCLES = 20;
-// A steady-state cycle over this hot list wrote 154 rows while unchanged
-// scheduler, notification and audit-queue rows were rewritten, and writes 54
-// once they are skipped: ~44 fixed rows (scheduler lease and alarm state, the
-// cycle checkpoint, AVE admission, feed and health snapshots) plus one
+// Cloudflare bills each SQL row written and each setAlarm() call. A steady-state
+// cycle over this hot list billed 159 rows while unchanged scheduler,
+// notification and audit-queue rows were rewritten, and bills 59 once they are
+// skipped: 34 fixed SQL rows (scheduler lease and alarm state, the cycle
+// checkpoint, AVE admission, feed and health snapshots), 5 alarms, and one
 // refreshed lead and one refreshed queue row per passing token. Restoring any
 // one of those rewrites costs at least 20 rows a cycle, so this bound bites.
-const MAX_ROWS_PER_CYCLE = 60;
+const MAX_ROWS_PER_CYCLE = 65;
 
 function jsonResponse(value, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
@@ -28,11 +29,12 @@ function hotList() {
   }));
 }
 
-/** Counts rows written per statement (and per scheduler_state key) while enabled. */
-function rowsWrittenMeter(sql) {
-  const exec = sql.exec;
+/** Counts billed rows per statement (and per scheduler_state key), plus one per setAlarm(), while enabled. */
+function rowsWrittenMeter(storage) {
+  const { sql } = storage, exec = sql.exec, setAlarm = storage.setAlarm;
   const cursors = [];
-  let enabled = false;
+  let enabled = false, alarms = 0;
+  storage.setAlarm = function (...args) { if (enabled) alarms += 1; return setAlarm.apply(this, args); };
   sql.exec = function (query, ...args) {
     const cursor = exec.call(this, query, ...args);
     if (enabled) {
@@ -46,8 +48,8 @@ function rowsWrittenMeter(sql) {
     breakdown: () => cursors.reduce((totals, { label, cursor }) => {
       if (cursor.rowsWritten) totals[label] = (totals[label] || 0) + cursor.rowsWritten;
       return totals;
-    }, {}),
-    restore: () => { sql.exec = exec; }
+    }, alarms ? { setAlarm: alarms } : {}),
+    restore: () => { sql.exec = exec; storage.setAlarm = setAlarm; }
   };
 }
 
@@ -68,7 +70,7 @@ describe('Durable Object storage writes', () => {
 
     try {
       await runInDurableObject(radar, async (instance, state) => {
-        const meter = rowsWrittenMeter(state.storage.sql);
+        const meter = rowsWrittenMeter(state.storage);
         try {
           const now = Date.now();
           await instance.receiveTelegramCredential({
@@ -98,6 +100,7 @@ describe('Durable Object storage writes', () => {
           await runCycles(MEASURED_CYCLES, true);
           const breakdown = meter.breakdown();
           const rowsPerCycle = Object.values(breakdown).reduce((sum, rows) => sum + rows, 0) / MEASURED_CYCLES;
+          expect(breakdown.setAlarm, 'setAlarm is billed and must be metered').toBeGreaterThan(0);
           expect(rowsPerCycle, JSON.stringify(breakdown)).toBeLessThanOrEqual(MAX_ROWS_PER_CYCLE);
         } finally {
           meter.restore();
