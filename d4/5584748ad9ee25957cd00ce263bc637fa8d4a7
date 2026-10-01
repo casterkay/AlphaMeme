@@ -1,0 +1,27 @@
+docs/TELEGRAM-UX-PLAN.md
+  s_6295713717bc33::t_da6c3f760f9b44 247-250
+src/bot/alerts.mjs
+  s_6295713717bc33::t_24018e50894dbf 1,20-21,25,27
+src/bot/runtime.mjs
+  s_6295713717bc33::t_7d4b3a0a883c62 2-3,300,308
+test/telegram-alerts.test.mjs
+  s_6295713717bc33::t_96133339b9dca8 3-4,8,41-43,47-61,78
+workers/telegram-e2e.runtime.mjs
+  s_6295713717bc33::t_6c2de125df7c4a 257-258,261-264,268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d45584748ad9ee25957cd00ce263bc637fa8d4a7",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
