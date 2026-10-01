@@ -7,7 +7,7 @@ import { TradeRefusal } from '../trading/engine.mjs';
 import { TRADING_SETTINGS } from '../trading/config.mjs';
 import { parseUsdCents, parsePercent } from '../trading/amounts.mjs';
 import { saveTradingWalletInTransaction, removeTradingWalletInTransaction, tradingWalletEnvelope, readTradingWallet } from '../trading/wallet.mjs';
-import { button, ICONS } from '../render/telegram.mjs';
+import { button, chainLabel, ICONS } from '../render/telegram.mjs';
 
 // Typed commands that open a panel. Retired slugs are deliberately absent: an
 // unknown command opens Help, which lists the current names.
@@ -57,6 +57,11 @@ export class TelegramCommands {
   renderInTransaction(session, { deliveryClass = 'USER_RESPONSE' } = {}) {
     const snapshot = this.snapshot(this.storage, this.tenantId, this.now());
     const rendered = renderPanel(snapshot, session, this.language);
+    // A notice is shown by exactly one render.
+    if (session.query.notice !== undefined) {
+      const { notice, ...query } = session.query;
+      this.sessions.saveInTransaction({ ...session, query });
+    }
     const control = this.controls.snapshot();
     const keyboard = session.expiresAt > this.now() ? this.sessions.bindKeyboardInTransaction(session, rendered.keyboard, control) : [];
     const token = rendered.token ?? (['detail','evidence'].includes(session.panel) ? session.query.selectedToken : null);
@@ -74,7 +79,6 @@ export class TelegramCommands {
       return true;
     }
     if (row.command_type === 'callback') {
-
       const payload = JSON.parse(row.payload_json);
       const link = this.storage.sql.exec('SELECT action FROM shortlinks WHERE tenant_id=? AND id=?', this.tenantId, payload.callbackId).toArray()[0];
       if (!['scan.pause','scan.resume','connection.disconnect','notifications.set'].includes(link?.action)) return false;
@@ -110,7 +114,7 @@ export class TelegramCommands {
     const payload = JSON.parse(row.payload_json);
     try {
       if (row.command_type === 'callback') this.callbackInTransaction(row, payload, prepared);
-      else if (row.command_type === 'reply') this.replyInTransaction(row, payload);
+      else if (row.command_type === 'reply') this.replyInTransaction(payload);
       else if (row.command_type === 'secret_warning') this.secretWarningInTransaction(row);
       else if (row.command_type === 'lookup') this.lookupInTransaction(row, payload);
       else if (row.command_type === 'text') this.hintInTransaction(row);
@@ -252,13 +256,14 @@ export class TelegramCommands {
     return { slippageBps: this.preference('tradingSlippageBps', TRADING_SETTINGS.slippageBps), capUsd: this.preference('tradingBuyCapUsd', TRADING_SETTINGS.buyCapUsd) };
   }
 
-  refuseInTransaction(updateId, refusal) {
+  /** The banner explaining a trade refusal. */
+  refusalNotice(refusal) {
     const cap = this.tradingSettings().capUsd;
     const message = refusal.code === 'OVER_CAP' ? [`超过单笔买入上限 $${cap}，已拒绝。可在交易限额中调整。`, `Above your per-trade buy cap of $${cap}; refused. Adjust it in Trade limits.`] : REFUSALS[refusal.code] ?? REFUSALS.STATE_CHANGED;
-    this.noticeInTransaction(updateId, text(this.language, ...message));
+    return text(this.language, ...message);
   }
 
-  /** Session changes for a trading action; a refusal is explained and leaves the panel as it was, except that an unverified buy becomes its Yes/No question. */
+  /** Session changes for a trading action; a refusal leaves the panel as it was under a banner explaining it, except that an unverified buy becomes its Yes/No question. */
   tradingActionInTransaction(row, session, action, params, token, prepared) {
     if (!this.trading) throw new ReviewConflict('trading_unavailable');
     const returnTo = ['trade', 'trade_unverified'].includes(session.panel) ? session.query.returnTo : { panel: session.panel, viewChain: session.viewChain, query: { ...session.query, pendingInput: undefined } };
@@ -284,8 +289,7 @@ export class TelegramCommands {
         } catch (error) {
           // A refused Yes (vetoed meanwhile, or now above the cap) must not leave the question open.
           if (!(error instanceof TradeRefusal)) throw error;
-          this.refuseInTransaction(row.update_id, error);
-          return back;
+          return { ...back, query: { ...back.query, notice: this.refusalNotice(error) } };
         }
       }
       if (action === 'trade.input') {
@@ -329,8 +333,7 @@ export class TelegramCommands {
     } catch (error) {
       if (!(error instanceof TradeRefusal)) throw error;
       if (error.code === 'UNVERIFIED') return unverifiedQuestion(error.request, returnTo);
-      this.refuseInTransaction(row.update_id, error);
-      return {};
+      return { query: { ...session.query, notice: this.refusalNotice(error) } };
     }
     throw new ReviewConflict('unsupported_action');
   }
@@ -344,44 +347,50 @@ export class TelegramCommands {
     const outboxId = `prompt:${session.id}:${session.version + 1}`;
     const next = this.sessions.advanceInTransaction(session, { query: { ...session.query, pendingInput: { kind, target: token, expectedVersion, outboxId, promptMessageId: null, expiresAt: Math.min(this.now() + 300_000, session.expiresAt) } } });
     this.renderInTransaction(next);
-    const cap = this.tradingSettings().capUsd;
-    const instruction = kind === 'note' ? text(this.language, '请回复此消息，输入备注（最多500字符）。/cancel 取消。', 'Reply with a note (max 500 characters). /cancel.')
-      : kind === 'trade_usd' ? text(this.language, `请回复买入金额（美元，最多2位小数，上限 $${cap}）。/cancel 取消。`, `Reply with the USD amount to buy (up to 2 decimals, cap $${cap}). /cancel.`)
-        : kind === 'trade_percent' ? text(this.language, '请回复卖出比例（1–100的整数%）。/cancel 取消。', 'Reply with the percentage to sell (a whole number 1–100). /cancel.') : text(this.language, '请回复此消息，输入名称、简称或CA（最多128字符）。/cancel 取消。', 'Reply with a name, symbol or contract address (max 128 characters). /cancel.');
-    this.outbox.enqueueInTransaction({ id: outboxId, chatId: this.tenantId, method: 'sendMessage', params: { text: `${token ? `${token.chain} ${token.address}\n` : ''}${instruction}`, reply_markup: { force_reply: true, selective: true } }, purpose: 'prompt', sessionId: next.id, sessionVersion: next.version, expiresAt: next.query.pendingInput.expiresAt });
+    const cap = this.tradingSettings().capUsd, name = token ? this.tokenName(token) : null;
+    const instruction = kind === 'note' ? text(this.language, `请回复 ${name} 的备注，最多500字符。/cancel 取消。`, `Reply with a note for ${name}, max 500 characters. /cancel to stop.`)
+      : kind === 'trade_usd' ? text(this.language, `请回复买入 ${name} 的美元金额，最多2位小数，上限 $${cap}。/cancel 取消。`, `Reply with the USD amount of ${name} to buy, up to 2 decimals, cap $${cap}. /cancel to stop.`)
+        : kind === 'trade_percent' ? text(this.language, `请回复卖出 ${name} 的比例，1–100的整数。/cancel 取消。`, `Reply with the percentage of ${name} to sell, a whole number 1–100. /cancel to stop.`)
+          : text(this.language, '请回复名称、简称或CA，最多128字符。/cancel 取消。', 'Reply with a name, symbol or contract address, max 128 characters. /cancel to stop.');
+    this.outbox.enqueueInTransaction({ id: outboxId, chatId: this.tenantId, method: 'sendMessage', params: { text: instruction, reply_markup: { force_reply: true, selective: true } }, purpose: 'prompt', sessionId: next.id, sessionVersion: next.version, expiresAt: next.query.pendingInput.expiresAt });
   }
 
-  replyInTransaction(row, payload) {
+  /** How a prompt names a token: "PEPE (Arc)", or its address when no symbol is recorded. */
+  tokenName(token) {
+    const snapshot = this.snapshot(this.storage, this.tenantId, this.now());
+    const rows = [...(snapshot.candidates ?? []), ...(snapshot.feedByChain?.[token.chain]?.rows ?? []), ...(snapshot.annotations ?? [])];
+    const symbol = rows.find(row => row.chain === token.chain && row.address === token.address && row.symbol && row.symbol !== '?')?.symbol;
+    return `${symbol ?? token.address} (${chainLabel(token.chain)})`;
+  }
+
+  replyInTransaction(payload) {
     const session = this.sessions.promptSession(payload.replyToMessageId);
     if (!session) throw new ReviewConflict('input_expired');
     const pending = session.query.pendingInput;
     const value = payload.text;
     if (typeof value !== 'string' || value.length > (pending.kind === 'note' ? 500 : 128)) {
-      this.noticeInTransaction(row.update_id, text(this.language, '输入过长，请缩短后回复原提示。', 'Input is too long; shorten it and reply to the original prompt.')); return;
+      return this.renderInTransaction(this.sessions.advanceInTransaction(session, { query: { ...session.query, notice: text(this.language, '输入过长，请缩短后回复原提示。', 'Input is too long; shorten it and reply to the original prompt.') } }));
     }
     if (pending.kind === 'note_target') return this.resolveNoteInTransaction(session, value);
-    if (pending.kind === 'trade_usd' || pending.kind === 'trade_percent') return this.tradeReplyInTransaction(row, session, pending, value);
+    if (pending.kind === 'trade_usd' || pending.kind === 'trade_percent') return this.tradeReplyInTransaction(session, pending, value);
     if (pending.kind === 'note') annotateInTransaction(this.storage, this.tenantId, { token: pending.target, field: 'note', value, expectedVersion: pending.expectedVersion }, this.now());
     const { pendingInput, ...query } = session.query;
     this.renderInTransaction(this.sessions.advanceInTransaction(session, { query: { ...query, ...(pending.kind === 'search' ? { search: value, page: 0 } : {}) } }));
   }
 
-  tradeReplyInTransaction(row, session, pending, value) {
+  tradeReplyInTransaction(session, pending, value) {
     const buy = pending.kind === 'trade_usd';
     const amount = buy ? { usdCents: parseUsdCents(value) } : { percent: parsePercent(value) };
     if (Object.values(amount)[0] === null) {
-      this.noticeInTransaction(row.update_id, text(this.language, buy ? '金额无效：请回复如 25 或 12.5。' : '比例无效：请回复1–100的整数。', buy ? 'Invalid amount: reply like 25 or 12.5.' : 'Invalid percentage: reply with a whole number from 1 to 100.'));
-      return;
+      const notice = text(this.language, buy ? '金额无效：请回复如 25 或 12.5。' : '比例无效：请回复1–100的整数。', buy ? 'Invalid amount: reply like 25 or 12.5.' : 'Invalid percentage: reply with a whole number from 1 to 100.');
+      return this.renderInTransaction(this.sessions.advanceInTransaction(session, { query: { ...session.query, notice } }));
     }
     const { pendingInput, ...query } = session.query;
     const returnTo = { panel: session.panel, viewChain: session.viewChain, query };
     let changes;
     try { changes = tradeView(this.startTradeInTransaction(session, pending.target, buy ? 'buy' : 'sell', amount).id, returnTo); } catch (error) {
       if (!(error instanceof TradeRefusal)) throw error;
-      if (error.code !== 'UNVERIFIED') {
-        this.refuseInTransaction(row.update_id, error);
-        return this.renderInTransaction(this.sessions.advanceInTransaction(session, { query }));
-      }
+      if (error.code !== 'UNVERIFIED') return this.renderInTransaction(this.sessions.advanceInTransaction(session, { query: { ...query, notice: this.refusalNotice(error) } }));
       changes = unverifiedQuestion(error.request, returnTo);
     }
     this.renderInTransaction(this.sessions.advanceInTransaction(session, changes));

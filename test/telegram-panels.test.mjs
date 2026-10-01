@@ -456,3 +456,10 @@ test('a key submission answers with a panel: connected shows the scan, a failure
   for(const outcome of [undefined,'toString','rejected']) assert.throws(()=>renderPanel(snapshot,session('connection',{outcome}),'en'),/connection outcome/);
 });
 
+test('a session notice leads any panel as one escaped warning line',()=>{
+  for(const panel of ['radar','audits','settings','wallet','detail']) {
+    const snapshot=fixture(),result=renderPanel(snapshot,session(panel,{selectedToken:{chain:'sol',address:snapshot.candidates[0].address},notice:'Above your <b>$100</b> cap.'}),'en');
+    assert.match(result.text,/^⚠️ Above your &lt;b&gt;\$100&lt;\/b&gt; cap\.\n\n<b>/,panel);
+  }
+  assert.doesNotMatch(renderPanel(fixture(),session('radar'),'en').text,/⚠️/);
+});

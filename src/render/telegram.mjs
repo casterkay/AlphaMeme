@@ -123,7 +123,8 @@ export function textPages(blocks, budget = 2100) {
  * Wrap a panel with its title, an "Updated" footer line and the standard
  * navigation row: [Refresh] [Back] [Home]. Back appears only with somewhere to
  * return to; the Radar root shows neither Back nor Home. A `footnote` joins the
- * "Updated" line when the panel's data has its own, older read time.
+ * "Updated" line when the panel's data has its own, older read time. A session
+ * `notice` (a refusal or an invalid reply) leads the panel as a one-line banner.
  */
 export function finishPanel(title, blocks, keyboard, snapshot, session, locale, { token = null, refresh = true, footnote = null } = {}) {
   const root = session.panel === 'radar';
@@ -133,7 +134,8 @@ export function finishPanel(title, blocks, keyboard, snapshot, session, locale, 
     root ? null : button(`${ICONS.home} ${localize(locale, '首页', 'Home')}`, 'panel.open', { panel: 'radar' })
   ];
   const body = blocks.filter(value => value !== undefined && value !== null);
-  const text = `<b>${escapeHtml(title)}</b>${body.length ? `\n${body.join('\n')}` : ''}\n\n${localize(locale, '更新于', 'Updated')} ${clockTime(snapshot.at, locale)}${footnote ? ` · ${footnote}` : ''}`;
+  const notice = session.query?.notice;
+  const text = `${notice ? `${ICONS.unknown} ${escapeHtml(notice)}\n\n` : ''}<b>${escapeHtml(title)}</b>${body.length ? `\n${body.join('\n')}` : ''}\n\n${localize(locale, '更新于', 'Updated')} ${clockTime(snapshot.at, locale)}${footnote ? ` · ${footnote}` : ''}`;
   if (text.length > TELEGRAM_TEXT_BUDGET) throw new RangeError('Telegram panel exceeds text budget; paginate its source blocks');
   return { text, keyboard: [...keyboard, footer].map(row => row.filter(Boolean)).filter(row => row.length), version: session.version, ...(token ? { token } : {}) };
 }

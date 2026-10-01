@@ -83,8 +83,20 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   first asks Yes/No; the trading engine refuses an unverified buy that lacks this
   acknowledgement. An unusable AVE key or uncertain delivery alerts with the
   button that resolves it.
-- Search and notes use a five-minute ForceReply prompt. Credentials are routed
-  before note/search input and are never persisted as either.
+- A new owner starts in their Telegram language (Chinese for `zh` clients,
+  English otherwise); `/lang` changes it. Until AVE is connected, `/start` shows
+  a two-step welcome. A key submission answers with a panel: connected, or why
+  the key failed with a Try again button.
+- Search, notes and custom amounts use a five-minute ForceReply prompt that names
+  the token. Credentials are routed before note/search input and are never
+  persisted as either. A trade refusal or an invalid reply appears as a one-line
+  banner on the panel it came from and is gone on that panel's next render.
+- Plain text that is neither a command nor a prompt reply gets a hint; its text
+  is never stored. Any message that holds a private key (a 64-character hex
+  string, a base58 Solana secret key or a PEM block, anywhere in the message) is
+  deleted with a warning saying why, and its text is never stored, logged or sent
+  anywhere. A transaction hash has the same shape and is deleted too. On
+  `/setkey` only a PEM block counts, because an AVE key has no fixed shape.
 - An uncertain Telegram send gets at most one automatic uncertain retry over its
   entire lifetime. A second uncertainty suspends it; `/status` exposes it. The
   system does not promise external exactly-once or guaranteed delivery.
