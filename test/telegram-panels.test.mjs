@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderPanel, selectPanelRows, PANEL_NAMES, HELP_COMMAND_NAMES, telegramCommandDescriptions, telegramCommandRegistrations } from '../src/bot/panels.mjs';
 import { projectTelegramCandidate, projectTelegramFeedRow, createTelegramExport, safeTelegramUrl } from '../src/bot/snapshot.mjs';
-import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
+import { CHART_RISK_VERSION, applyRiskExclusion } from '../src/scoring/chart-risk.mjs';
 import { money, officialXUrl } from '../src/render/telegram.mjs';
 
 const now=1_800_000_000_000;
@@ -239,6 +239,7 @@ test('the safety verdict leads the detail and marks each list row, from the reco
     ['degraded market source only',lead({secondary:{...complete,status:'DEGRADED',complete:false}}),'⚠️ Check incomplete · checked 2m ago','⚠️ Needs review'],
     ['blocking unknown and failure on a deep audit',candidate(0,{secondary:complete,deep:{chartRisk:{version:CHART_RISK_VERSION},chainPass:true,failed:['tax'],unknownFields:['top10','devHold','lockRate'],blockingUnknownFields:['top10']}}),'⚠️ 1 failed check, 1 blocking unknown, 2 fields unknown · checked 2m ago','⚠️ Needs review'],
     ['conflicting sources',lead({secondary:{...complete,conflicts:[{type:'MARKET_MISMATCH',field:'marketCap'}]}}),'⚠️ 1 source conflict · checked 2m ago','⚠️ Needs review'],
+    ['held risk exclusion',applyRiskExclusion(lead({secondary:complete}),{['sol:'+'A'.repeat(32)+'0']:{reasons:['x'],codes:['VERTICAL_PLATEAU']}}),'⛔ Vetoed: Chart risk · checked 2m ago','⛔ Vetoed'],
     ['secondary veto',lead({status:'HARD_REJECT',secondary:{...complete,security:{complete:true,verdict:'FATAL',fatal:[{field:'isHoneypot'},{field:'hiddenOwner'},{field:'mintable'}],unknownFields:[]}}}),'⛔ Vetoed: Honeypot, Hidden owner +1 · checked 2m ago','⛔ Vetoed']
   ];
   for(const [label,row,line,mark] of cases) {
