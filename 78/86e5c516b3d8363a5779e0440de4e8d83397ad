@@ -1,0 +1,14 @@
+AGENTS.md
+  h_0528fe13c98664 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7886e5c516b3d8363a5779e0440de4e8d83397ad",
+  "prompts": {},
+  "humans": {
+    "h_0528fe13c98664": {
+      "author": "casterkay <poetrycoder>"
+    }
+  }
+}
