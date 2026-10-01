@@ -97,6 +97,18 @@ test('a message holding a private key becomes a text-free warning on every path:
   }
 });
 
+test('an edit, a caption or a command for another bot that holds a key is deleted too, and otherwise ignored', () => {
+  const key = '0x' + randomBytes(32).toString('hex');
+  const edited = text => parseTelegramUpdate({ update_id: 30, edited_message: privateMessage({ text }).message }, { now: () => 1234, botUsername: 'radar_bot' });
+  const captioned = caption => { const update = privateMessage(); delete update.message.text; update.message.caption = caption; return parseTelegramUpdate(update, { now: () => 1234 }); };
+  const foreign = text => parseTelegramUpdate(privateMessage({ text }), { now: () => 1234, botUsername: 'radar_bot' });
+  for (const result of [edited(`/setkey ${key}`), edited(`note ${key}`), captioned(`wallet ${key}`), foreign(`/start@other_bot ${key}`)]) {
+    assert.deepEqual([result.kind, result.receipt.commandType, result.receipt.payload], ['accepted', 'secret_warning', {}]);
+    assert.equal(JSON.stringify(result).includes(key.slice(2)), false);
+  }
+  for (const result of [edited('/start'), edited('/setkey ave-key-0123456789'), captioned('/start'), foreign('/start@other_bot hello')]) assert.deepEqual(result, { kind: 'ignored' });
+});
+
 test('plain text is classified at the boundary: a contract address becomes a lookup, anything else a text-free receipt', () => {
   for (let round = 0; round < 200; round++) {
     const evm = '0x' + randomBytes(20).toString('hex'), sol = base58(randomBytes(32));

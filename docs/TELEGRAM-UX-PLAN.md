@@ -383,12 +383,15 @@ requests. Fuzz tests cover the classifier (§6).
 
 Amended in slice 6 (#67): the secret check covers **every** inbound message, not
 only plain text. A private key sent as a prompt reply or a command argument would
-otherwise be stored as a note, a search or an argument. A key-shaped word anywhere
-in the message counts, `/setkey` included: an AVE key is 64 mixed-case
+otherwise be stored as a note, a search or an argument; an edit, a photo or
+document caption, or a command addressed to another bot would otherwise stay
+visible without a warning, so these are checked too, though otherwise ignored. A
+key-shaped word anywhere in the message counts, `/setkey` included: an AVE key is 64 mixed-case
 alphanumerics, which is neither 64 hex characters nor base58 of 64 bytes (64 base58
 characters decode to about 47 bytes), so a key shape there is a wallet key that
-verification would send to AVE. A transaction hash has the same shape as an EVM key and is deleted too; the warning
-says why, so the owner can tell. The receipt type is `secret_warning`, not
+verification would send to AVE. A transaction hash has the same shape as an EVM
+key and is deleted too; the warning says why, so the owner can tell. Other key
+formats are tracked in #82. The receipt type is `secret_warning`, not
 `command:secret_warning`, so a typed `/secret_warning` cannot pose as one. Until
 slice 7, a `lookup` receipt gets the step 3 hint, and that hint reads "I only act on
 commands and replies to my prompts. Open 📡 Radar or ❓ Help." rather than the
