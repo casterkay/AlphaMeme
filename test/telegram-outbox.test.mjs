@@ -55,6 +55,16 @@ test('crash after remote success recovers UNKNOWN and permits only one lifetime 
   assert.deepEqual(f.outbox.reconcileInTransaction(), []);
 });
 
+test('a send interrupted on its one ambiguous retry is reported failed on recovery, but a first interruption is not', () => {
+  const f = fixture(), failed = [];
+  f.outbox.onFailedInTransaction = ({ row }) => failed.push(row.id);
+  f.enqueue('first'); f.enqueue('retry');
+  f.storage.sql.exec("UPDATE outbox SET status='SENDING', attempts=1 WHERE id='first'");
+  f.storage.sql.exec("UPDATE outbox SET status='SENDING', attempts=2, ambiguous_retries=1 WHERE id='retry'");
+  f.outbox.reconcileInTransaction({ recoverSending: true });
+  assert.deepEqual(failed, ['retry']);
+});
+
 test('UNKNOWN edit blocks newer edits even after its validity expires', async () => {
   let calls = 0;
   const f = fixture(async () => { calls++; return { ok: false, kind: 'unknown' }; });

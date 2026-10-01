@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
 import { NotificationPolicy } from '../src/bot/notification-policy.mjs';
+import { TelegramOutbox } from '../src/bot/outbox.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 const START = 1800000000000;
@@ -22,7 +23,7 @@ function fixture() {
     sql('INSERT INTO candidates (tenant_id,chain,address,status,audited_at,stale_at,review_revision,deep_json,audit_health_json) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,chain,address) DO UPDATE SET status=excluded.status,audited_at=excluded.audited_at,stale_at=excluded.stale_at,review_revision=excluded.review_revision,deep_json=excluded.deep_json', '123','bsc',address,status,now-age,now+600000,revision,JSON.stringify({chainPass:qualified,chartRisk:{pass:qualified,version:CHART_RISK_VERSION}}),'{}');
   };
   const event = (id,type,address) => sql('INSERT INTO events (tenant_id,id,at,type,chain,address) VALUES (?,?,?,?,?,?)','123',id,now,type,'bsc',address);
-  return { sql, pref, scanChain, candidate, event, policy: create(), create, advance: ms => { now += ms; } };
+  return { storage, sql, pref, scanChain, candidate, event, policy: create(), create, now: () => now, advance: ms => { now += ms; } };
 }
 
 test('initial baseline stays quiet; newly eligible promotion produces one immutable batch and survives eviction', () => {
@@ -167,13 +168,60 @@ test('explicit reconnect baseline invalidates pending batches without mutating f
   assert.equal(descriptor.members.length,1);
 });
 
-test('expired failed delivery cannot bypass transport retry limit by creating a replacement notification', () => {
-  const f=fixture();f.policy.baselineInTransaction();f.advance(1);f.candidate('a');
-  const issue={key:'delivery',reason:'DELIVERY_UNCERTAIN',nextAction:'/status'};
-  const pending=f.policy.reconcileInTransaction({issues:[issue]}).notifications;
-  assert.equal(pending.length,2);
-  f.advance(600001);f.candidate('a');
-  assert.equal(f.policy.reconcileInTransaction({issues:[issue]}).notifications.length,0);
+// Wires a real outbox to the policy as the runtime does, so delivery outcomes settle the policy's pending notifications.
+function delivering(f, transport, issues) {
+  const outbox = new TelegramOutbox({ storage: f.storage, tenantId: '123', transport, now: f.now,
+    ineligibleReason: (row, payload) => f.policy.ineligibleReason(row, payload, { issues }),
+    onConfirmedInTransaction: ({ payload }) => f.policy.acknowledgeInTransaction(payload.notification),
+    onFailedInTransaction: ({ payload }) => f.policy.failInTransaction(payload.notification) });
+  const send = async notification => {
+    outbox.enqueueInTransaction({ id: notification.id, chatId: '123', method: 'sendMessage', params: { text: 'alert' }, deliveryClass: notification.deliveryClass,
+      actionReason: notification.actionReason, notification, expiresAt: notification.expiresAt });
+    await outbox.deliverOne(notification.id, { request: operation => operation({ signal: new AbortController().signal }) });
+  };
+  return { outbox, send };
+}
+
+for (const { scenario, transport, attempts, status, replacements } of [
+  { scenario: 'confirmed delivery', transport: async () => ({ ok: true, result: { message_id: 1 } }), attempts: 1, status: 'SENT', replacements: 0 },
+  { scenario: 'permanent rejection', transport: async () => ({ ok: false, kind: 'permanent' }), attempts: 1, status: 'FAILED', replacements: 0 },
+  { scenario: 'exhausted retries', transport: async () => ({ ok: false, kind: 'retryable' }), attempts: 5, status: 'FAILED', replacements: 0 },
+  { scenario: 'an ambiguous send whose one retry is also ambiguous', transport: async () => ({ ok: false, kind: 'unknown' }), attempts: 2, status: 'UNKNOWN', replacements: 0 },
+  { scenario: 'no delivery attempt before expiry', transport: async () => assert.fail('not sent'), attempts: 0, status: 'PENDING', replacements: 2 },
+]) test(`after ${scenario}, an expired notification is ${replacements ? 'replaced' : 'not replaced'}`, async t => {
+  t.mock.method(console, 'warn', () => {});
+  const f = fixture(); f.policy.baselineInTransaction(); f.advance(1); f.candidate('a');
+  const issues = [{ key: 'delivery', reason: 'DELIVERY_UNCERTAIN', nextAction: '/status' }];
+  const { outbox, send } = delivering(f, transport, issues);
+  const pending = f.policy.reconcileInTransaction({ issues }).notifications;
+  assert.equal(pending.length, 2);
+  for (let attempt = 0; attempt < attempts; attempt++) { for (const notification of pending) await send(notification); f.advance(16_000); }
+  assert.deepEqual(outbox.rows().map(row => row.status), attempts ? [status, status] : []);
+  f.advance(600_001); f.candidate('a');
+  const next = f.policy.reconcileInTransaction({ issues }).notifications;
+  assert.equal(next.length, replacements);
+  assert.ok(next.every(notification => !pending.some(item => item.id === notification.id)));
+});
+
+test('a new-lead alert dropped before delivery leaves the lead free to alert again', () => {
+  const f = fixture(); f.policy.baselineInTransaction(); f.advance(1); f.candidate('a');
+  const [first] = f.policy.reconcileInTransaction().notifications;
+  f.advance(60_000); f.candidate('a', { revision: 'r2' });
+  const [second] = f.policy.reconcileInTransaction().notifications;
+  assert.notEqual(second.id, first.id);
+  assert.deepEqual(second.members.map(member => member.revision), ['r2']);
+});
+
+test('a risk alert dropped before delivery alerts again for the revised lead', () => {
+  const f = fixture(); f.policy.baselineInTransaction(); f.advance(1); f.candidate('a', { status: 'HARD_REJECT', qualified: false, revision: 'bad' });
+  f.sql('INSERT INTO annotations (tenant_id,chain,address,favorite,note) VALUES (?,?,?,?,?)', '123', 'bsc', 'a', 1, '');
+  f.event('risk1', 'RISK_WORSENED', 'a');
+  const [first] = f.policy.reconcileInTransaction().notifications;
+  f.advance(1); f.candidate('a', { status: 'HARD_REJECT', qualified: false, revision: 'worse' });
+  const [second] = f.policy.reconcileInTransaction().notifications;
+  assert.equal(second.actionReason, 'RISK_WORSENED');
+  assert.notEqual(second.id, first.id);
+  assert.equal(second.members[0].revision, 'worse');
 });
 
 test('an AVE market lead alerts once as upstream live leads do, and a vetoed lead is no longer eligible', () => {

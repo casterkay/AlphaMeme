@@ -47,7 +47,8 @@ export class TelegramRuntime {
         this.commands.sessions.confirmPromptInTransaction(value);
         if (value.payload.notification) this.notifications.acknowledgeInTransaction(value.payload.notification);
         if (value.payload.token && value.payload.purpose !== 'prompt') this.saveRenderedProjection(value);
-      }
+      },
+      onFailedInTransaction: value => { if (value.payload.notification) this.notifications.failInTransaction(value.payload.notification); }
     });
     this.commands = new TelegramCommands({ storage, tenantId, inbox: this.inbox, outbox: this.outbox, trading: this.trading, now,
       snapshot: (storage, tenant, at) => {

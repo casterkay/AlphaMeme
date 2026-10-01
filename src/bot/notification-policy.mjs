@@ -140,13 +140,6 @@ export class NotificationPolicy {
     const enqueue = (reason, members, issue = null) => {
       const descriptor = { id: `notification:${state.generation}:${++state.sequence}`, deliveryClass: 'ACTION_REQUIRED', actionReason: reason, members, createdAt: now, expiresAt: now + 10 * 60_000, generation: state.generation, ...(issue ? { issue } : {}) };
       state.pending.push(descriptor);
-      for (const member of members) {
-        const key = voiceKey(member);
-        state.eventDedup[`${reason}:${key}`] = now;
-        if (reason === 'CANDIDATE_NEW') state.quiet[key] = now;
-        if (reason === 'RISK_WORSENED') state.riskNotified[`${key}:${member.revision}`] = now;
-      }
-      if (issue) state.problemNotified[issue.key] = now;
       return descriptor;
     };
     const eligibleRows = rows.filter(row => this.candidateEligible(row, controls.chains));
@@ -189,17 +182,23 @@ export class NotificationPolicy {
     return frozen(structuredClone({ notifications: state.pending, corrections }));
   }
 
-  acknowledgeInTransaction(descriptor) {
-    const state = this.read();
+  acknowledgeInTransaction(descriptor) { return this.settleInTransaction(descriptor, { delivered: true }); }
+
+  // A notification whose delivery failed, or may have happened, is suppressed as if delivered so a replacement cannot loop;
+  // only confirmed delivery marks a lead notified, which also makes its later risk changes alert-relevant.
+  failInTransaction(descriptor) { return this.settleInTransaction(descriptor, { delivered: false }); }
+
+  settleInTransaction(descriptor, { delivered }) {
+    const state = this.read(), now = this.now();
     const persisted = state?.pending.find(item => item.id === descriptor.id);
     if (!persisted || JSON.stringify(persisted) !== JSON.stringify(descriptor)) return false;
     for (const member of descriptor.members) {
       const key = voiceKey(member);
-      state.eventDedup[`${descriptor.actionReason}:${key}`] = this.now();
-      if (descriptor.actionReason === 'CANDIDATE_NEW') { state.notified[key] = this.now(); state.quiet[key] = this.now(); }
-      if (descriptor.actionReason === 'RISK_WORSENED') state.riskNotified[`${key}:${member.revision}`] = this.now();
+      state.eventDedup[`${descriptor.actionReason}:${key}`] = now;
+      if (descriptor.actionReason === 'CANDIDATE_NEW') { if (delivered) state.notified[key] = now; state.quiet[key] = now; }
+      if (descriptor.actionReason === 'RISK_WORSENED') state.riskNotified[`${key}:${member.revision}`] = now;
     }
-    if (descriptor.issue) state.problemNotified[descriptor.issue.key] = this.now();
+    if (descriptor.issue) state.problemNotified[descriptor.issue.key] = now;
     state.pending = state.pending.filter(item => item.id !== descriptor.id);
     this.write(state);
     return true;
