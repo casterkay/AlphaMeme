@@ -362,8 +362,8 @@ describe('Telegram complete command and delivery flows',()=>{
   });
 
   it('opens the Watchlist and Activity buttons on every chain, as their commands do',async()=>{
-    await withRuntime('22965',async({runtime,command,sessions,link,click})=>{
-      await command('radar');const radar=sessions()[0];
+    await withRuntime('22965',async({runtime,command,sessions,link,click,seed})=>{
+      seed();await command('radar');const radar=sessions()[0];
       await click(link(radar,'panel.open',params=>params.panel==='saved'));
       expect(runtime.commands.sessions.get(radar.id)).toMatchObject({panel:'saved',viewChain:'all'});
       await command('status');const status=sessions()[1];
@@ -392,7 +392,7 @@ describe('Telegram complete command and delivery flows',()=>{
   });
 
   it('connects AVE from /setkey: encrypts the submission, verifies it with one AVE details read and starts the Arc scan',async()=>{
-    await withRuntime('22903',async({runtime,storage,tenantId,sent,command,receipt,drain})=>{
+    await withRuntime('22903',async({runtime,storage,tenantId,sent,command,receipt,drain,sessions})=>{
       await command('onboard');
       const guide=sent.find(row=>row.params.text?.includes('/setkey'));
       expect(guide.params.reply_markup.inline_keyboard.flat().some(button=>button.url==='https://cloud.ave.ai/login')).toBe(true);
@@ -410,7 +410,8 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(await readAveApiKey(storage,masterKey,tenantId)).toBe(apiKey);
       expect(storage.sql.exec('SELECT name,value_enc FROM keys WHERE tenant_id=?',tenantId).toArray().map(row=>{expect(row.value_enc).not.toContain(apiKey);return row.name;})).toEqual(['ave-api-key']);
       expect(sent.some(row=>row.method==='deleteMessage'&&row.params.message_id===input.sourceMessageId)).toBe(true);expect(JSON.stringify(sent)).not.toContain(apiKey);
-      expect(sent.some(row=>row.params.text?.includes('AVE已连接'))).toBe(true);
+      expect(sessions().find(session=>session.panel==='connection').query.outcome).toBe('connected');
+      expect(sent.at(-1).params.text).toMatch(/^<b>✅ AVE已连接<\/b>\n🟢 正在扫描 Arc · 🔔 提醒开启\n/);
       expect(runtime.notifications.controls().enabled).toBe(true);
       const [scan]=schedulerTasks(storage,tenantId).filter(task=>task.kind==='scan');
       expect(scan).toMatchObject({kind:'scan',dueAt:at,enabled:true,aveCost:AVE_CU.trending});
@@ -418,8 +419,8 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it.each([[401,'AVE密钥无效'],[402,'AVE额度已用尽']])('ends verification on an AVE %s refusal, scrubs the candidate and tells the user',async(status,notice)=>{
-    await withRuntime(status===401?'22918':'22919',async({runtime,storage,tenantId,sent,receipt,drain})=>{
+  it.each([[401,'AVE密钥无效或已被拒绝。'],[402,'AVE额度已用尽。']])('ends verification on an AVE %s refusal, scrubs the candidate and tells the user',async(status,reason)=>{
+    await withRuntime(status===401?'22918':'22919',async({runtime,storage,tenantId,sent,receipt,drain,sessions,link,click})=>{
       const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);await runtime.runCommand(input.updateId);
       const ave=aveStub(()=>new Response('{}',{status}));
       await runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,{request,fetchImpl:ave.fetch});await drain();
@@ -427,7 +428,11 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(runtime.inbox.get(input.updateId)).toMatchObject({status:'FAILED',payload_enc:null});
       expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
       expect(runtime.control.snapshot().configured).toBe(false);
-      expect(sent.some(row=>row.params.text?.includes(notice)&&row.params.text.includes('/setkey'))).toBe(true);
+      const [panel]=sessions().filter(session=>session.panel==='connection');
+      expect(panel.query).toMatchObject({outcome:'failed',reason:status===401?'AVE_AUTH':'AVE_QUOTA'});
+      expect(sent.at(-1).params.text.startsWith(`<b>密钥未通过验证</b>\n${reason}\nAVE尚未连接。\n`)).toBe(true);
+      await click(link(panel,'panel.open',params=>params.panel==='onboard'));
+      expect(runtime.commands.sessions.get(panel.id).panel).toBe('onboard');
     });
   });
 
@@ -443,7 +448,7 @@ describe('Telegram complete command and delivery flows',()=>{
   });
 
   it('ends verification on its final attempt when AVE stays unavailable, scrubs the candidate and tells the user to resend',async()=>{
-    await withRuntime('22922',async({runtime,storage,tenantId,sent,receipt,drain})=>{
+    await withRuntime('22922',async({runtime,storage,tenantId,sent,receipt,drain,sessions})=>{
       const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);await runtime.runCommand(input.updateId);
       const ave=aveStub(()=>new Response('too many requests',{status:429,headers:{'retry-after':'30'}}));
       await runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,{request,fetchImpl:ave.fetch,finalAttempt:true});await drain();
@@ -451,7 +456,8 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(runtime.inbox.get(input.updateId)).toMatchObject({status:'FAILED',payload_enc:null});
       expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
       expect(runtime.control.snapshot().configured).toBe(false);
-      expect(sent.some(row=>row.params.text?.includes('AVE请求受到限流')&&row.params.text.includes(new Date(at+30_000).toISOString())&&row.params.text.includes('/setkey'))).toBe(true);
+      expect(sessions().find(session=>session.panel==='connection').query).toMatchObject({outcome:'failed',reason:'AVE_RATE_LIMITED',retryAt:at+30_000});
+      expect(sent.at(-1).params.text).toMatch(/^<b>密钥未通过验证<\/b>\nAVE请求受到限流。 请在 08:00:30 UTC 之后重试。\nAVE尚未连接。\n/);
     });
   });
 
@@ -468,10 +474,11 @@ describe('Telegram complete command and delivery flows',()=>{
       await runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,
         { request: verificationRequest, fetchImpl, finalAttempt: true });
       await drain();
-      const message = sent.find(row => row.params.text?.includes(notice))?.params.text;
-      expect(message).toContain('/setkey');
-      expect(message).not.toContain('secret transport detail');
-      expect(message).not.toContain(apiKey);
+      const panel = sent.find(row => row.params.text?.includes(notice));
+      expect(panel.params.text.startsWith(`<b>密钥未通过验证</b>\n${notice}\n`)).toBe(true);
+      expect(panel.params.reply_markup.inline_keyboard[0][0].text).toBe('🔑 重试');
+      expect(JSON.stringify(sent)).not.toContain('secret transport detail');
+      expect(JSON.stringify(sent)).not.toContain(apiKey);
     });
   });
 
@@ -547,6 +554,24 @@ describe('Telegram complete command and delivery flows',()=>{
       runtime.receive(input);
       expect(runtime.control.snapshot().paused).toBe(true);
       expect(runtime.inbox.get(input.updateId).status).toBe('DONE');
+    });
+  });
+
+  it('starts a new owner in their Telegram language on the welcome, whose language button keeps the welcome',async()=>{
+    await withRuntime('23601',async({runtime,storage,tenantId,sent,receipt,drain,sessions,link,click})=>{
+      const start=receipt('command:start',{source:'message',arguments:''},{locale:'en'});
+      runtime.receive(start);await runtime.runCommand(start.updateId);await drain();
+      expect(runtime.commands.language).toBe('en');
+      expect(sent.at(-1).params.text).toMatch(/^<b>👋 AlphaMeme radar<\/b>\nWatches the Arc hot list/);
+      const [welcome]=sessions();
+      await click(link(welcome,'language.set',params=>params.value==='zh'));
+      expect(runtime.commands.sessions.get(welcome.id).panel).toBe('radar');
+      expect(sent.at(-1)).toMatchObject({method:'editMessageText',params:{message_id:welcome.messageId}});
+      expect(sent.at(-1).params.text).toMatch(/^<b>👋 AlphaMeme 雷达<\/b>/);
+      // Only the first receipt seeds the language; a later one in another language changes nothing.
+      const later=receipt('command:radar',{source:'message',arguments:''},{locale:'en'});
+      runtime.receive(later);await runtime.runCommand(later.updateId);
+      expect(storage.sql.exec('SELECT value_json FROM preferences WHERE tenant_id=? AND key=?',tenantId,'telegram.language').one().value_json).toBe('"zh"');
     });
   });
 

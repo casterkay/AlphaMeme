@@ -232,7 +232,7 @@ export class TelegramCommands {
     else if (action === 'notifications.set') { if (typeof params.value !== 'boolean') throw new ReviewConflict('invalid_notifications'); this.setNotifications(params.value); }
     else if (action === 'delivery.acknowledge') this.outbox.acknowledgeIssuesInTransaction();
     else if (action === 'connection.disconnect') { this.applyControl('disconnect'); changes = { panel: 'settings', query: {} }; }
-    else if (action === 'language.set') { if (!['zh','en'].includes(params.value)) throw new ReviewConflict('invalid_language'); this.setPreference('language', params.value); changes = { panel: 'settings', query: {} }; }
+    else if (action === 'language.set') { if (!['zh','en'].includes(params.value)) throw new ReviewConflict('invalid_language'); this.setPreference('language', params.value); changes = session.panel === 'language' ? { panel: 'settings', query: {} } : {}; }
     else if (action === 'chains.set') {
       if (!CHAINS.includes(params.value)) throw new ReviewConflict('invalid_chain');
       this.controls.selectScanChain(params.value);

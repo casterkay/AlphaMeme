@@ -23,26 +23,6 @@ import { parseTradingConfig, TRADING_SETTINGS } from '../trading/config.mjs';
 import { TradingEngine } from '../trading/engine.mjs';
 import { generateTradingWallet, readTradingWallet, revealTradingKey, markTradingWalletExportedInTransaction } from '../trading/wallet.mjs';
 
-function credentialFailureNotice(error, language) {
-  const english = language === 'en';
-  const reason = {
-    AVE_AUTH: ['AVE密钥无效或已被拒绝。', 'AVE rejected the key.'],
-    AVE_QUOTA: ['AVE额度已用尽。', 'AVE credits are exhausted.'],
-    AVE_RATE_LIMITED: ['AVE请求受到限流。', 'AVE rate limited the request.'],
-    AVE_NETWORK: ['无法连接AVE。', 'Could not reach AVE.'],
-    AVE_UPSTREAM: ['AVE服务暂时出错。', 'AVE is temporarily unavailable.'],
-    AVE_TIMEOUT: ['AVE验证超时。', 'AVE verification timed out.'],
-    SCHEDULER_REQUEST_TIMEOUT: ['AVE验证超时。', 'AVE verification timed out.']
-  }[error?.code] || ['连接失败或已过期。', 'Connection failed or expired.'];
-  const retryAt = error?.code === 'AVE_RATE_LIMITED' && Number.isSafeInteger(error.retryAt)
-    && error.retryAt > 0 && error.retryAt <= 8_640_000_000_000_000
-    ? new Date(error.retryAt).toISOString() : null;
-  const retry = retryAt ? (english ? ` Retry after ${retryAt}.` : ` 请在 ${retryAt} 之后重试。`) : '';
-  const next = english ? ' Prior connection retained. Retry with /setkey; check and delete your key message.'
-    : ' 已保留之前的连接。请用 /setkey 重试，并检查删除密钥消息。';
-  return reason[english ? 1 : 0] + retry + next;
-}
-
 // Only the fields a panel shows; never raw transactions, calldata or routes.
 function projectTrade(trade) {
   const tx = value => value && { hash: value.hash, sentAt: value.sentAt };
@@ -221,7 +201,7 @@ export class TelegramRuntime {
     const key = await decryptSecret(this.masterKey, this.tenantId, `telegram-inbox:${row.update_id}`, row.payload_enc);
     if (!normalizeAveApiKey(key)) {
       this.storage.transactionSync(() => {
-        this.commands.noticeInTransaction(row.update_id, this.commands.language === 'en' ? 'Submit a valid AVE API key with /setkey <key>. Check and delete the original message; deletion is not guaranteed.' : '请用 /setkey <key> 提交有效的AVE API Key。请检查并删除原消息；无法保证自动删除。');
+        this.presentConnectionInTransaction({ outcome: 'invalid' });
         this.inbox.finishInTransaction(row.update_id, 'FAILED', { reason: 'invalid_key' });
       });
     } else {
@@ -239,7 +219,7 @@ export class TelegramRuntime {
         this.startScan();
         this.resetNotificationBaseline();
         this.inbox.finishInTransaction(state.updateId, 'DONE');
-        this.commands.noticeInTransaction(state.updateId, this.commands.language === 'en' ? 'AVE connected with a read-only key. Check and delete your key message. Alerts are on; /mute turns them off or back on.' : 'AVE已连接（只读密钥）。请检查并删除密钥消息。提醒已开启，可使用 /mute 关闭或重新开启。', 'connected');
+        this.presentConnectionInTransaction({ outcome: 'connected' });
       } });
     } catch (error) {
       // A transient failure retries the verification until its final attempt; a refusal ends it.
@@ -250,11 +230,16 @@ export class TelegramRuntime {
         const row = this.storage.sql.exec("SELECT update_id FROM inbox WHERE tenant_id=? AND command_type='credential' AND generation=? AND status IN ('RECEIVED','RUNNING')", this.tenantId, connectionGeneration).toArray()[0];
         if (row) {
           failOnboardingVerification({ storage: this.storage, tenantId: this.tenantId, updateId: row.update_id, connectionGeneration });
-          this.commands.noticeInTransaction(row.update_id, credentialFailureNotice(error, this.commands.language), 'verification');
+          this.presentConnectionInTransaction({ outcome: 'failed', reason: error.code ?? null, retryAt: error.retryAt ?? null });
         }
       });
     }
     return { status: 'success', complete: true };
+  }
+
+  /** Answer a key submission with the connection panel for its result. */
+  presentConnectionInTransaction(result) {
+    this.commands.renderInTransaction(this.commands.sessions.createInTransaction('connection', this.control.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN, result));
   }
 
   /** Start the scan chain's cycle unless one already runs for the current key. */
