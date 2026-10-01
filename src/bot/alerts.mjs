@@ -45,7 +45,7 @@ function riskCard(token, L, locale) {
   const name = userText(label(token), 30);
   const lines = [`<b>${ICONS.vetoed} ${L(`${name} 未通过安全检查`, `${name} failed the safety check`)} · ${chainLabel(token.chain)}</b>`];
   // The recorded fatal fields and their values, through the evidence labels; never upstream prose.
-  const findings = token.fatal.map(({ field, value }) => `${reasonText(field, locale)}: ${truth(value, locale)}`);
+  const findings = token.fatal.map(({ field, value }) => `${reasonText(field, locale)}${L('：', ': ')}${truth(value, locale)}`);
   if (findings.length) lines.push(userText(L(`GoPlus 标记：${findings.join(' · ')}`, `GoPlus flagged: ${findings.join(' · ')}`)));
   lines.push(L('已禁止买入；仍可卖出。', 'Buying is blocked; selling still works.'));
   return { lines, keyboard: [[tokenButton(L(`打开 ${label(token).slice(0, 30)}`, `Open ${label(token).slice(0, 30)}`), token)]] };

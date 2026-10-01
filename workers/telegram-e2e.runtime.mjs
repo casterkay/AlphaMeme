@@ -249,6 +249,21 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
+  it('marks each alerted lead with its recorded check and still alerts when the hot-list snapshot is unreadable',async()=>{
+    await withRuntime('22944',async({runtime,storage,tenantId,sent,drain})=>{
+      runtime.commands.setPreference('language','en');
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
+      const lead=(address,symbol,secondary)=>storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,symbol,'LIVE_READY',50_000,at,at+600_000,`lead-${symbol}`,JSON.stringify(secondary));
+      lead('0x'+'1'.repeat(40),'CLEAN',{status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]}});
+      lead('0x'+'2'.repeat(40),'PART',{status:'DEGRADED',security:{verdict:'UNSUPPORTED',fatal:[]}});
+      lead('0x'+'3'.repeat(40),'WAIT',null);
+      storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)',tenantId,'feed.snapshot:arc','{');
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
+      const alert=sent.find(row=>row.params.text?.includes('new lead'));
+      expect(alert.params.text).toBe(['<b>🆕 3 new leads · Arc</b>','1. ✅ CLEAN — $50K MC','2. ⚠️ PART — $50K MC','3. ⏳ WAIT — $50K MC','⏳ check running · ✅ no failures found · ⚠️ incomplete. Not a safety guarantee.'].join('\n'));
+    });
+  });
+
   it('sends a risk alert naming the token and its recorded veto findings',async()=>{
     await withRuntime('22942',async({runtime,storage,tenantId,sent,sessions,link,click,drain})=>{
       runtime.commands.setPreference('language','en');
