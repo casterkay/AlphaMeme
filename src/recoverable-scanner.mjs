@@ -1,6 +1,7 @@
 import { tokenInfoPrice } from './providers/ave.mjs';
 import { aggregateSecondarySources } from './providers/secondary.mjs';
 import { discoveryScreen } from './scoring/index.mjs';
+import { blockingConflicts } from './scoring/safety.mjs';
 import { dueOutcomeJobs, horizons } from './scoring/outcomes.mjs';
 import { addressKey, buildQueue, nextAuditDelay, publicToken, selectAuditQueue, socialFrom } from './scanner-parity.mjs';
 import { RecoverableScannerError, SCAN_PHASES } from './storage/recoverable-scanner.mjs';
@@ -455,7 +456,7 @@ export class RecoverableScanner {
     const secondaryReason = vetoed ? '第二安全源触发一票否决'
       : !supported ? '当前链暂无第二数据源，安全性未核验'
         : secondary.status !== 'COMPLETE' || secondary.security?.verdict === 'UNKNOWN' ? '第二数据源不完整，安全性未完全核验'
-          : (secondary.conflicts || []).some(conflict => ['MARKET_MISMATCH', 'SECURITY_MISMATCH'].includes(conflict?.type)) ? '多源数据冲突，请人工复核' : '';
+          : blockingConflicts(secondary).length ? '多源数据冲突，请人工复核' : '';
     const wasLead = stored?.status === 'LIVE_READY';
     const candidate = vetoed
       ? { ...token, status: 'HARD_REJECT', auditedAt: now, staleAt: now + settings.staleCandidateMs,
