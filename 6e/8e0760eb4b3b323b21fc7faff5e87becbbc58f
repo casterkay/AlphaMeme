@@ -1,0 +1,25 @@
+docs/TELEGRAM-UX-PLAN.md
+  s_6295713717bc33::t_d3789f94065019 284-285,312,458-460
+src/bot/trading-panels.mjs
+  s_6295713717bc33::t_ab03708e79ca82 95
+test/trading-panels.test.mjs
+  s_6295713717bc33::t_b4327998502794 90-91
+workers/trading.runtime.mjs
+  s_6295713717bc33::t_331d38099dec34 492
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6e8e0760eb4b3b323b21fc7faff5e87becbbc58f",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+test/safety.test.mjs
+  s_6295713717bc33::t_d838e94692b7f4 36
+test/trading-venue.test.mjs
+  s_6295713717bc33::t_1ce194b8e3a6e0 8,174-186
+workers/trading.runtime.mjs
+  s_6295713717bc33::t_04835c8988a454 463-465,471,501-515
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "44e29caa733067d4a7d9d46a37159999626bf72f",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
