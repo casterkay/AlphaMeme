@@ -77,7 +77,7 @@ describe('Durable Object storage writes', () => {
           const now = Date.now();
           await instance.receiveTelegramCredential({
             tenantId, actorUserId: tenantId, updateId: '7', commandType: 'credential', payload: { source: 'message' },
-            dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: '70'
+            dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: '70', locale: 'zh'
           }, `/setkey ${key}`);
           const scanCount = () => JSON.parse(state.storage.sql
             .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'runtime.global').toArray()[0]?.value_json ?? '{"scanCount":0}').scanCount;

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { TelegramInbox } from '../src/bot/inbox.mjs';
 
 function receipt(tenantId, updateId, command, date = 2_000_000) {
-  return { tenantId, actorUserId: tenantId, updateId, commandType: `command:${command}`, payload: { source: 'message', arguments: '' }, messageDate: date, sourceMessageId: '10' };
+  return { tenantId, actorUserId: tenantId, updateId, commandType: `command:${command}`, payload: { source: 'message', arguments: '' }, messageDate: date, sourceMessageId: '10', locale: 'zh' };
 }
 
 async function fixture(id, run) {

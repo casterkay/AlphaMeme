@@ -12,7 +12,8 @@ function receipt({ tenantId = '18100', updateId = '1', commandType = 'command:st
     payload: commandType === 'callback' ? { callbackId: 'action', callbackQueryId: 'query' } : { source: 'message', arguments: '' },
     dueAt: Date.now() + 60_000,
     messageDate: 1_700_000_000,
-    sourceMessageId: '10'
+    sourceMessageId: '10',
+    locale: 'zh'
   };
 }
 
@@ -43,6 +44,16 @@ describe('Telegram first-contact intake', () => {
       expect(state.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', '18100', 'scheduler.tasks.v1').one())
         .toMatchObject({ value_json: expect.stringContaining('inbox:1') });
       expect(await state.storage.getAlarm()).toBe(first.dueAt);
+    });
+  });
+
+  it('seeds the language of a new tenant from its first receipt and never changes it afterwards', async () => {
+    const radar = env.RADAR.get(env.RADAR.idFromName('radar:23620'));
+    await radar.receiveTelegramUpdate({ ...receipt({ tenantId: '23620', updateId: '1' }), locale: 'en' });
+    await radar.receiveTelegramUpdate({ ...receipt({ tenantId: '23620', updateId: '2' }), locale: 'zh' });
+    await runInDurableObject(radar, async (_instance, state) => {
+      expect(state.storage.sql.exec('SELECT key, value_json FROM preferences WHERE tenant_id = ? AND key = ?', '23620', 'telegram.language').toArray())
+        .toEqual([{ key: 'telegram.language', value_json: '"en"' }]);
     });
   });
 

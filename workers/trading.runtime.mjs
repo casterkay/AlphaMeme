@@ -142,7 +142,7 @@ async function withTrading(name, operation) {
     };
     let runtime = make();
     const request = operation => operation({ signal: new AbortController().signal, timeoutMs: 1000 });
-    const receipt = (commandType, payload, overrides = {}) => ({ tenantId, actorUserId: tenantId, updateId: String(++update), commandType, payload, dueAt: clock + 60_000, messageDate: Math.floor(clock / 1000), sourceMessageId: String(1000 + update), ...overrides });
+    const receipt = (commandType, payload, overrides = {}) => ({ tenantId, actorUserId: tenantId, updateId: String(++update), commandType, payload, dueAt: clock + 60_000, messageDate: Math.floor(clock / 1000), sourceMessageId: String(1000 + update), locale: 'zh', ...overrides });
     const drain = async () => {
       for (let count = 0; count < 100; count++) {
         const task = storage.transactionSync(() => runtime.outbox.reconcileInTransaction()).find(item => item.dueAt <= clock);
@@ -415,7 +415,7 @@ describe('one-tap trading', () => {
       const reply = async text => {
         await click(link(runtime().commands.sessions.get(detail.id), 'trade.input', params => params.side === 'buy'));
         const pending = runtime().commands.sessions.get(detail.id).query.pendingInput;
-        const input = { tenantId: runtime().tenantId, actorUserId: runtime().tenantId, updateId: String(900 + text.length), commandType: 'reply', payload: { source: 'reply', text, replyToMessageId: pending.promptMessageId }, dueAt: start + 60_000, messageDate: start / 1000, sourceMessageId: '9000' };
+        const input = { tenantId: runtime().tenantId, actorUserId: runtime().tenantId, updateId: String(900 + text.length), commandType: 'reply', payload: { source: 'reply', text, replyToMessageId: pending.promptMessageId }, dueAt: start + 60_000, messageDate: start / 1000, sourceMessageId: '9000', locale: 'zh' };
         runtime().receive(input);await runtime().runCommand(input.updateId);await drain();
       };
       await reply('150');

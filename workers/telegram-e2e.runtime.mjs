@@ -34,7 +34,7 @@ async function withRuntime(tenantId,operation) {
       sent.push(structuredClone({method:input.method,params:input.params}));
       return {ok:true,result:input.method==='sendMessage'?{message_id:++message}:input.method==='editMessageText'?{message_id:Number(input.params.message_id)}:true};
     };
-    const receipt=(commandType,payload,overrides={})=>({tenantId,actorUserId:tenantId,updateId:String(++update),commandType,payload,dueAt:at+60_000,messageDate:at/1000,sourceMessageId:String(1000+update),...overrides});
+    const receipt=(commandType,payload,overrides={})=>({tenantId,actorUserId:tenantId,updateId:String(++update),commandType,payload,dueAt:at+60_000,messageDate:at/1000,sourceMessageId:String(1000+update),locale:'zh',...overrides});
     const drain=async()=>{
       for(let count=0;count<100;count++) {
         const tasks=storage.transactionSync(()=>runtime.outbox.reconcileInTransaction());
@@ -88,7 +88,7 @@ describe('Telegram complete command and delivery flows',()=>{
       });
       try {
         const now=Date.now();
-        const response=await instance.receiveTelegramUpdate({tenantId,actorUserId:tenantId,updateId:'1',commandType:'callback',payload:{callbackId:'expired-shortlink',callbackQueryId:'immediate-query'},dueAt:now+60_000,messageDate:Math.floor(now/1000),sourceMessageId:'100'});
+        const response=await instance.receiveTelegramUpdate({tenantId,actorUserId:tenantId,updateId:'1',commandType:'callback',payload:{callbackId:'expired-shortlink',callbackQueryId:'immediate-query'},dueAt:now+60_000,messageDate:Math.floor(now/1000),sourceMessageId:'100',locale:'zh'});
         expect(response.accepted).toBe(true);expect(fetchSpy).toHaveBeenCalledTimes(1);
         expect(storage.sql.exec('SELECT status FROM inbox WHERE tenant_id=?',tenantId).one().status).toBe('RECEIVED');
         expect(storage.sql.exec('SELECT id FROM outbox WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
