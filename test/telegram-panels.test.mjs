@@ -4,6 +4,7 @@ import { renderPanel, selectPanelRows, PANEL_NAMES, HELP_COMMAND_NAMES, telegram
 import { projectTelegramCandidate, projectTelegramFeedRow, createTelegramExport, safeTelegramUrl } from '../src/bot/snapshot.mjs';
 import { CHART_RISK_VERSION, applyRiskExclusion } from '../src/scoring/chart-risk.mjs';
 import { money, officialXUrl } from '../src/render/telegram.mjs';
+import { aveTokenUrl } from '../src/providers/ave.mjs';
 
 const now=1_800_000_000_000;
 function candidate(index=0,changes={}) { return projectTelegramCandidate({ chain:'robinhood',address:'a'.repeat(32)+index,symbol:'COIN'+index,name:'Research token',status:'X_REVIEW',marketCap:20000+index,liquidity:8000,holders:0,auditedAt:now-60_000,reviewRevision:'revision',deep:{chainPass:true,chartRisk:{version:CHART_RISK_VERSION,pass:true},checks:{openSource:true,ownerRenounced:false},failed:[],unknownFields:[],blockingUnknownFields:[]},...changes }); }
@@ -189,11 +190,13 @@ test('manual approval creation is unavailable for ignored, stale or revisionless
   snapshot.marks[0].decision='ignored';assert.ok(!actions(renderPanel(snapshot,session('detail',{selectedToken:selected}))).includes('mark.set_passed'));
 });
 
-test('a lead detail links no external trading page and offers no manual approval',()=>{
+test('a lead detail links AVE only by our own token-page link, never a stored referral link, and offers no manual approval',()=>{
   const snapshot=fixture();
-  snapshot.candidates=[candidate(0,{status:'LIVE_READY',aveUrl:'https://pro.ave.ai/token/'+'a'.repeat(32)+'0-solana?ref=0001'})];
+  const address='0x59a0d858b0825098b5218f08e09901381c25a57d';
+  snapshot.candidates=[candidate(0,{address,status:'LIVE_READY',aveUrl:`https://pro.ave.ai/token/${address}-robinhood?ref=0001`})];
   const lead=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
-  assert.ok(!lead.keyboard.flat().some(item=>String(item.url).includes('ave.ai')));assert.doesNotMatch(lead.text,/Trade on AVE/);
+  assert.deepEqual(lead.keyboard.flat().filter(item=>String(item.url).includes('ave.ai')).map(item=>item.url),[`https://ave.ai/token/${address}-robinhood`]);
+  assert.doesNotMatch(lead.text,/Trade on AVE/);
   assert.match(lead.text,/Market lead/);assert.ok(!actions(lead).includes('mark.set_passed'));
 });
 
@@ -475,4 +478,20 @@ test('a session notice leads any panel as one escaped warning line',()=>{
     assert.match(result.text,/^⚠️ Above your &lt;b&gt;\$100&lt;\/b&gt; cap\.\n\n<b>/,panel);
   }
   assert.doesNotMatch(renderPanel(fixture(),session('radar'),'en').text,/⚠️/);
+});
+
+test('the AVE token page is built from the chain and address, and left out when AVE has no id for it',()=>{
+  const evm='0x59a0d858b0825098b5218f08e09901381c25a57d';
+  assert.equal(aveTokenUrl('arc',evm),'https://ave.ai/token/0x59a0d858b0825098b5218f08e09901381c25a57d-arc');
+  for(const [chain,id] of [['bsc','bsc'],['base','base'],['eth','eth'],['robinhood','robinhood']]) assert.equal(aveTokenUrl(chain,evm.toUpperCase().replace('0X','0x')),`https://ave.ai/token/${evm}-${id}`,chain);
+  for(const [chain,address] of [['stable',evm],['arc','not-an-address'],['sol',evm],['constructor',evm]]) assert.equal(aveTokenUrl(chain,address),'',`${chain} ${address}`);
+});
+
+test('the token detail link row reads X, Site, Chart, AVE, then Evidence',()=>{
+  const snapshot=fixture();
+  snapshot.candidates=[candidate(0,{address:'0x59a0d858b0825098b5218f08e09901381c25a57d',info:{website:'https://coin.example',twitter:'coin'},secondary:{status:'COMPLETE',market:{pairUrl:'https://dexscreener.com/robinhood/pair',websites:[]},security:{verdict:'NO_FATAL_FLAGS'},conflicts:[]}})];
+  const detail=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
+  const row=detail.keyboard.find(items=>items.some(item=>item.url?.startsWith('https://ave.ai/')));
+  assert.deepEqual(row.map(item=>item.text),['𝕏','🌐 Site','📊 Chart','🔭 AVE','🔎 Evidence']);
+  assert.equal(row[3].url,'https://ave.ai/token/0x59a0d858b0825098b5218f08e09901381c25a57d-robinhood');
 });

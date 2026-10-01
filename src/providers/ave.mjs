@@ -14,6 +14,12 @@ export const AVE_CHAINS = Object.freeze({ bsc: 'bsc', eth: 'eth', base: 'base', 
 // Estimated credit units per request, as upstream accounts them.
 export const AVE_CU = Object.freeze({ trending: 5, details: 5, klines: 10 });
 const ORIGIN = 'https://prod.ave-api.com';
+
+/** The token's page on ave.ai, or '' when AVE has no id for the chain or the address is not a token address. */
+export function aveTokenUrl(chain, address) {
+  const ca = Object.hasOwn(AVE_CHAINS, chain) ? normalizeTokenAddress(address) : null;
+  return ca ? `https://ave.ai/token/${ca}-${AVE_CHAINS[chain]}` : '';
+}
 const WBNB = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c';
 
 for (const chain of SCAN_CHAINS) {

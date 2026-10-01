@@ -2,6 +2,7 @@ import { backendDisposition, effectiveStatus } from '../scoring/manual-review.mj
 import { SCAN_CHAINS } from '../chains.mjs';
 import { safetyVerdict, blockingUnknownFields, blockingConflicts } from '../scoring/safety.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
+import { aveTokenUrl } from '../providers/ave.mjs';
 import { tokenIdentity, safeTelegramText } from './snapshot.mjs';
 import { TRADING_PANELS, TRADING_PANEL_NAMES, tokenTradeControls, renderTradingPanel } from './trading-panels.mjs';
 import { localize, escapeHtml, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, safetyBadge, ICONS } from '../render/telegram.mjs';
@@ -239,7 +240,7 @@ function detailPanel(snapshot,session,locale) {
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };
   const eligible = !mark?.decision && row.reviewRevision && backendDisposition(row) === 'chain' && row.auditedAt && snapshot.at-row.auditedAt <= 600_000;
   const keyboard = [...trading.keyboard,
-    [urlButton(ICONS.x,officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter)),urlButton(`${ICONS.site} ${L('官网','Site')}`,row.info?.website),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,row.secondary?.market?.pairUrl),button(`${ICONS.evidence} ${L('证据','Evidence')}`,'panel.open',{panel:'evidence'},identity)],
+    [urlButton(ICONS.x,officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter)),urlButton(`${ICONS.site} ${L('官网','Site')}`,row.info?.website),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,row.secondary?.market?.pairUrl),urlButton(`${ICONS.ave} AVE`,aveTokenUrl(row.chain,row.address)),button(`${ICONS.evidence} ${L('证据','Evidence')}`,'panel.open',{panel:'evidence'},identity)],
     [button(`${ICONS.saved} ${annotation?.favorite ? L('取消自选','Unwatch') : L('自选','Watch')}`,'favorite.set',{value:annotation?.favorite !== true},identity),button(`${ICONS.note} ${L('备注','Note')}`,'note.begin',{},identity),mark?.decision === 'ignored' ? null : button(`${ICONS.ignore} ${L('忽略','Ignore')}`,'mark.set_ignored',binding,identity)],
     [mark?.decision ? button(mark.decision === 'passed' ? L('撤销人工通过','Undo approval') : L('取消忽略','Stop ignoring'),'mark.clear',binding,identity) : eligible ? button(`${ICONS.approve} ${L('人工通过','Approve')}`,'mark.set_passed',binding,identity) : null,annotation?.note ? button(`${ICONS.clear} ${L('清空备注','Clear note')}`,'note.clear',{},identity) : null]];
   return finishPanel(`${safeTelegramText(row.symbol || '?',30)} · ${chainLabel(row.chain)}`,blocks.filter(value => value !== ''),keyboard,snapshot,session,locale,{token:identity});

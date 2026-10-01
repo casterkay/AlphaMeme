@@ -17,7 +17,7 @@ export const ICONS = Object.freeze({
   passed: '✅', unknown: '⚠️', vetoed: '⛔', checking: '⏳', newLead: '🆕', key: '🔑',
   chains: '🔗', trade_settings: '🎚️', language: '🌐', export: '📤', sources: '🛜', delivery: '📭',
   view_chain: '👁️', filter: '🔽', sort: '↕️', search: '🔍', clear: '✖️', previous: '◀️', next: '▶️',
-  x: '𝕏', site: '🌐', chart: '📊', evidence: '🔎', note: '📝', ignore: '🙈', approve: '👍'
+  x: '𝕏', site: '🌐', chart: '📊', ave: '🔭', evidence: '🔎', note: '📝', ignore: '🙈', approve: '👍'
 });
 
 // The one wording of a safetyVerdict (src/scoring/safety.mjs) wherever it is shown.
