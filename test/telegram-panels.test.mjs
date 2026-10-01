@@ -13,7 +13,7 @@ const actions=result=>result.keyboard.flat().filter(item=>item.action).map(item=
 
 test('all native panels render both locales with bounded text and typed action descriptors',()=>{
   for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) {
-    const snapshot=fixture(), current=session(panel,{selectedToken:{chain:'sol',address:snapshot.candidates[0].address}});
+    const snapshot=fixture(), current=session(panel,{selectedToken:{chain:'sol',address:snapshot.candidates[0].address},outcome:'connected'});
     const result=renderPanel(snapshot,current,locale);
     assert.ok(result.text.length<=3500,`${panel} ${locale}`);
     assert.ok(result.keyboard.length,`${panel} has navigation`);
@@ -60,12 +60,12 @@ test('help is three pages: what the radar does, commands, then safety',()=>{
 
 // Panels whose content cannot change by re-reading: choices, confirmations, help, evidence
 // pages, and the trading dialogs (in this fixture trading is off, so they are all static).
-const STATIC_PANELS=new Set(['view_chain','filter','sort','language','horizon','cohort','chains','disconnect','help','evidence','trade','trade_unverified','wallet','wallet_export','wallet_remove','trade_settings']);
+const STATIC_PANELS=new Set(['view_chain','filter','sort','language','horizon','cohort','chains','disconnect','help','connection','evidence','trade','trade_unverified','wallet','wallet_export','wallet_remove','trade_settings']);
 test('every panel ends with the standard footer and keeps navigation out of its body',()=>{
   const home=item=>item.action==='panel.open'&&item.params.panel==='radar';
   const nav=item=>item.action==='panel.refresh'||item.action==='panel.back'||home(item);
   for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) for(const returning of [false,true]) {
-    const snapshot=fixture(), query={selectedToken:{chain:'sol',address:snapshot.candidates[0].address},...(returning?{returnTo:{panel:'audits',viewChain:'sol',query:{}}}:{})};
+    const snapshot=fixture(), query={selectedToken:{chain:'sol',address:snapshot.candidates[0].address},outcome:'connected',...(returning?{returnTo:{panel:'audits',viewChain:'sol',query:{}}}:{})};
     const result=renderPanel(snapshot,session(panel,query),locale), footer=result.keyboard.at(-1), label=`${panel} ${locale} ${returning}`;
     assert.ok(footer.every(nav),label);
     assert.ok(!result.keyboard.slice(0,-1).flat().some(nav),label);
@@ -84,7 +84,7 @@ test('no icon leads to two different panels',()=>{
   const owners=new Map(),claim=(icon,panel,label)=>{ if(!owners.has(icon)) owners.set(icon,new Set());owners.get(icon).add(panel);assert.equal(owners.get(icon).size,1,`${icon} marks ${[...owners.get(icon)].join(' and ')} (${label})`); };
   const icon=text=>text.match(/^(\p{Extended_Pictographic}\S*) /u)?.[1];
   for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) {
-    const snapshot=fixture(),result=renderPanel(snapshot,session(panel,{selectedToken:{chain:'sol',address:snapshot.candidates[0].address}}),locale);
+    const snapshot=fixture(),result=renderPanel(snapshot,session(panel,{selectedToken:{chain:'sol',address:snapshot.candidates[0].address},outcome:'connected'}),locale);
     const title=icon(result.text.match(/^<b>(.*?)<\/b>/)[1]);
     if(title) claim(title,panel,`${panel} title`);
     for(const item of result.keyboard.flat()) if(item.action==='panel.open'&&icon(item.text)) claim(icon(item.text),item.params.panel,`${panel} button ${item.text}`);
@@ -419,3 +419,40 @@ test('status links Activity, Sources and Delivery and flags delivery issues',()=
   snapshot.delivery=[{status:'FAILED',purpose:'USER_RESPONSE'}];
   assert.match(renderPanel(snapshot,session('status'),'en').text,/\n⚠️ Delivery issues: 1/);
 });
+
+test('first run welcomes a new owner with what the radar does, two steps, a key link, help and the other language',()=>{
+  const fresh=fixture();fresh.control={configured:false,paused:false,notifications:true,activeChain:'arc',scanChain:'arc'};fresh.candidates=[];
+  const en=renderPanel(fresh,session('radar'),'en');
+  assert.match(en.text,/^<b>👋 AlphaMeme radar<\/b>\nWatches the Arc hot list for new meme tokens, checks their safety and alerts you\.\n\nStep 1 · Get a free AVE Data API key\nStep 2 · Send \/setkey &lt;key&gt;\nYour key is read-only; it can never trade\. Delete the key message afterwards\.\n\nUpdated /);
+  assert.deepEqual(en.keyboard.map(row=>row.map(item=>item.url ?? `${item.action}:${item.params.panel ?? item.params.value ?? ''}`)),[['https://cloud.ave.ai/login','panel.open:help'],['language.set:zh'],['panel.refresh:']]);
+  assert.deepEqual(en.keyboard.flat().map(item=>item.text).slice(0,3),['🔑 Get AVE key','❓ How it works','🌐 中文']);
+  const zh=renderPanel(fresh,session('radar'),'zh');
+  assert.match(zh.text,/^<b>👋 AlphaMeme 雷达<\/b>\n盯住 Arc 热榜/);
+  assert.deepEqual(zh.keyboard[1].map(item=>[item.text,item.params.value]),[['🌐 English','en']]);
+  // Records from an earlier connection keep the ordinary radar, which says AVE is not connected.
+  fresh.candidates=[candidate(0)];
+  assert.doesNotMatch(renderPanel(fresh,session('radar'),'en').text,/AlphaMeme/);
+});
+
+test('a key submission answers with a panel: connected shows the scan, a failure says why and offers another try',()=>{
+  const snapshot=fixture();snapshot.control={configured:true,paused:false,notifications:true,activeChain:'arc',scanChain:'arc'};
+  const connected=renderPanel(snapshot,session('connection',{outcome:'connected'}),'en');
+  assert.match(connected.text,/^<b>✅ AVE connected<\/b>\n🟢 Scanning Arc · 🔔 Alerts on\nDelete your key message if it is still visible\.\n/);
+  assert.deepEqual(connected.keyboard.map(row=>row.map(item=>[item.text,item.params.panel])),[[['🔗 Change chain','chains']],[['🏠 Home','radar']]]);
+  snapshot.control.paused=true;
+  assert.match(renderPanel(snapshot,session('connection',{outcome:'connected'}),'zh').text,/^<b>✅ AVE已连接<\/b>\n⏸️ 已暂停 · Arc · 🔔 提醒开启\n/);
+  for(const [query,reason] of [[{outcome:'failed',reason:'AVE_AUTH'},/^AVE rejected the key\.$/m],[{outcome:'failed',reason:'AVE_UPSTREAM'},/^AVE is temporarily unavailable\.$/m],
+    [{outcome:'failed',reason:'AVE_RATE_LIMITED',retryAt:now+90_000},/^AVE rate limited the request\. Try again after \d\d:\d\d:\d\d UTC\.$/m],[{outcome:'failed',reason:'AVE_RATE_LIMITED',retryAt:now-1},/^AVE rate limited the request\.$/m],
+    [{outcome:'failed',reason:'toString'},/^Connection failed or expired\.$/m],[{outcome:'failed',reason:null},/^Connection failed or expired\.$/m],[{outcome:'invalid'},/^That is not a valid AVE API key\.$/m]]) for(const configured of [true,false]) {
+    snapshot.control.configured=configured;
+    const result=renderPanel(snapshot,session('connection',query),'en'),label=JSON.stringify(query);
+    assert.match(result.text,query.outcome==='invalid' ? /^<b>Key not valid<\/b>/ : /^<b>Key not verified<\/b>/,label);
+    assert.match(result.text,reason,label);
+    assert.match(result.text,configured ? /Your previous connection is unchanged\./ : /AVE is not connected\./,label);
+    assert.match(result.text,/Delete your key message if it is still visible\./);
+    assert.deepEqual(result.keyboard[0].map(item=>[item.text,item.params.panel]),[['🔑 Try again','onboard']]);
+    assert.ok(!renderPanel(snapshot,session('connection',query),'zh').text.includes('Delete'));
+  }
+  for(const outcome of [undefined,'toString','rejected']) assert.throws(()=>renderPanel(snapshot,session('connection',{outcome}),'en'),/connection outcome/);
+});
+

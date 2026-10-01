@@ -11,7 +11,7 @@ export const urlButton = (text, value) => { const url = safeTelegramUrl(value); 
 
 // The only source of icons. Each marks a state or a destination; none is decorative.
 export const ICONS = Object.freeze({
-  refresh: '🔄', back: '⬅️', home: '🏠',
+  refresh: '🔄', back: '⬅️', home: '🏠', welcome: '👋',
   scanning: '🟢', paused: '⏸️', disconnected: '🔌', alertsOn: '🔔', alertsOff: '🔕',
   radar: '📡', audits: '🎯', feed: '🔥', saved: '⭐', stats: '📈', events: '🗂️', status: '📊', settings: '⚙️', wallet: '👛', help: '❓',
   passed: '✅', unknown: '⚠️', vetoed: '⛔', checking: '⏳', newLead: '🆕', key: '🔑',

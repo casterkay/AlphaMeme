@@ -299,6 +299,8 @@ unreadable optional fact is logged and omitted; it never drops the alert.
 - **Connected** becomes a panel instead of plain text: "✅ AVE connected ·
   Scanning Arc · 🔔 Alerts on. Delete your key message if it is still visible."
   `[📡 Open radar] [🔗 Change chain]`. Failure variants get `[🔑 Try again]`.
+  (Implemented without `[📡 Open radar]`: the standard footer's Home opens the
+  radar, and a body button to the radar breaks the one-footer rule.)
 - **Help** becomes three pages: what the bot does (three lines), commands (menu
   commands, then "more"), safety (key handling, hot wallet, not investment advice).
 

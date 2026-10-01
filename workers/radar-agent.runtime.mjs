@@ -611,9 +611,8 @@ describe('AVE onboarding and scanning through the Durable Object', () => {
         expect(requests.length).toBe(5);
         expect(state.storage.sql.exec('SELECT name FROM keys WHERE tenant_id = ?', tenantId).toArray()).toEqual([]);
         expect((await instance.getStatus(tenantId)).control.configured).toBe(false);
-        const notices = state.storage.sql.exec('SELECT payload_json FROM outbox WHERE tenant_id = ?', tenantId).toArray()
-          .map(row => JSON.parse(row.payload_json).params.text ?? '');
-        expect(notices.some(text => text.includes('AVE服务暂时出错') && text.includes('/setkey'))).toBe(true);
+        const panels = state.storage.sql.exec('SELECT payload_json FROM outbox WHERE tenant_id = ?', tenantId).toArray().map(row => JSON.parse(row.payload_json).params);
+        expect(panels.some(params => params.text?.startsWith('<b>密钥未通过验证</b>\nAVE服务暂时出错。\nAVE尚未连接。') && params.reply_markup.inline_keyboard[0][0].text === '🔑 重试')).toBe(true);
       });
     } finally {
       fetchSpy.mockRestore();
