@@ -7,6 +7,10 @@
 // transaction; every step is a read, so a replayed step is harmless. The
 // secondary sources only see an address AVE has confirmed as a token on that
 // chain: NOT_FOUND and FAILED end the lookup first.
+//
+// A fatal GoPlus finding is a safety fact, not disposable state: the record keeps
+// it as `veto` across reruns, and pruning never drops a vetoed record. Only a later
+// run that reaches DONE with a complete GoPlus check free of fatal flags clears it.
 import { normalizeTokenAddress } from './address.mjs';
 import { isScanChain } from './chains.mjs';
 import { ConnectionError } from './auth/connection.mjs';
@@ -56,6 +60,7 @@ export function validateLookup(record) {
   check(record.market === null || (isObject(record.market) && time(record.market.capturedAt)), 'market');
   check(isObject(record.sources), 'sources');
   check(record.secondary === null || isObject(record.secondary), 'secondary');
+  check(record.veto === null || (isObject(record.veto) && time(record.veto.checkedAt) && Array.isArray(record.veto.fatal) && record.veto.fatal.length > 0), 'veto');
   check(record.reason === null || (typeof record.reason === 'string' && /^[A-Z0-9_]{1,64}$/.test(record.reason)), 'reason');
   check(record.state === 'DETAILS' || record.state === 'NOT_FOUND' || record.state === 'FAILED' || record.market !== null, 'market missing after DETAILS');
   check((record.state === 'DONE') === (record.secondary !== null), 'secondary only when done');
@@ -85,12 +90,20 @@ export function readLookup(storage, tenantId, chain, address, now) {
   const key = lookupKey(chain, address);
   const row = key ? storage.sql.exec('SELECT key,value_json FROM scheduler_state WHERE tenant_id=? AND key=?', tenantId, key).toArray()[0] : null;
   const record = row ? parse(row) : null;
-  return record && now - record.startedAt < LOOKUP_SETTINGS.expiryMs ? record : null;
+  return record && (record.veto || now - record.startedAt < LOOKUP_SETTINGS.expiryMs) ? record : null;
 }
 
-/** The shared safety verdict of a lookup: PENDING until its checks finish. */
+/** The shared safety verdict of a lookup: VETOED while a recorded veto stands, else PENDING until its checks finish. */
 export function lookupVerdict(record) {
-  return safetyVerdict({ status: null, secondary: record?.secondary ?? null, deep: null });
+  return record?.veto ? 'VETOED' : safetyVerdict({ status: null, secondary: record?.secondary ?? null, deep: null });
+}
+
+// A finished run's effect on the veto: a fatal finding records one; only a
+// complete GoPlus check free of fatal flags clears it; anything else keeps it.
+function nextVeto(previous, secondary) {
+  const { security } = secondary;
+  if (security.verdict === 'FATAL') return { checkedAt: secondary.checkedAt, fatal: security.fatal.map(({ field, reason }) => ({ field, reason })) };
+  return secondary.sources.goPlus?.status === 'OK' && security.complete && security.verdict === 'NO_FATAL_FLAGS' ? null : previous;
 }
 
 // The market facts a detail shows, from AVE's token row.
@@ -125,7 +138,7 @@ export class TokenLookups {
       throw new LookupError('LOOKUP_QUEUE_FULL', 'too many lookups are waiting');
     }
     const record = { version: 1, chain, address: normalizeTokenAddress(address), revision: 0, state: 'DETAILS', startedAt: now, updatedAt: now,
-      sessionId, market: null, sources: {}, secondary: null, reason: null };
+      sessionId, market: null, sources: {}, secondary: null, reason: null, veto: current?.veto ?? null };
     return this.#write(record, null, current?.revision ?? null);
   }
 
@@ -179,8 +192,9 @@ export class TokenLookups {
     const sources = { ...record.sources, [source]: response };
     if (following !== 'DONE') return this.#commit(record, { state: following, sources });
     const { market } = record;
-    return this.#commit(record, { state: 'DONE', sources, secondary: aggregateSecondarySources({ chain: record.chain, tokenAddress: record.address,
-      primary: { market: { priceUsd: market.price, marketCap: market.marketCap, liquidityUsd: market.liquidity }, security: {} }, sources }) });
+    const checked = aggregateSecondarySources({ chain: record.chain, tokenAddress: record.address,
+      primary: { market: { priceUsd: market.price, marketCap: market.marketCap, liquidityUsd: market.liquidity }, security: {} }, sources });
+    return this.#commit(record, { state: 'DONE', sources, secondary: checked, veto: nextVeto(record.veto, checked) });
   }
 
   /** Commit a step's outcome unless the record changed since the step read it. */
@@ -202,10 +216,10 @@ export class TokenLookups {
     return next;
   }
 
-  // Keep the newest lookups within their expiry.
+  // Keep the newest lookups within their expiry, and every vetoed one.
   #pruneInTransaction() {
     const now = this.now();
-    listLookups(this.storage, this.tenantId).forEach((record, index) => {
+    listLookups(this.storage, this.tenantId).filter(record => !record.veto).forEach((record, index) => {
       if (index >= LOOKUP_SETTINGS.kept || now - record.startedAt >= LOOKUP_SETTINGS.expiryMs) {
         this.storage.sql.exec('DELETE FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, lookupKey(record.chain, record.address));
       }

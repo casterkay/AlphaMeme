@@ -288,8 +288,54 @@ describe('pasted contract-address lookup', () => {
       for (const address of [CLEAN_TOKEN, FATAL_TOKEN]) storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?)',
         tenantId, 'arc', address, 'LEAD', 'LIVE_READY', clock.now(), 'revision', JSON.stringify({ chainPass: true, chartRisk: { version: CHART_RISK_VERSION }, checks: {}, failed: [], unknownFields: [] }));
       expect([state(CLEAN_TOKEN), state(FATAL_TOKEN)]).toEqual(['UNVERIFIED', 'VETOED']);
+      // A veto is a safety fact: it outlives the lookup's expiry.
       clock.advance(LOOKUP_SETTINGS.expiryMs);
-      expect(state(FATAL_TOKEN)).toBe('UNVERIFIED');
+      expect(state(FATAL_TOKEN)).toBe('VETOED');
+    });
+  });
+
+  it('keeps a recorded veto through a rerun until a complete clean GoPlus check replaces it', async () => {
+    await withLookups('26817', async ({ storage, tenantId, net, connect, paste, step, lookups, lastText, clock }) => {
+      await connect();
+      const state = () => safetyState(storage, tenantId, 'arc', TOKEN, clock.now());
+      const rerun = async ave => { clock.advance(LOOKUP_SETTINGS.reuseMs);net.knobs.ave = ave;await paste(TOKEN); };
+      net.knobs.goPlus = { ...CLEAN, is_honeypot: '1' };
+      await paste(TOKEN);
+      for (let index = 0; index < 3; index++) await step();
+      expect(state()).toBe('VETOED');
+      // A rerun keeps the veto while it runs, and when it ends NOT_FOUND or FAILED.
+      await rerun(null);
+      expect([lookups()[0].state, state()]).toEqual(['DETAILS', 'VETOED']);
+      expect(lastText()).toMatch(/⏳ Looking up on Arc…\n⛔ Vetoed: Honeypot/);
+      for (let index = 0; index < 3; index++) await step();
+      await rerun(() => json({ status: 1, data: { pairs: [] } }));await step();
+      expect([lookups()[0].state, state()]).toEqual(['NOT_FOUND', 'VETOED']);
+      await rerun(() => json({ status: 0, msg: 'unexpected' }));await step();
+      expect([lookups()[0].state, state()]).toEqual(['FAILED', 'VETOED']);
+      // A finished check without a complete GoPlus answer keeps it too.
+      net.knobs.goPlus = { ...CLEAN, is_honeypot: undefined };
+      await rerun(null);for (let index = 0; index < 3; index++) await step();
+      expect([lookups()[0].state, lookups()[0].secondary.security.verdict, state()]).toEqual(['DONE', 'UNKNOWN', 'VETOED']);
+      net.knobs.goPlus = CLEAN;
+      await rerun(null);for (let index = 0; index < 3; index++) await step();
+      expect([lookups()[0].veto, state()]).toEqual([null, 'VERIFIED']);
+    });
+  });
+
+  it('prunes beyond the newest 20 and after 24 h, but never a vetoed lookup', async () => {
+    await withLookups('26818', async ({ storage, tenantId, net, connect, paste, step, lookups, clock }) => {
+      await connect();
+      net.knobs.goPlus = { ...CLEAN, is_honeypot: '1' };
+      const VETOED = '0x' + 'fe'.repeat(20);
+      await paste(VETOED);for (let index = 0; index < 3; index++) await step();
+      net.knobs.ave = () => json({ status: 1, data: { pairs: [] } });
+      const addresses = Array.from({ length: LOOKUP_SETTINGS.kept + 1 }, (_, index) => '0x' + index.toString(16).padStart(40, 'a'));
+      for (const address of addresses) { clock.advance(1);await paste(address);await step(); }
+      expect(lookups().map(record => record.address)).toEqual([...addresses.slice(1).reverse(), VETOED]);
+      clock.advance(LOOKUP_SETTINGS.expiryMs);
+      await paste('0x' + 'b'.repeat(40));
+      expect(lookups().map(record => record.address)).toEqual(['0x' + 'b'.repeat(40), VETOED]);
+      expect(safetyState(storage, tenantId, 'arc', VETOED, clock.now())).toBe('VETOED');
     });
   });
 

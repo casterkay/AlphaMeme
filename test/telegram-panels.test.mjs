@@ -497,7 +497,7 @@ test('the token detail link row reads X, Site, Chart, AVE, then Evidence',()=>{
 });
 
 // A pasted token's lookup as the snapshot projects it.
-function lookup(changes={}) { return {chain:'arc',address:'0x'+'cd'.repeat(20),state:'DETAILS',startedAt:now-5_000,reason:null,symbol:'',name:'',price:null,marketCap:null,liquidity:null,holders:null,createdAt:null,priceChange5m:null,volume5m:null,capturedAt:null,verdict:'PENDING',secondary:null,...changes}; }
+function lookup(changes={}) { return {chain:'arc',address:'0x'+'cd'.repeat(20),state:'DETAILS',startedAt:now-5_000,reason:null,symbol:'',name:'',price:null,marketCap:null,liquidity:null,holders:null,createdAt:null,priceChange5m:null,volume5m:null,capturedAt:null,verdict:'PENDING',secondary:null,veto:null,...changes}; }
 const lookupDetail=(changes,snapshotChanges={})=>{ const snapshot={...fixture(),...snapshotChanges},row=lookup(changes);snapshot.lookups=[row];return renderPanel(snapshot,{...session('detail',{selectedToken:{chain:row.chain,address:row.address}}),viewChain:row.chain},'en'); };
 const chainButtons=result=>result.keyboard.flat().filter(item=>item.action==='lookup.start'&&!item.params.retry).map(item=>item.token.chain);
 
@@ -532,3 +532,12 @@ test('a finished lookup shows the shared verdict; a vetoed one keeps selling but
   assert.match(passed.text,/✅ No failures found/);assert.ok(actions(passed).includes('trade.buy'));
 });
 
+
+test('a candidate whose lookup is vetoed shows no buy, as the engine refuses one',()=>{
+  const snapshot=fixture(),row=snapshot.candidates[0];
+  snapshot.trading={chains:['robinhood'],wallet:{address:'0x'+'11'.repeat(20)},settings:{capUsd:100,slippageBps:500}};
+  const detail=()=>renderPanel(snapshot,session('detail',{selectedToken:row}),'en');
+  assert.ok(actions(detail()).includes('trade.buy'));
+  snapshot.lookups=[lookup({chain:row.chain,address:row.address,state:'DONE',verdict:'VETOED',veto:{checkedAt:now,fields:['honeypot']}})];
+  assert.ok(!actions(detail()).includes('trade.buy'));assert.ok(actions(detail()).includes('trade.sell'));
+});

@@ -98,7 +98,8 @@ export function projectTelegramLookup(record) {
     chain: record.chain, address: record.address, state: record.state, startedAt: record.startedAt, reason: record.reason,
     symbol: safeTelegramText(market.symbol, 30), name: safeTelegramText(market.name, 80),
     ...Object.fromEntries(numbers.map(key => [key, typeof market[key] === 'number' && Number.isFinite(market[key]) ? market[key] : null])),
-    verdict: lookupVerdict(record), secondary: record.secondary ? projectSecondary(record.secondary) : null
+    verdict: lookupVerdict(record), secondary: record.secondary ? projectSecondary(record.secondary) : null,
+    veto: record.veto && { checkedAt: record.veto.checkedAt, fields: record.veto.fatal.map(item => safeTelegramText(item.field, 48)) }
   };
 }
 
@@ -160,7 +161,7 @@ export function readTelegramSnapshot(storage, tenant, now = Date.now()) {
     return {
       at: now, language: preferences['telegram.language'] === 'en' ? 'en' : 'zh', control,
       candidates, annotations, marks, events, queue, delivery, metrics,
-      lookups: listLookups(storage, tenantId).filter(record => now - record.startedAt < LOOKUP_SETTINGS.expiryMs).map(projectTelegramLookup),
+      lookups: listLookups(storage, tenantId).filter(record => record.veto || now - record.startedAt < LOOKUP_SETTINGS.expiryMs).map(projectTelegramLookup),
       sourceHealth: projectSourceHealth(state['runtime.sourceHealth'] || {}),
       feedByChain: Object.fromEntries(SCAN_CHAINS.filter(chain => state['feed.snapshot:'+chain]).map(chain => {
         const feed=state['feed.snapshot:'+chain];
