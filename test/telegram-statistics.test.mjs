@@ -25,10 +25,10 @@ test('SQL statistics isolate tenants and chains and keep original rejected cohor
   const stats = readTelegramStatistics(storage, '1', 90_000_000);
   assert.deepEqual(Object.keys(stats), STATISTICS_CHAINS);
   assert.equal(stats.sol.tracked, 1);
-  assert.equal(stats.sol.averageReturn30m, 0.2);
+  assert.equal(stats.sol.coverage.passed.m30.median, 0.2);
   assert.equal(stats.sol.coverage.rejected.m30.median, -0.5);
-  assert.equal(stats.bsc.averageReturn30m, 0.7);
-  assert.equal(stats.eth.averageReturn30m, null);
+  assert.equal(stats.bsc.coverage.passed.m30.median, 0.7);
+  assert.equal(stats.eth.coverage.passed.m30.median, null);
 });
 
 test('all seven windows use exact eligibility boundaries and preserve missing samples as unknown', t => {
@@ -40,9 +40,6 @@ test('all seven windows use exact eligibility boundaries and preserve missing sa
       eligible: 1, completed: 0, missing: 1, median: null, positiveRate: null
     });
   }
-  const summary = readTelegramStatistics(storage, '1', 90_000_000).sol;
-  assert.equal(summary.averageReturn30m, null);
-  assert.equal(Object.hasOwn(summary, 'averageReturn6h'), false);
 });
 
 test('the calibration gate needs 50 samples in each of 30m, 2h and 24h', t => {
@@ -57,17 +54,16 @@ test('the calibration gate needs 50 samples in each of 30m, 2h and 24h', t => {
   stats = readTelegramStatistics(storage, '1', 90_000_000).sol;
   assert.equal(stats.calibrationReady, true);
   assert.deepEqual(stats.readyWindows, ['m30', 'h2', 'h24']);
-  assert.equal(stats.averageReturn24h, 0);
+  assert.equal(stats.coverage.passed.h24.median, 0);
 });
 
-test('SQL coverage and averages share the outcome summary contract including median and positive-return rate', t => {
+test('SQL coverage shares the outcome summary contract including median and positive-return rate', t => {
   const { storage, insert } = fixture(t);
   const rows = [-0.2, 0, 0.4, null].map(value => ({ initialDecision: 'X_REVIEW', baselineAt: 1000, samples: { h6: { return: value }, m30: { return: value } } }));
   for (const row of rows) insert({ samples: row.samples });
   const { available, generatedAt, readyWindows, ...summary } = readTelegramStatistics(storage, '1', 90_000_000).sol;
   assert.deepEqual(summary, summarizeOutcomes(rows, 90_000_000));
   assert.deepEqual(summary.coverage.passed.h6, { eligible: 4, completed: 3, missing: 1, median: 0, positiveRate: 1 / 3 });
-  assert.equal(summary.averageReturn30m, (-0.2 + 0.4) / 3);
 });
 
 test('unavailable or corrupt storage never becomes an empty successful statistics report', t => {
