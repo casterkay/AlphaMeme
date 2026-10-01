@@ -330,7 +330,8 @@ A token is **verified** when its recorded GoPlus/DexScreener check has status
 (`MARKET_MISMATCH`/`SECURITY_MISMATCH`), and its deep audit has no failed or
 blocking-unknown field. Everything else — a lead whose check has not run yet, a
 degraded, unknown or conflicted check, an open deep audit, a hot-list
-row that never became a candidate, a pasted token whose lookup is still running —
+row that never became a candidate, a pasted token whose lookup is still running
+or whose clean check is more than 15 minutes old —
 is **unverified**. One pure function (`safetyVerdict({ status, secondary, deep })` in
 `src/scoring/safety.mjs` → `VETOED | PASSED | INCOMPLETE | PENDING`) owns this rule
 for panels, alerts and the engine; the engine's `safetyState` maps it, plus risk
@@ -478,6 +479,10 @@ time per tenant; scheduler priority equals `command`.
   records stays small, and the detail keeps showing why. Buy is hidden wherever
   `safetyState` would refuse it, so a vetoed lookup hides Buy on a candidate's
   detail too.
+- **A clean lookup verifies only while fresh** (amended in #87 review):
+  `safetyState` treats it as `VERIFIED` for 15 minutes from its GoPlus read, then
+  `UNVERIFIED`, so a later buy asks Yes/No again. The detail keeps its verdict
+  with "checked 20m ago". A veto never goes stale.
 - Detail shows the source and age: "AVE · 20s ago".
 - DexScreener and GoPlus receive an address only after AVE has confirmed it as a
   token on that chain; `NOT_FOUND` and `FAILED` end the lookup first. (The 32-byte

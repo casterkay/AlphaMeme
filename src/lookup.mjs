@@ -23,7 +23,8 @@ export const RUNNING_STATES = Object.freeze(new Set(['DETAILS', 'DEXSCREENER', '
 // Lookups run one at a time and each AVE read waits at least AVE_MINIMUM_GAP_MS (15 s)
 // for admission, ahead of the scan: five waiting lookups already hold the scan back
 // for over a minute and the last answer arrives that late, so more are refused.
-export const LOOKUP_SETTINGS = Object.freeze({ reuseMs: 60_000, expiryMs: 24 * 60 * 60_000, kept: 20, pending: 5 });
+// A clean check verifies a buy only while fresh; a veto never goes stale.
+export const LOOKUP_SETTINGS = Object.freeze({ reuseMs: 60_000, expiryMs: 24 * 60 * 60_000, kept: 20, pending: 5, verifiedMs: 15 * 60_000 });
 const PREFIX = 'lookup:';
 const SECONDARY_STEPS = Object.freeze({ DEXSCREENER: ['dexScreener', 'GOPLUS'], GOPLUS: ['goPlus', 'DONE'] });
 // AVE answers that end a lookup: the key or the request is refused, or the answer is unusable.
@@ -96,6 +97,11 @@ export function readLookup(storage, tenantId, chain, address, now) {
 /** The shared safety verdict of a lookup: VETOED while a recorded veto stands, else PENDING until its checks finish. */
 export function lookupVerdict(record) {
   return record?.veto ? 'VETOED' : safetyVerdict({ status: null, secondary: record?.secondary ?? null, deep: null });
+}
+
+/** Whether a clean lookup verifies a buy now: within LOOKUP_SETTINGS.verifiedMs of its GoPlus read. */
+export function lookupVerified(record, now) {
+  return lookupVerdict(record) === 'PASSED' && now - record.sources.goPlus.collectedAt <= LOOKUP_SETTINGS.verifiedMs;
 }
 
 // A finished run's effect on the veto: a fatal finding records one; only a
