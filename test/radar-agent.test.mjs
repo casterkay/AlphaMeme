@@ -200,7 +200,7 @@ for (const [scenario, options, reason] of [
   });
 }
 
-test('a lead failing a later screen is deleted while an absent lead is kept until stale_at and pruned at summary', async () => {
+test('a lead that fails a later screen or leaves the hot list stays, no longer live, until unchecked for the retention window', async () => {
   const radarFixture = radar();
   radarFixture.hotList = [radarFixture.quote(A), radarFixture.quote(B)];
   await radarFixture.runCycle('cycle-leads-1');
@@ -210,17 +210,63 @@ test('a lead failing a later screen is deleted while an absent lead is kept unti
   radarFixture.clock.now = NOW + 10 * MINUTE;
   radarFixture.hotList = [radarFixture.quote(A, { marketCap: 500_000 })];
   await radarFixture.runCycle('cycle-leads-2');
-  assert.equal(radarFixture.candidate(A), null, 'a failing screen eliminates the lead');
+  const failed = radarFixture.candidate(A);
+  assert.equal(failed.status, 'LIVE_READY', 'a failing screen keeps the lead and its evidence');
+  assert.equal(failed.staleAt, NOW + 10 * MINUTE, 'it is no longer live, so it cannot alert');
+  assert.equal(failed.metadata.screenFailedAt, NOW + 10 * MINUTE);
+  assert.ok(failed.metadata.screenReasons.length > 0);
   assert.equal(radarFixture.candidate(B).status, 'LIVE_READY', 'absence from one hot list is not elimination');
 
-  radarFixture.clock.now = NOW + scannerSettings.liveLeadRetentionMs;
-  radarFixture.hotList = [];
+  radarFixture.clock.now = NOW + 11 * MINUTE;
+  radarFixture.hotList = [radarFixture.quote(A)];
   await radarFixture.runCycle('cycle-leads-3');
-  assert.equal(radarFixture.candidate(B).status, 'LIVE_READY', 'a lead is shown through its stale_at');
+  assert.ok(radarFixture.candidate(A).staleAt > radarFixture.clock.now, 'passing again makes it live again');
+  assert.equal(radarFixture.candidate(A).metadata.screenFailedAt, undefined);
+  assert.deepEqual(radarFixture.events().map(event => event.type), ['CANDIDATE_NEW', 'CANDIDATE_NEW'], 'a lead that passes again is not new again');
 
   radarFixture.clock.now = NOW + scannerSettings.liveLeadRetentionMs + 1;
+  radarFixture.hotList = [];
   await radarFixture.runCycle('cycle-leads-4');
+  assert.equal(radarFixture.candidate(B).status, 'LIVE_READY', 'a lead off the hot list is kept past its live window');
+
+  radarFixture.clock.now = NOW + scannerSettings.candidateRetentionMs + 1;
+  await radarFixture.runCycle('cycle-leads-5');
+  assert.equal(radarFixture.candidate(B), null, 'unchecked for the retention window, it is pruned');
+});
+
+test('an alerted token is kept for the no-repeat window, beyond ordinary retention', async () => {
+  const radarFixture = radar();
+  radarFixture.hotList = [radarFixture.quote(A), radarFixture.quote(B)];
+  await radarFixture.runCycle('cycle-alerted-1');
+  radarFixture.storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)', TENANT, 'notification.baseline',
+    JSON.stringify({ version: 1, notified: { [`${radarFixture.candidate(A).chain}:${A.toLowerCase()}`]: NOW } }));
+  radarFixture.hotList = [];
+  radarFixture.clock.now = NOW + scannerSettings.candidateRetentionMs + 1;
+  await radarFixture.runCycle('cycle-alerted-2');
   assert.equal(radarFixture.candidate(B), null);
+  assert.equal(radarFixture.candidate(A).address, A.toLowerCase());
+  radarFixture.clock.now = NOW + 7 * 24 * 60 * MINUTE + 1;
+  await radarFixture.runCycle('cycle-alerted-3');
+  assert.equal(radarFixture.candidate(A), null, 'after the no-repeat window it follows ordinary retention');
+});
+
+test('a queued lead that leaves the hot list still gets its check, and a forgotten token leaves the queue', async () => {
+  const radarFixture = radar();
+  const leads = [A, B, C, D, E];
+  radarFixture.hotList = leads.map(token => radarFixture.quote(token));
+  await radarFixture.runCycle('cycle-queue-1');
+  const checked = () => new Set(radarFixture.secondaryCalls.filter(call => call.source === 'goPlus').map(call => call.tokenAddress.toLowerCase()));
+  const waiting = leads.filter(token => !checked().has(token.toLowerCase()));
+  assert.ok(waiting.length > 0, 'more leads than one cycle checks');
+
+  radarFixture.clock.now = NOW + MINUTE;
+  radarFixture.hotList = [];
+  for (let cycle = 2; cycle < 6; cycle++) await radarFixture.runCycle(`cycle-queue-${cycle}`);
+  for (const token of waiting) assert.ok(checked().has(token.toLowerCase()), `${token} is checked off the hot list`);
+
+  radarFixture.storage.sql.exec('DELETE FROM candidates WHERE tenant_id = ? AND address = ?', TENANT, A.toLowerCase());
+  await radarFixture.runCycle('cycle-queue-6');
+  assert.ok(!radarFixture.store.readAuditQueue(radarFixture.candidate(B).chain).some(item => item.address.toLowerCase() === A.toLowerCase()));
 });
 
 test('a refreshed lead keeps its secondary result, review revision and qualification time', async () => {

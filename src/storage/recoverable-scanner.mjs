@@ -1,4 +1,5 @@
 import { AVE_CU } from '../providers/ave.mjs';
+import { VOICE_TTL } from '../../public/voice-alerts.mjs';
 import { assertCheckpointGeneration, SqliteControlStateStore } from './control-state.mjs';
 import {
   readSchedulerStateInTransaction,
@@ -15,6 +16,10 @@ export const SCAN_PHASES = Object.freeze([
 const NOTIFICATION_EFFECT_TYPES = new Set(['CANDIDATE_NEW', 'RISK_WORSENED']);
 const NOTIFICATION_DEDUP_WINDOW_MS = 30 * 60_000;
 const MAX_PUBLIC_CANDIDATES = 200;
+// A favorite, or a token alerted within the no-repeat window, is kept whatever the other retention rules say,
+// so an alert never points at a token the radar has forgotten. Binds tenant, chain, tenant, chain, tenant, alerted-since.
+const KEPT_TOKEN = `address NOT IN (SELECT address FROM annotations WHERE tenant_id = ? AND chain = ? AND favorite = 1)
+  AND (? || ':' || address) NOT IN (SELECT key FROM json_each(COALESCE((SELECT json_extract(value_json, '$.notified') FROM scheduler_state WHERE tenant_id = ? AND key = 'notification.baseline'), '{}')) WHERE value >= ?)`;
 
 export class RecoverableScannerError extends Error {
   constructor(code, message) {
@@ -520,30 +525,24 @@ export class SqliteRecoverableScannerStore {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
       const retentionBoundary = next.updatedAt - candidateRetentionMs;
-      // A lead is shown until its last confirmation's display window ends.
+      const kept = [this.tenantId, next.chain, next.chain, this.tenantId, next.updatedAt - VOICE_TTL];
+      // A lead that left the hot list or failed a screen stays visible, as no longer live, until it goes unchecked for the retention window.
       this.storage.sql.exec(
         `DELETE FROM candidates
-         WHERE tenant_id = ? AND chain = ? AND status = 'LIVE_READY' AND stale_at < ?
-           AND address NOT IN (SELECT address FROM annotations WHERE tenant_id = ? AND chain = ? AND favorite = 1)`,
-        this.tenantId, next.chain, next.updatedAt, this.tenantId, next.chain
-      );
-      this.storage.sql.exec(
-        `DELETE FROM candidates
-         WHERE tenant_id = ? AND chain = ?
-           AND address NOT IN (SELECT address FROM annotations WHERE tenant_id = ? AND chain = ? AND favorite = 1)
+         WHERE tenant_id = ? AND chain = ? AND ${KEPT_TOKEN}
            AND (audited_at IS NULL OR audited_at < ?)`,
-        this.tenantId, next.chain, this.tenantId, next.chain, retentionBoundary
+        this.tenantId, next.chain, ...kept, retentionBoundary
       );
       this.storage.sql.exec(
         `DELETE FROM candidates
-         WHERE tenant_id = ? AND chain = ? AND address NOT IN (
+         WHERE tenant_id = ? AND chain = ? AND ${KEPT_TOKEN} AND address NOT IN (
            SELECT address FROM candidates
            WHERE tenant_id = ? AND chain = ?
            ORDER BY CASE status WHEN 'LIVE_READY' THEN 3 WHEN 'X_REVIEW' THEN 3 WHEN 'WAIT_RECHECK' THEN 2 WHEN 'HARD_REJECT' THEN 1 ELSE 0 END DESC,
                     priority_band DESC, discovery_score DESC, address ASC
            LIMIT ?
          )`,
-        this.tenantId, next.chain, this.tenantId, next.chain, MAX_PUBLIC_CANDIDATES
+        this.tenantId, next.chain, ...kept, this.tenantId, next.chain, MAX_PUBLIC_CANDIDATES
       );
       pruneExpiredOutcomes(this.storage, this.tenantId, next.updatedAt, outcomeRetentionMs);
       this.storage.sql.exec(
@@ -586,7 +585,12 @@ export class SqliteRecoverableScannerStore {
       throw new RecoverableScannerError('SCREEN_COMMIT_INVALID', 'screen commit requires leads, eliminations, events, outcomes, feed and source health');
     }
     const leads = value.leads.map(item => candidateInput(item, this.tenantId, next.chain));
-    const eliminated = [...new Set(value.eliminated.map(address => canonicalAddress(address)))];
+    const eliminated = [...new Map(value.eliminated.map(item => {
+      if (!item || typeof item.address !== 'string' || !Array.isArray(item.reasons) || !item.reasons.every(reason => typeof reason === 'string')) {
+        throw new RecoverableScannerError('SCREEN_COMMIT_INVALID', 'an eliminated lead needs its address and screen reasons');
+      }
+      return [canonicalAddress(item.address), item.reasons.slice(0, 3)];
+    })).entries()];
     const outcomes = value.outcomes.map(item => outcomeInput(item, this.tenantId, next.chain));
     const events = value.events.map(item => ({ address: canonicalAddress(item.address),
       event: eventInput(item, this.tenantId, next.cycleId, next.chain, canonicalAddress(item.address), next.updatedAt) }));
@@ -597,8 +601,14 @@ export class SqliteRecoverableScannerStore {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
       for (const lead of leads) this.#upsertCandidate(lead, { keepEvidence: true });
-      for (const address of eliminated) {
-        this.storage.sql.exec("DELETE FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ? AND status = 'LIVE_READY'", this.tenantId, next.chain, address);
+      // A lead that fails a screen is no longer live, but stays with the reasons it failed.
+      for (const [address, reasons] of eliminated) {
+        this.storage.sql.exec(
+          `UPDATE candidates SET stale_at = MIN(COALESCE(stale_at, ?), ?),
+             metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.screenFailedAt', ?, '$.screenReasons', json(?))
+           WHERE tenant_id = ? AND chain = ? AND address = ? AND status = 'LIVE_READY'`,
+          next.updatedAt, next.updatedAt, next.updatedAt, JSON.stringify(reasons), this.tenantId, next.chain, address
+        );
       }
       for (const outcome of outcomes) this.#upsertOutcome(outcome);
       for (const { address, event } of events) this.#recordEvent(event, next.chain, address);
@@ -626,6 +636,11 @@ export class SqliteRecoverableScannerStore {
       watched: Boolean(row.watched),
       ...parseJson(row.details_json, 'audit queue details')
     }));
+  }
+
+  /** Every stored candidate's address on the chain. */
+  readCandidateAddresses(chainName) {
+    return this.storage.sql.exec('SELECT address FROM candidates WHERE tenant_id = ? AND chain = ?', this.tenantId, chain(chainName)).toArray().map(row => row.address);
   }
 
   /** The stored candidate as the scanner wrote it, or null. */

@@ -323,12 +323,16 @@ export class RecoverableScanner {
       return this.#screen(current, partial, settings, now, expected);
     } else if (current.phase === 'BUILD_QUEUE') {
       const leads = (partial.leads || []).map(item => ({ row: item.row, screen: item.screen }));
-      const queue = buildQueue(this.store.readAuditQueue(current.chain), leads, now, settings);
-      const availableAddresses = new Set(leads.map(item => addressKey(item.row.address)));
+      // A queued token is checked while it is a current lead or still stored, even after it leaves the hot list;
+      // one that is neither can never be checked, so it leaves the queue instead of counting as due forever.
+      const availableAddresses = new Set([...leads.map(item => item.row.address), ...this.store.readCandidateAddresses(current.chain)].map(addressKey));
+      const queue = buildQueue(this.store.readAuditQueue(current.chain), leads, now, settings).filter(item => availableAddresses.has(addressKey(item.address)));
       const selected = selectAuditQueue(queue, availableAddresses, now, num(partial.scanCount) + 1, settings.maxSecondaryChecksPerCycle);
       const byAddress = new Map(leads.map(item => [addressKey(item.row.address), item]));
+      // A stored token off the hot list is classified from its stored record, so it needs no hot-list row.
+      const source = item => byAddress.get(addressKey(item.address)) ?? { row: { address: item.address }, screen: {} };
       partial.queue = {
-        selected: selected.map(item => ({ ...item, row: clone(byAddress.get(addressKey(item.address)).row), screen: clone(byAddress.get(addressKey(item.address)).screen) }))
+        selected: selected.map(item => ({ ...item, row: clone(source(item).row), screen: clone(source(item).screen) }))
       };
       tokenIndex = 0;
       nextPhase = partial.queue.selected.length ? 'SECONDARY' : 'OUTCOMES_SAMPLE';
@@ -392,8 +396,8 @@ export class RecoverableScanner {
             message: `${lead.symbol}：新市场线索，安全性待核验`, data: { address: lead.address, reviewRevision: lead.reviewRevision } });
         }
       } else if (!screen.pass && previous?.status === 'LIVE_READY') {
-        // Failing a current screen eliminates a lead; missing from one hot list does not.
-        eliminated.push(row.address);
+        // Failing a current screen ends a lead's live state; missing from one hot list does not.
+        eliminated.push({ address: row.address, reasons: screen.reasons });
       }
     }
     const rowsByAddress = new Map(rows.map(row => [addressKey(row.address), row]));
