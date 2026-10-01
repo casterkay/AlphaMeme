@@ -338,7 +338,7 @@ describe('Telegram text that is not a command', () => {
     const words = `what does ${base58(random(12))} mean`;
     const { inbox, requests, stored, logged } = await deliver('23616', { text: words });
     expect(inbox).toEqual({ command_type: 'text', payload_json: '{}', payload_enc: null, status: 'DONE' });
-    expect(requests.map(request => [request.method, request.params.text])).toEqual([['sendMessage', 'I only act on commands and replies to my prompts. Open 📡 Radar or ❓ Help.']]);
+    expect(requests.map(request => [request.method, request.params.text])).toEqual([['sendMessage', 'Paste a token contract address to look it up, or open 📡 Radar.']]);
     for (const text of [stored, logged, JSON.stringify(requests)]) expect(text.includes(words.split(' ')[2])).toBe(false);
     expect(stored).toContain('"telegram.language","value_json":"\\"en\\""');
   });

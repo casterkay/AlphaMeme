@@ -495,3 +495,40 @@ test('the token detail link row reads X, Site, Chart, AVE, then Evidence',()=>{
   assert.deepEqual(row.map(item=>item.text),['𝕏','🌐 Site','📊 Chart','🔭 AVE','🔎 Evidence']);
   assert.equal(row[3].url,'https://ave.ai/token/0x59a0d858b0825098b5218f08e09901381c25a57d-robinhood');
 });
+
+// A pasted token's lookup as the snapshot projects it.
+function lookup(changes={}) { return {chain:'arc',address:'0x'+'cd'.repeat(20),state:'DETAILS',startedAt:now-5_000,reason:null,symbol:'',name:'',price:null,marketCap:null,liquidity:null,holders:null,createdAt:null,priceChange5m:null,volume5m:null,capturedAt:null,verdict:'PENDING',secondary:null,...changes}; }
+const lookupDetail=(changes,snapshotChanges={})=>{ const snapshot={...fixture(),...snapshotChanges},row=lookup(changes);snapshot.lookups=[row];return renderPanel(snapshot,{...session('detail',{selectedToken:{chain:row.chain,address:row.address}}),viewChain:row.chain},'en'); };
+const chainButtons=result=>result.keyboard.flat().filter(item=>item.action==='lookup.start'&&!item.params.retry).map(item=>item.token.chain);
+
+test('a running lookup shows its progress, or the wait for AVE capacity, with the AVE link and no chain buttons',()=>{
+  const running=lookupDetail({});
+  assert.match(running.text,/^<b>\? · Arc<\/b>\n⏳ Looking up on Arc…\n<code>0x(cd){20}<\/code>/);
+  assert.deepEqual(chainButtons(running),[]);
+  assert.ok(running.keyboard.flat().some(item=>item.url===`https://ave.ai/token/0x${'cd'.repeat(20)}-arc`));
+  assert.match(lookupDetail({},{ave:{cuUsed:0,blockedUntil:now+60_000,readyAt:now+60_000}}).text,/⏳ Waiting for AVE capacity/);
+  // Only the AVE step waits on admission.
+  assert.match(lookupDetail({state:'GOPLUS',symbol:'LOOK',marketCap:50_000,capturedAt:now-20_000},{ave:{cuUsed:0,blockedUntil:now+60_000,readyAt:now+60_000}}).text,/⏳ Looking up on Arc…\nMC \$50K[\s\S]*AVE · 20s ago/);
+});
+
+test('a lookup AVE did not find, or that failed, offers the other EVM chains; only a failure offers Retry',()=>{
+  const others=['bsc','base','eth','robinhood'];
+  const missing=lookupDetail({state:'NOT_FOUND'});
+  assert.match(missing.text,/⚠️ AVE has no token at this address on Arc\./);
+  assert.deepEqual(chainButtons(missing),others);assert.ok(!missing.keyboard.flat().some(item=>item.params?.retry));
+  const failed=lookupDetail({state:'FAILED',reason:'AVE_SCHEMA'});
+  assert.match(failed.text,/⚠️ Lookup failed: AVE returned an answer it could not be read from/);
+  assert.deepEqual(chainButtons(failed),others);assert.ok(failed.keyboard.flat().some(item=>item.action==='lookup.start'&&item.params.retry===true&&item.token.chain==='arc'));
+});
+
+test('a finished lookup shows the shared verdict; a vetoed one keeps selling but offers no buy',()=>{
+  const fatal={status:'DEGRADED',checkedAt:now-60_000,market:{pairUrl:'https://dexscreener.com/arc/pair',websites:[]},security:{verdict:'FATAL',fatal:[{field:'honeypot'}],unknownFields:[]},conflicts:[]};
+  const trading={chains:['arc'],wallet:{address:'0x'+'11'.repeat(20)},settings:{capUsd:100,slippageBps:500}};
+  const result=lookupDetail({state:'DONE',verdict:'VETOED',secondary:fatal},{trading});
+  assert.match(result.text,/⛔ Vetoed: Honeypot · checked 1m ago/);
+  assert.ok(!actions(result).includes('trade.buy'));assert.ok(actions(result).includes('trade.sell'));
+  assert.ok(result.keyboard.flat().some(item=>item.url==='https://dexscreener.com/arc/pair'));
+  const passed=lookupDetail({state:'DONE',verdict:'PASSED',secondary:{...fatal,status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[],unknownFields:[]}}},{trading});
+  assert.match(passed.text,/✅ No failures found/);assert.ok(actions(passed).includes('trade.buy'));
+});
+

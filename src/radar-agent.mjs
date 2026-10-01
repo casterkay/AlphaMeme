@@ -270,6 +270,7 @@ export class RadarAgent extends DurableObject {
         }),
         credential: this.#credentialVerificationHandler(store),
         trade: externalRequestHandler(({ task, request }) => this.#telegram(store.tenantId).trading.runStep(task.id, { request, fetchImpl: globalThis.fetch })),
+        lookup: this.#lookupHandler(store),
         scan: this.#recoverableScanHandler(store),
         ...this.#schedulerHandlers
       },
@@ -306,6 +307,21 @@ export class RadarAgent extends DurableObject {
         ave: new AveClient({ apiKey }),
         request: operation => request(aveRequest ? this.#recordingAveAnswer(store.tenantId, operation, checkpoint.keyEpoch) : operation),
         onFinalized: finalized => this.#startNextRecoverableCycle(store, scanner, finalized)
+      });
+    });
+  }
+
+  // A pasted token's lookup step. Its AVE read is the one admission reserved
+  // credits for, and admission learns from AVE's answer like a scan's.
+  #lookupHandler(store) {
+    return externalRequestHandler(({ task, request }) => {
+      const telegram = this.#telegram(store.tenantId), keyEpoch = telegram.control.snapshot().keyEpoch;
+      return telegram.lookups.runStep(task.id, {
+        request,
+        details: async (chain, address, options) => {
+          const apiKey = await readAveApiKey(this.ctx.storage, telegram.masterKey, store.tenantId);
+          return this.#recordingAveAnswer(store.tenantId, ({ signal }) => new AveClient({ apiKey }).details(chain, address, { signal }), keyEpoch)(options);
+        }
       });
     });
   }

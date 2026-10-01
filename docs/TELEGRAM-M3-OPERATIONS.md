@@ -91,7 +91,16 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   the token. Credentials are routed before note/search input and are never
   persisted as either. A trade refusal or an invalid reply appears as a one-line
   banner on the panel it came from and is gone on that panel's next render.
-- Plain text that is neither a command nor a reply gets a hint, and its text is
+- A pasted token contract address is looked up live on the scan chain; the
+  token detail offers the other chains when AVE has no such token there. A token
+  already known as a lead, hot-list row or watchlist entry opens at once and spends
+  nothing. Otherwise one AVE details read (5 credits, paced by admission like the
+  scan's), then DexScreener, then GoPlus run as `lookup` scheduler steps,
+  re-rendering the token detail after each; DexScreener and GoPlus see the address
+  only after AVE confirms it is a token. A lookup is not a lead: it never enters
+  leads, alerts, Performance or `/export`. Lookups run one at a time, at most 5 may
+  wait, and records expire after 24 hours.
+- Other plain text that is neither a command nor a reply gets a hint, and its text is
   never stored. A reply is kept in the command log for up to seven days like any
   command; a reply that answers no open prompt is refused as expired.
 - A message holding a 64-character hex string, a base58 64-byte Solana secret

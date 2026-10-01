@@ -3,6 +3,7 @@ import { CHART_RISK_VERSION, applyRiskExclusion } from '../scoring/chart-risk.mj
 import { effectiveStatus } from '../scoring/manual-review.mjs';
 import { DEFAULT_SCAN_CHAIN, SCAN_CHAINS } from '../chains.mjs';
 import { readSchedulerStateInTransaction } from '../storage/scheduler-state.mjs';
+import { listLookups, lookupVerdict, LOOKUP_SETTINGS } from '../lookup.mjs';
 import { normalizeTenantId } from '../storage/tenant-id.mjs';
 
 export const tokenIdentity = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
@@ -78,12 +79,27 @@ export function projectTelegramCandidate(source) {
     for (const key of ['sampled', 'ordinaryCount', 'ordinaryHoldRate', 'botHoldRate', 'linkedHoldRate']) row.deep.wallets[key] = null;
     row.deep.sellability.distinctSellers = null;
   }
-  if (source.secondary) {
-    row.secondary = availabilityProjection(publicCandidate({ secondary: source.secondary }).secondary, source.secondary);
-    row.secondary.market.pairUrl = safeTelegramUrl(source.secondary.market?.pairUrl);
-    row.secondary.market.websites = (source.secondary.market?.websites || []).map(safeTelegramUrl).filter(Boolean);
-  }
+  if (source.secondary) row.secondary = projectSecondary(source.secondary);
   return row;
+}
+
+function projectSecondary(source) {
+  const secondary = availabilityProjection(publicCandidate({ secondary: source }).secondary, source);
+  secondary.market.pairUrl = safeTelegramUrl(source.market?.pairUrl);
+  secondary.market.websites = (source.market?.websites || []).map(safeTelegramUrl).filter(Boolean);
+  return secondary;
+}
+
+/** A pasted token's lookup: its progress, AVE market facts and, once done, its check. */
+export function projectTelegramLookup(record) {
+  const market = record.market || {};
+  const numbers = ['price','marketCap','liquidity','holders','createdAt','priceChange5m','volume5m','capturedAt'];
+  return {
+    chain: record.chain, address: record.address, state: record.state, startedAt: record.startedAt, reason: record.reason,
+    symbol: safeTelegramText(market.symbol, 30), name: safeTelegramText(market.name, 80),
+    ...Object.fromEntries(numbers.map(key => [key, typeof market[key] === 'number' && Number.isFinite(market[key]) ? market[key] : null])),
+    verdict: lookupVerdict(record), secondary: record.secondary ? projectSecondary(record.secondary) : null
+  };
 }
 
 export function projectTelegramFeedRow(source, chain) {
@@ -144,6 +160,7 @@ export function readTelegramSnapshot(storage, tenant, now = Date.now()) {
     return {
       at: now, language: preferences['telegram.language'] === 'en' ? 'en' : 'zh', control,
       candidates, annotations, marks, events, queue, delivery, metrics,
+      lookups: listLookups(storage, tenantId).filter(record => now - record.startedAt < LOOKUP_SETTINGS.expiryMs).map(projectTelegramLookup),
       sourceHealth: projectSourceHealth(state['runtime.sourceHealth'] || {}),
       feedByChain: Object.fromEntries(SCAN_CHAINS.filter(chain => state['feed.snapshot:'+chain]).map(chain => {
         const feed=state['feed.snapshot:'+chain];

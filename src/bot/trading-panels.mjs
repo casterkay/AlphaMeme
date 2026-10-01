@@ -51,13 +51,13 @@ const txLink = (trading, trade, hash, L) => {
   return explorer ? `<a href="${escapeHtml(`${explorer}/tx/${hash}`)}">${L('查看交易', 'View transaction')}</a> <code>${hash}</code>` : `${L('交易哈希', 'Transaction hash')}: <code>${hash}</code>`;
 };
 
-/** Buy and sell rows for a token detail; nothing on chains that cannot trade. */
-export function tokenTradeControls(snapshot, row, locale, identity) {
+/** Buy and sell rows for a token detail; nothing on chains that cannot trade, and no buys of a vetoed token. */
+export function tokenTradeControls(snapshot, row, locale, identity, vetoed) {
   const trading = snapshot.trading, L = L_(locale);
   if (!trading || !trading.chains.includes(row.chain)) return { blocks: [], keyboard: [] };
   if (!trading.wallet) return { blocks: [], keyboard: [[button(L('设置交易钱包', 'Set up trading wallet'), 'panel.open', { panel: 'wallet' })]] };
   const blocks = [], keyboard = [];
-  if (row.status === 'HARD_REJECT') blocks.push(L('安全核验未通过：已禁止买入，仍可卖出。', 'Safety check failed: buying is disabled; selling stays available.'));
+  if (vetoed) blocks.push(L('安全核验未通过：已禁止买入，仍可卖出。', 'Safety check failed: buying is disabled; selling stays available.'));
   else keyboard.push([...TRADING_SETTINGS.buyButtonsUsd.filter(usd => usd <= trading.settings.capUsd).map(usd => button(`${L('买', 'Buy')} $${usd}`, 'trade.buy', { usd }, identity)),
     button(L('买 …', 'Buy …'), 'trade.input', { side: 'buy' }, identity)]);
   keyboard.push([...TRADING_SETTINGS.sellButtonsPercent.map(percent => button(`${L('卖', 'Sell')} ${percent}%`, 'trade.sell', { percent }, identity)),

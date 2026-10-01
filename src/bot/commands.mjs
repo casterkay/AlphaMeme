@@ -1,9 +1,10 @@
 import { renderPanel } from './panels.mjs';
-import { readTelegramSnapshot } from './snapshot.mjs';
+import { readTelegramSnapshot, tokenIdentity } from './snapshot.mjs';
 import { NOTIFICATION_PANELS, TelegramSessions } from './sessions.mjs';
 import { annotateInTransaction, ReviewConflict, setManualMarkInTransaction, reviewProjectionRevision } from './review.mjs';
 import { DEFAULT_SCAN_CHAIN, SCAN_CHAINS as CHAINS } from '../chains.mjs';
 import { TradeRefusal } from '../trading/engine.mjs';
+import { LookupError, LOOKUP_SETTINGS } from '../lookup.mjs';
 import { TRADING_SETTINGS } from '../trading/config.mjs';
 import { parseUsdCents, parsePercent } from '../trading/amounts.mjs';
 import { saveTradingWalletInTransaction, removeTradingWalletInTransaction, tradingWalletEnvelope, readTradingWallet } from '../trading/wallet.mjs';
@@ -40,8 +41,8 @@ const tradeView = (tradeId, returnTo) => ({ panel: 'trade', query: { schemaVersi
 const unverifiedQuestion = (request, returnTo) => ({ panel: 'trade_unverified', query: { schemaVersion: 1, page: 0, unverifiedBuy: request, returnTo } });
 
 export class TelegramCommands {
-  constructor({ storage, tenantId, inbox, outbox, controls, trading = null, now = Date.now, snapshot = readTelegramSnapshot }) {
-    Object.assign(this, { storage, tenantId, inbox, outbox, controls, trading, now, snapshot });
+  constructor({ storage, tenantId, inbox, outbox, controls, lookups, trading = null, now = Date.now, snapshot = readTelegramSnapshot }) {
+    Object.assign(this, { storage, tenantId, inbox, outbox, controls, lookups, trading, now, snapshot });
     this.sessions = new TelegramSessions({ storage, tenantId, now });
   }
 
@@ -139,9 +140,33 @@ export class TelegramCommands {
       'I tried to delete your message because it looked like it held a private key (64 hex characters, a Solana secret key or a PEM key). If it was only a transaction hash, nothing else is needed. Never send keys here; deletion is not guaranteed, so check that the message is gone.'));
   }
 
-  /** A pasted contract address. Looking it up arrives with #68; until then it gets the hint. */
-  lookupInTransaction(row, _payload) {
-    this.hintInTransaction(row);
+  /** A pasted contract address is looked up on the scan chain; the detail's chain buttons try the others. */
+  lookupInTransaction(row, payload) {
+    const chain = this.controls.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN;
+    // A refused lookup leaves the radar under its banner.
+    const session = this.sessions.createInTransaction('radar', chain);
+    this.renderInTransaction(this.sessions.advanceInTransaction(session, this.lookupChangesInTransaction(session, { chain, address: payload.address })));
+  }
+
+  /**
+   * Session changes that show a pasted token: a token known locally opens at once
+   * and spends nothing; otherwise a lookup is started (or reused) and bound to the
+   * session, which needs AVE connected. A full lookup queue leaves the panel under a banner.
+   */
+  lookupChangesInTransaction(session, token, retry = false) {
+    const snapshot = this.snapshot(this.storage, this.tenantId, this.now()), key = tokenIdentity(token.chain, token.address);
+    const known = [...snapshot.candidates, ...(snapshot.feedByChain?.[token.chain]?.rows ?? []), ...snapshot.annotations].some(row => row.chain === token.chain && tokenIdentity(row.chain, row.address) === key);
+    if (!known && !this.controls.snapshot().configured) {
+      return { panel: 'onboard', query: { schemaVersion: 1, page: 0, notice: text(this.language, '查询代币需要先连接AVE。', 'Looking up a token needs AVE. Connect it first.') } };
+    }
+    if (!known) {
+      try { this.lookups.startInTransaction({ ...token, sessionId: session.id, retry }); } catch (error) {
+        if (error?.code !== 'LOOKUP_QUEUE_FULL' || !(error instanceof LookupError)) throw error;
+        const max = LOOKUP_SETTINGS.pending;
+        return { query: { ...session.query, notice: text(this.language, `已有${max}个查询在等待，请等其中一个完成后再试。`, `${max} lookups are already waiting; try again when one finishes.`) } };
+      }
+    }
+    return { panel: 'detail', viewChain: token.chain, query: { schemaVersion: 1, page: 0, selectedToken: token } };
   }
 
   /** Text the bot does not act on gets a pointer instead of silence. Intake dropped the text itself. */
@@ -150,7 +175,7 @@ export class TelegramCommands {
     const session = this.sessions.createInTransaction('radar', this.controls.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN);
     const keyboard = [[button(`${ICONS.radar} ${L('雷达', 'Radar')}`, 'panel.open', { panel: 'radar' }), button(`${ICONS.help} ${L('帮助', 'Help')}`, 'panel.open', { panel: 'help' })]];
     this.outbox.enqueueInTransaction({ id: `hint:${row.update_id}`, chatId: this.tenantId, method: 'sendMessage',
-      params: { text: L(`我只响应命令和对提示的回复。打开 ${ICONS.radar} 雷达 或 ${ICONS.help} 帮助。`, `I only act on commands and replies to my prompts. Open ${ICONS.radar} Radar or ${ICONS.help} Help.`), reply_markup: { inline_keyboard: this.sessions.bindKeyboardInTransaction(session, keyboard, this.controls.snapshot()) }, link_preview_options: { is_disabled: true } },
+      params: { text: L(`粘贴代币合约地址即可查询，或打开 ${ICONS.radar} 雷达。`, `Paste a token contract address to look it up, or open ${ICONS.radar} Radar.`), reply_markup: { inline_keyboard: this.sessions.bindKeyboardInTransaction(session, keyboard, this.controls.snapshot()) }, link_preview_options: { is_disabled: true } },
       sessionId: session.id, sessionVersion: session.version, expiresAt: session.expiresAt });
   }
 
@@ -251,6 +276,10 @@ export class TelegramCommands {
       changes = { viewChain: params.value };
     }
     else if (action === 'export.create') this.exportInTransaction(row.update_id);
+    else if (action === 'lookup.start') {
+      if (!token) throw new ReviewConflict('invalid_token');
+      changes = this.lookupChangesInTransaction(session, token, params.retry === true);
+    }
     else if (/^(trade|trading|wallet)\./.test(action)) {
       changes = this.tradingActionInTransaction(row, session, action, params, token, prepared);
       if (changes === null) return;

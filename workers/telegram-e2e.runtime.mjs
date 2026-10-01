@@ -623,13 +623,13 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it.each([['text',{}],['lookup',{family:'evm',address:'0x'+'ab'.repeat(20)}]])('answers a %s receipt with a hint whose buttons open Radar and Help',async(commandType,payload)=>{
-    await withRuntime(commandType==='text'?'23602':'23603',async({runtime,storage,tenantId,sent,receipt,drain,sessions,link,click})=>{
-      const input=receipt(commandType,payload);
+  it('answers unrecognized text with a hint whose buttons open Radar and Help',async()=>{
+    await withRuntime('23602',async({runtime,sent,receipt,drain,sessions,link,click})=>{
+      const payload={},input=receipt('text',payload);
       runtime.receive(input);await runtime.runCommand(input.updateId);await drain();
       expect(runtime.inbox.get(input.updateId)).toMatchObject({status:'DONE',payload_json:JSON.stringify(payload)});
       expect(sent).toHaveLength(1);
-      expect(sent[0].params.text).toBe('我只响应命令和对提示的回复。打开 📡 雷达 或 ❓ 帮助。');
+      expect(sent[0].params.text).toBe('粘贴代币合约地址即可查询，或打开 📡 雷达。');
       expect(sent[0].params.reply_markup.inline_keyboard.map(row=>row.map(item=>item.text))).toEqual([['📡 雷达','❓ 帮助']]);
       const [hint]=sessions();
       await click(link(hint,'panel.open',params=>params.panel==='help'));

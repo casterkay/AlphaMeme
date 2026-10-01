@@ -112,7 +112,9 @@ If you deployed the GMGN version, delete it first; the schema moved to v2 withou
 1. `/start`，然后 `/onboard`：登录 [AVE Cloud](https://cloud.ave.ai/login) 复制 Data API Key。
 2. 发送 `/setkey <key>`：验证读取一次（5 个额度）后开始扫描 Arc。含密钥的消息会尝试删除，请自行确认已删除。
 3. 线索提醒默认开启，`/mute` 可关闭或重新开启；`/radar` 查看最新线索；`/leads` 查看线索与核验；`/hot` 查看热榜；`/watchlist` 查看自选；`/performance` 查看筛选后表现；`/settings` 切换扫描链、提醒与交易限额；`/status` 查看运行与额度。
-4. 可选：`/wallet` 创建交易钱包并充值，然后在代币详情中买卖。
+4. 粘贴代币合约地址即可实时查询（AVE 行情，再由 DexScreener 与 GoPlus 核验）；查询结果不算线索。
+   Paste a token contract address for a live lookup (AVE market data, then DexScreener and GoPlus checks); a looked-up token is not a lead.
+5. 可选：`/wallet` 创建交易钱包并充值，然后在代币详情中买卖。
 
 `/help` 列出全部命令。运维细节见 [docs/TELEGRAM-M3-OPERATIONS.md](docs/TELEGRAM-M3-OPERATIONS.md)。
 

@@ -22,6 +22,7 @@ import { RecoverableScanner } from '../recoverable-scanner.mjs';
 import { SecretError } from '../util/crypto.mjs';
 import { parseTradingConfig, TRADING_SETTINGS } from '../trading/config.mjs';
 import { TradingEngine } from '../trading/engine.mjs';
+import { TokenLookups } from '../lookup.mjs';
 import { generateTradingWallet, readTradingWallet, revealTradingKey, markTradingWalletExportedInTransaction } from '../trading/wallet.mjs';
 
 // Only the fields a panel shows; never raw transactions, calldata or routes.
@@ -37,6 +38,7 @@ export class TelegramRuntime {
     this.tradingConfig = parseTradingConfig(env);
     this.trading = new TradingEngine({ storage, tenantId, now, config: this.tradingConfig, masterKey: () => this.masterKey,
       onTradeInTransaction: trade => this.presentTradeInTransaction(trade), onBalancesInTransaction: state => this.presentBalancesInTransaction(state) });
+    this.lookups = new TokenLookups({ storage, tenantId, now, onLookupInTransaction: record => this.presentLookupInTransaction(record) });
     this.inbox = new TelegramInbox({ storage, tenantId, now });
     this.control = new SqliteControlStateStore(storage, tenantId);
     this.notifications = new NotificationPolicy({ storage, tenantId, now });
@@ -52,7 +54,7 @@ export class TelegramRuntime {
       },
       onFailedInTransaction: value => { if (value.payload.notification) this.notifications.failInTransaction(value.payload.notification); }
     });
-    this.commands = new TelegramCommands({ storage, tenantId, inbox: this.inbox, outbox: this.outbox, trading: this.trading, now,
+    this.commands = new TelegramCommands({ storage, tenantId, inbox: this.inbox, outbox: this.outbox, lookups: this.lookups, trading: this.trading, now,
       snapshot: (storage, tenant, at) => {
         const snapshot = readTelegramSnapshot(storage, tenant, at), aveBudget = parseAveBudget(env);
         // Spending rolls into a new period only on the next request; show the period as it is now.
@@ -130,6 +132,15 @@ export class TelegramRuntime {
     if (!['FILLED', 'FAILED', 'UNKNOWN'].includes(trade.state) || trade.confirmedAt === null) return;
     const next = this.commands.sessions.createInTransaction('trade', trade.chain, { tradeId: trade.id });
     this.commands.renderInTransaction(next, { deliveryClass: 'PANEL_UPDATE' });
+  }
+
+  /** Each lookup step re-renders the token detail it is bound to, while that detail is still open. */
+  presentLookupInTransaction(record) {
+    const session = record.sessionId ? this.commands.sessions.get(record.sessionId) : null;
+    const shown = session?.query.selectedToken;
+    if (session?.panel === 'detail' && session.expiresAt > this.now() && shown?.chain === record.chain && shown.address === record.address) {
+      this.commands.renderInTransaction(this.commands.sessions.advanceInTransaction(session), { deliveryClass: 'PANEL_UPDATE' });
+    }
   }
 
   presentBalancesInTransaction(state) {
@@ -407,8 +418,8 @@ export class TelegramRuntime {
     this.reconcileNotificationsInTransaction();
     const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
     const ownedOutbox = new Set(this.outbox.ids().map(row => `outbox:${row.id}`));
-    const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'telegram:corrections' && task.id !== 'telegram:expiry' && !task.id.startsWith('inbox:') && task.kind !== 'trade');
-    tasks.push(...this.trading.tasksInTransaction(state.runtime.retries));
+    const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'telegram:corrections' && task.id !== 'telegram:expiry' && !task.id.startsWith('inbox:') && task.kind !== 'trade' && task.kind !== 'lookup');
+    tasks.push(...this.trading.tasksInTransaction(state.runtime.retries), ...this.lookups.tasksInTransaction(state.runtime.retries));
     this.outbox.scrubSecretsInTransaction();
     tasks.push(...state.tasks.filter(task => task.id.startsWith('inbox:')));
     const expiry = this.storage.sql.exec("SELECT MIN(expires_at) AS at FROM inbox WHERE tenant_id=? AND status IN ('RECEIVED','RUNNING')", this.tenantId).toArray()[0]?.at;

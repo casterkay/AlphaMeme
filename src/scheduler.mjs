@@ -1,11 +1,12 @@
 import { aveReadyAt, reserveAveRequest, validateAveAdmission } from './ave-admission.mjs';
 
-const TASK_KINDS = Object.freeze(['local-control', 'command', 'credential', 'trade', 'scan', 'outbox']);
+const TASK_KINDS = Object.freeze(['local-control', 'command', 'credential', 'trade', 'lookup', 'scan', 'outbox']);
 const TASK_PRIORITY = Object.freeze({
   'local-control': 0,
   command: 2,
   credential: 2,
   trade: 2,
+  lookup: 2,
   scan: 3,
   outbox: 4
 });
