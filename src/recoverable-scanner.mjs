@@ -2,7 +2,7 @@ import { tokenInfoPrice } from './providers/ave.mjs';
 import { aggregateSecondarySources } from './providers/secondary.mjs';
 import { discoveryScreen } from './scoring/index.mjs';
 import { blockingConflicts } from './scoring/safety.mjs';
-import { dueOutcomeJobs, horizons } from './scoring/outcomes.mjs';
+import { dueOutcomeJobs, hasAveOutcomeBaseline, horizons } from './scoring/outcomes.mjs';
 import { addressKey, buildQueue, nextAuditDelay, publicToken, selectAuditQueue, socialFrom } from './scanner-parity.mjs';
 import { RecoverableScannerError, SCAN_PHASES } from './storage/recoverable-scanner.mjs';
 
@@ -255,7 +255,10 @@ export class RecoverableScanner {
       const now = this.now();
       if (now >= outcomeSampleDeadline(checkpoint, now)) return null;
       const outcome = checkpoint.partial.outcomes?.job;
-      return outcome ? Object.freeze({ kind: 'OUTCOMES_SAMPLE', ...clone(outcome), checkpoint }) : null;
+      if (!outcome) return null;
+      const stored = this.store.readOutcomes();
+      const target = stored.find(row => outcomeKey(row, checkpoint.chain) === tokenKey(outcome.chain || checkpoint.chain, outcome.address));
+      return hasAveOutcomeBaseline(target) ? Object.freeze({ kind: 'OUTCOMES_SAMPLE', ...clone(outcome), checkpoint }) : null;
     }
     return null;
   }
@@ -398,7 +401,7 @@ export class RecoverableScanner {
     const outcomes = [];
     for (const outcome of stored) {
       const row = rowsByAddress.get(addressKey(outcome.address));
-      if (!row || !TRACKED_DECISIONS.has(outcome.initialDecision)) continue;
+      if (!row || !TRACKED_DECISIONS.has(outcome.initialDecision) || !hasAveOutcomeBaseline(outcome)) continue;
       const sampled = sampledOutcome(outcome, row, now);
       if (sampled) outcomes.push(sampled);
     }
@@ -513,6 +516,7 @@ export class RecoverableScanner {
     const jobChain = job.chain || current.chain;
     const outcome = outcomes.find(row => outcomeKey(row, current.chain) === tokenKey(jobChain, job.address));
     if (!outcome) throw new RecoverableScannerError('OUTCOME_MISSING', 'outcome sample target no longer exists');
+    if (!hasAveOutcomeBaseline(outcome)) throw new RecoverableScannerError('OUTCOME_PROVIDER_MISMATCH', 'outcome baseline is not AVE');
     const progressed = outcomeWithSample(outcome, job, sample, error, collectedAt);
     const nextOutcomes = outcomes.map(row => outcomeKey(row, current.chain) === tokenKey(jobChain, job.address) ? progressed : row);
     const partial = clone(current.partial);

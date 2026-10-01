@@ -26,6 +26,11 @@ function optionalNonNegative(value) {
   return parsed !== null && parsed >= 0 ? parsed : null;
 }
 
+function optionalCount(value) {
+  const parsed = optionalNonNegative(value);
+  return parsed !== null && Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 function optionalRate(value) {
   let parsed;
   if (typeof value === 'string' && value.trim().endsWith('%')) {
@@ -248,12 +253,14 @@ function parseDexBatch(payload, { chain, dexChainId, tokenAddresses, capturedAt 
     if (!members.length || !validPairAddress(pair.pairAddress, chain)) continue;
     const liquidity = optionalNonNegative(pair.liquidity?.usd);
     const volume5m = optionalNonNegative(pair.volume?.m5);
+    const buys5m = optionalCount(pair.txns?.m5?.buys), sells5m = optionalCount(pair.txns?.m5?.sells);
     const createdAt = optionalNonNegative(pair.pairCreatedAt);
     if (liquidity === null || volume5m === null || !Number.isSafeInteger(createdAt)
       || createdAt <= 0 || createdAt > capturedAt + 300_000) continue;
     const poolMarket = {
       pairAddress: cleanString(pair.pairAddress, 128), dexId: cleanString(pair.dexId, 64),
-      liquidity, volume5m, pairCreatedAt: createdAt
+      liquidity, volume5m, pairCreatedAt: createdAt,
+      swaps5m: buys5m !== null && sells5m !== null && Number.isSafeInteger(buys5m + sells5m) ? buys5m + sells5m : null
     };
     for (const tokenAddress of members) {
       const market = { ...poolMarket,
@@ -261,7 +268,10 @@ function parseDexBatch(payload, { chain, dexChainId, tokenAddresses, capturedAt 
         // metrics remain valid when the requested token happens to be quote.
         priceUsd: tokenAddress === baseAddress ? optionalNonNegative(pair.priceUsd) : null,
         marketCap: tokenAddress === baseAddress ? optionalNonNegative(pair.marketCap) : null,
-        fdv: tokenAddress === baseAddress ? optionalNonNegative(pair.fdv) : null };
+        fdv: tokenAddress === baseAddress ? optionalNonNegative(pair.fdv) : null,
+        // DexScreener's trade direction is defined for the base token.
+        buys5m: tokenAddress === baseAddress ? buys5m : null,
+        sells5m: tokenAddress === baseAddress ? sells5m : null };
       const previous = best.get(tokenAddress);
       if (!previous || market.liquidity > previous.liquidity) best.set(tokenAddress, market);
     }
@@ -285,13 +295,17 @@ function overlayDexMarket(rows, chain, marketByToken, capturedAt, ttlMs) {
       last_trade_at: null, lastTradeAt: null, poolEvidence: null };
     const marketCap = market.marketCap ?? cleanRow.market_cap;
     const marketOverlayPriceUpdated = market.priceUsd > 0;
-    const price = marketOverlayPriceUpdated ? market.priceUsd : cleanRow.price;
+    // A fresh pool response without this token's price cannot refresh an old one.
+    const price = marketOverlayPriceUpdated ? market.priceUsd : null;
     return {
       ...cleanRow, price, market_cap: marketCap,
       marketCapSourceUpdatedAt: market.marketCap !== null ? capturedAt : cleanRow.marketCapSourceUpdatedAt,
       marketCapCapturedAt: market.marketCap !== null ? capturedAt : cleanRow.marketCapCapturedAt,
       marketCapExpiresAt: market.marketCap !== null ? capturedAt + ttlMs : cleanRow.marketCapExpiresAt,
       liquidity: market.liquidity, volume_5m: market.volume5m,
+      buys_5m: market.buys5m, sells_5m: market.sells5m, swaps_5m: market.swaps5m,
+      buy_volume_5m: null, sell_volume_5m: null,
+      volume: null, buys: null, sells: null, swaps: null,
       pool_created_at: Math.floor(market.pairCreatedAt / 1_000), poolCreatedAt: market.pairCreatedAt,
       pairAddress: market.pairAddress, dexId: market.dexId, ageBasis: 'pool', activityWindow: '5m',
       tokenSourceUpdatedAt: cleanRow.tokenSourceUpdatedAt ?? cleanRow.sourceUpdatedAt,

@@ -72,7 +72,8 @@ test('batch market overlay fills every requested live card with exact pool field
     calls.push(url);
     return jsonResponse([
       completeDexPair({ pairAddress: '0x' + '3'.repeat(40), liquidity: { usd: 8_000 }, volume: { m5: 300 }, pairCreatedAt: at - 600_000 }),
-      completeDexPair({ pairAddress: '0x' + '4'.repeat(40), liquidity: { usd: 18_000 }, volume: { m5: 900 }, pairCreatedAt: at - 900_000 }),
+      completeDexPair({ pairAddress: '0x' + '4'.repeat(40), liquidity: { usd: 18_000 }, volume: { m5: 900 },
+        txns: { m5: { buys: 7, sells: 3 } }, pairCreatedAt: at - 900_000 }),
       completeDexPair({ baseToken: { address: otherEvmAddress }, pairAddress: '0x' + '5'.repeat(64),
         liquidity: { usd: 9_000 }, volume: { m5: 125 }, pairCreatedAt: at - 1_200_000, marketCap: 60_000 }),
       completeDexPair({ chainId: 'ethereum', liquidity: { usd: 999_999 } }),
@@ -91,6 +92,7 @@ test('batch market overlay fills every requested live card with exact pool field
   assert.match(calls[0], new RegExp('/tokens/v1/bsc/' + evmAddress + ',' + otherEvmAddress + '$'));
   assert.equal(result[0].liquidity, 18_000);
   assert.equal(result[0].volume_5m, 900);
+  assert.deepEqual([result[0].buys_5m, result[0].sells_5m, result[0].swaps_5m], [7, 3, 10]);
   assert.equal(result[0].pool_created_at, Math.floor((at - 900_000) / 1_000));
   assert.equal(result[0].pairAddress, '0x' + '4'.repeat(40));
   assert.equal(result[0].sourceUpdatedAt, at);
@@ -106,9 +108,11 @@ test('batch overlay never applies base-token price or market cap to a requested 
     baseToken: { address: third, symbol: 'BASE', name: 'Base' },
     quoteToken: { address: evmAddress, symbol: 'QUOTE', name: 'Quote' },
     pairAddress: '0x' + '8'.repeat(40), priceUsd: '999', marketCap: 999_999,
-    liquidity: { usd: 20_000 }, volume: { m5: 400 }, pairCreatedAt: at - 600_000
+    liquidity: { usd: 20_000 }, volume: { m5: 400 }, txns: { m5: { buys: 9, sells: 1 } }, pairCreatedAt: at - 600_000
   })]);
   const row = { address: evmAddress, chain: 'bsc', marketProvider: 'AVE', market_cap: 50_000, price: 1,
+    buys_5m: 5, sells_5m: 4, buy_volume_5m: 80, sell_volume_5m: 70,
+    volume: 150, swaps: 9, buys: 5, sells: 4,
     marketCapSourceUpdatedAt: at, marketCapCapturedAt: at, marketCapExpiresAt: at + 20_000 };
   const [result] = await new DexBatchMarketOverlay({ fetchImpl, now: () => at }).enrich('bsc', [row], {
     minMarketCap: 10_000, maxMarketCap: 150_000
@@ -116,7 +120,9 @@ test('batch overlay never applies base-token price or market cap to a requested 
   assert.equal(result.liquidity, 20_000);
   assert.equal(result.volume_5m, 400);
   assert.equal(result.market_cap, 50_000);
-  assert.equal(result.price, 1);
+  assert.equal(result.price, null);
+  assert.deepEqual([result.buys_5m, result.sells_5m, result.swaps_5m], [null, null, 10]);
+  for (const field of ['buy_volume_5m', 'sell_volume_5m', 'volume', 'swaps', 'buys', 'sells']) assert.equal(result[field], null);
   assert.equal(result.marketOverlayPriceUpdated, false);
 });
 

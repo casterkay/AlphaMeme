@@ -108,10 +108,12 @@ function discoverySignalView(row = {}) {
   const smartDegenCount = optionalCount(row.smart_degen_count);
   const renownedCount = optionalCount(row.renowned_count);
   const holders = optionalCount(row.holder_count);
-  const swaps5m = optionalCount(first(row.swaps_5m, row.swaps));
-  const buys5m = optionalCount(first(row.buys_5m, row.buys));
-  const sells5m = optionalCount(first(row.sells_5m, row.sells));
-  const volume5m = optionalNonNegativeNumber(first(row.volume_5m, row.volume));
+  // AVE's generic counters have no verified five-minute window.
+  const ave = row.marketProvider === 'AVE';
+  const swaps5m = optionalCount(ave ? row.swaps_5m : first(row.swaps_5m, row.swaps));
+  const buys5m = optionalCount(ave ? row.buys_5m : first(row.buys_5m, row.buys));
+  const sells5m = optionalCount(ave ? row.sells_5m : first(row.sells_5m, row.sells));
+  const volume5m = optionalNonNegativeNumber(ave ? row.volume_5m : first(row.volume_5m, row.volume));
   const priceChange5m = optionalSignedRate(first(row.price_change_percent5m, row.price_change_percent_5m, row.price_change_percent));
   const smartBoost = smartDegenCount === null ? 0 : smartDegenCount >= 3 ? 14 : smartDegenCount === 2 ? 7 : 0;
   const kolOnly = smartDegenCount !== null && smartDegenCount <= 1 && renownedCount !== null && renownedCount > 0;
@@ -175,6 +177,8 @@ export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
   for (const field of ['buy_volume_5m', 'sell_volume_5m']) {
     if (row[field] != null && !(optionalNonNegativeNumber(row[field]) > 0)) reasons.push(field === 'buy_volume_5m' ? '近5分钟买入额不足或未核验' : '近5分钟卖出额不足或未核验');
   }
+  if (optionalCount(row.buys_5m) === 0) reasons.push('近5分钟无买入成交');
+  if (optionalCount(row.sells_5m) === 0) reasons.push('近5分钟无卖出成交');
   if (optionalBoolean(row.is_honeypot) === true || row.sellable === false || optionalBoolean(row.cannot_sell_all) === true) reasons.push('已知貔貅或卖出受限');
   if (optionalBoolean(row.is_wash_trading) === true) reasons.push('检测到刷量');
   for (const [field, label] of [['rug_ratio', 'rug风险'], ['bundler_rate', '捆绑机器人占比'], ['rat_trader_amount_rate', '内幕占比']]) {
