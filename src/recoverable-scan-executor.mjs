@@ -1,5 +1,6 @@
 import { AVE_CU } from './providers/ave.mjs';
-import { SecondaryValidator } from './providers/secondary.mjs';
+import { ChainLogs } from './providers/chain-logs.mjs';
+import { SecondaryValidator, fetchDexMarkets } from './providers/secondary.mjs';
 
 function safeError(code) {
   return Object.assign(new Error(code), { code });
@@ -11,9 +12,26 @@ function cycleProgress(checkpoint) {
 
 /** The AVE credit units the scanner's next request costs; zero when it makes no AVE request. */
 export function recoverableRequestCost(next) {
-  if (next?.kind === 'DISCOVER') return AVE_CU.trending;
+  if (next?.kind === 'DISCOVER') return next.endpoint === 'trending' ? AVE_CU.trending : next.endpoint.startsWith('market:') ? AVE_CU.details : 0;
   if (next?.kind === 'OUTCOMES_SAMPLE') return AVE_CU.klines;
   return 0;
+}
+
+function discoveryOperation(next, { ave, chainLogs, dexMarkets }) {
+  const chain = next.checkpoint.chain;
+  if (next.endpoint === 'trending') return ({ signal }) => ave.trending(chain, { signal });
+  if (next.endpoint === 'newPools') return ({ signal }) => chainLogs.newPools(chain, { cursor: next.cursor, signal });
+  if (next.endpoint === 'watch') return async ({ signal }) => next.addresses.length
+    ? { addresses: next.addresses, ...await dexMarkets(chain, next.addresses, { signal }) } : { addresses: [], markets: [] };
+  if (next.endpoint.startsWith('market:')) return ({ signal }) => ave.market(chain, next.address, { signal });
+  throw safeError('RECOVERABLE_SCAN_ENDPOINT_UNSUPPORTED');
+}
+
+// What the new-pool source found; no address or key, only counts and block numbers.
+function logDiscovery(next, value) {
+  if (next.endpoint === 'newPools') console.log(JSON.stringify({ event: 'onchain_poll', chain: next.checkpoint.chain, fromBlock: value.fromBlock, toBlock: value.toBlock, head: value.head, pools: value.pools.length }));
+  if (value.skippedBlocks > 0) console.log(JSON.stringify({ event: 'onchain_gap_skipped', chain: next.checkpoint.chain, skippedBlocks: value.skippedBlocks }));
+  if (next.endpoint.startsWith('market:')) console.log(JSON.stringify({ event: 'pool_promoted', chain: next.checkpoint.chain, address: next.address }));
 }
 
 async function record(request, operation, onValue, onError) {
@@ -26,7 +44,7 @@ async function record(request, operation, onValue, onError) {
   return onValue(value);
 }
 
-export async function executeRecoverableScanStep({ scanner, cycleId, ave, secondary = new SecondaryValidator(), request, onFinalized = null, now = Date.now }) {
+export async function executeRecoverableScanStep({ scanner, cycleId, ave, secondary = new SecondaryValidator(), chainLogs = new ChainLogs({ apiKey: null }), dexMarkets = fetchDexMarkets, request, onFinalized = null, now = Date.now }) {
   if (!scanner || typeof scanner.nextRequest !== 'function' || typeof scanner.advanceLocal !== 'function'
     || typeof scanner.recordRequest !== 'function' || typeof scanner.commitClassification !== 'function'
     || typeof scanner.recordOutcomeSample !== 'function' || !ave || !secondary || typeof secondary.fetchSource !== 'function'
@@ -49,9 +67,8 @@ export async function executeRecoverableScanStep({ scanner, cycleId, ave, second
   } else if (next.kind === 'DEADLINE_EXPIRED') {
     result = scanner.advanceLocal(cycleId);
   } else if (next.kind === 'DISCOVER') {
-    if (next.endpoint !== 'trending') throw safeError('RECOVERABLE_SCAN_ENDPOINT_UNSUPPORTED');
-    result = await record(request, ({ signal }) => ave.trending(next.checkpoint.chain, { signal }),
-      value => recordResponse(value, null), error => recordResponse(null, error));
+    result = await record(request, discoveryOperation(next, { ave, chainLogs, dexMarkets }),
+      value => { logDiscovery(next, value); return recordResponse(value, null); }, error => recordResponse(null, error));
   } else if (next.kind === 'SECONDARY') {
     result = await record(request, ({ signal }) => secondary.fetchSource({ source: next.source, chain: next.chain, tokenAddress: next.address, signal }),
       value => recordResponse(value, null), error => recordResponse(null, error));

@@ -266,6 +266,12 @@ export class AveClient {
     return { ...parseDetails(raw, chain, ca), capturedAt: this.#now() };
   }
 
+  /** One token's market row in the trending rows' shape, for a token AVE does not list as trending. */
+  async market(chain, ca, { signal } = {}) {
+    const { token, capturedAt } = await this.details(chain, ca, { signal });
+    return { row: marketRow(token, capturedAt, capturedAt), capturedAt };
+  }
+
   /** The closest closed one-minute candle to targetAt, or null when AVE has none within a minute. */
   async priceAt(ca, targetAt, chain, { signal } = {}) {
     ca = input(chain, ca);

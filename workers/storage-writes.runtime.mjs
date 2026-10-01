@@ -13,7 +13,9 @@ const MEASURED_CYCLES = 20;
 // checkpoint, AVE admission, feed and health snapshots), 5 alarms, and one
 // refreshed lead and one refreshed queue row per passing token. Alerts are on
 // by default, so the notification baseline also refreshes each alerted lead's
-// quiet time, about 10 rows a cycle more (69). Restoring any one of the removed
+// quiet time, about 10 rows a cycle more (69). On-chain discovery adds the
+// new-pool watchlist row, and its two free requests advance the checkpoint and
+// the alarm once more each (72 measured). Restoring any one of the removed
 // rewrites costs at least 20 rows a cycle, so this bound bites.
 const MAX_ROWS_PER_CYCLE = 75;
 
@@ -60,8 +62,18 @@ describe('Durable Object storage writes', () => {
     const tenantId = '19040';
     const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
     const key = 'ave-radar-storage-writes-key';
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+    let head = 1_000;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
       const target = String(url);
+      // On-chain discovery: the head moves each cycle and one new pool appears, which the watch then checks.
+      if (target.startsWith('https://arc-mainnet.g.alchemy.com/v2/')) {
+        const { method } = JSON.parse(init.body);
+        if (method === 'eth_blockNumber') return jsonResponse({ jsonrpc: '2.0', id: 1, result: `0x${(head += 30).toString(16)}` });
+        return jsonResponse({ jsonrpc: '2.0', id: 1, result: [{ address: '0xf0db7b58379503491d857db50ac9ece64c653918', blockNumber: `0x${head.toString(16)}`,
+          topics: ['0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118', `0x${head.toString(16).padStart(64, '0')}`, `0x${'0'.repeat(24)}3600000000000000000000000000000000000000`, `0x${'0'.repeat(63)}1`],
+          data: `0x${'0'.repeat(62)}3c${'0'.repeat(24)}${'12'.repeat(20)}` }] });
+      }
+      if (target.startsWith('https://api.dexscreener.com/tokens/v1/arc/')) return jsonResponse([]);
       if (target.startsWith('https://prod.ave-api.com/v2/tokens/trending?chain=arc')) return jsonResponse({ status: 1, data: { tokens: hotList() } });
       if (target.startsWith('https://prod.ave-api.com/v2/tokens/0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c-bsc')) {
         return jsonResponse({ status: 1, data: { token: { token: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', chain: 'bsc', current_price_usd: '600' }, pairs: [] } });
@@ -100,6 +112,8 @@ describe('Durable Object storage writes', () => {
           expect((await instance.getStatus(tenantId)).control).toMatchObject({ configured: true, activeChain: 'arc' });
           expect(state.storage.sql.exec("SELECT COUNT(*) AS count FROM candidates WHERE tenant_id = ? AND status IN ('LIVE_READY', 'X_REVIEW')", tenantId).one().count).toBe(PASSING);
           await runCycles(MEASURED_CYCLES, true);
+          expect(JSON.parse(state.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'discovery.pools:arc').one().value_json).pools.length,
+            'the new-pool watch ran and committed each cycle').toBeGreaterThan(MEASURED_CYCLES);
           const breakdown = meter.breakdown();
           const rowsPerCycle = Object.values(breakdown).reduce((sum, rows) => sum + rows, 0) / MEASURED_CYCLES;
           expect(breakdown.setAlarm, 'setAlarm is billed and must be metered').toBeGreaterThan(0);

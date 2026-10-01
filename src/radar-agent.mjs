@@ -3,6 +3,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { parseAveBudget, recordAveResponse } from './ave-admission.mjs';
 import { readAveApiKey } from './auth/connection.mjs';
 import { AVE_CU, AveClient, AveError } from './providers/ave.mjs';
+import { ChainLogs, parseAlchemyApiKey } from './providers/chain-logs.mjs';
 import { readAveAdmissionState, writeAveAdmissionStateInTransaction } from './storage/ave-admission-state.mjs';
 import { initializeRadarSchema } from './storage/schema.mjs';
 import { normalizeTenantId } from './storage/tenant-id.mjs';
@@ -305,6 +306,8 @@ export class RadarAgent extends DurableObject {
         scanner,
         cycleId,
         ave: new AveClient({ apiKey }),
+        // On-chain discovery has its own key, separate from the trading RPC settings; without it the source reports ONCHAIN_NOT_CONFIGURED.
+        chainLogs: new ChainLogs({ apiKey: parseAlchemyApiKey(this.env) }),
         request: operation => request(aveRequest ? this.#recordingAveAnswer(store.tenantId, operation, checkpoint.keyEpoch) : operation),
         onFinalized: finalized => this.#startNextRecoverableCycle(store, scanner, finalized)
       });
@@ -373,7 +376,8 @@ export class RadarAgent extends DurableObject {
       keyEpoch: schedulerState.ave.keyEpoch,
       controlEpoch,
       deadlineAt: summary.nextDeadlineAt,
-      partial: { rootCycleId: checkpoint.partial.rootCycleId, scanCount: summary.scanCount }
+      partial: { rootCycleId: checkpoint.partial.rootCycleId, scanCount: summary.scanCount },
+      onchainDiscovery: parseAlchemyApiKey(this.env) !== null
     });
     return {
       checkpoint: successor,

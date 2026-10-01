@@ -1,5 +1,6 @@
 import { AVE_CU } from '../providers/ave.mjs';
 import { VOICE_TTL } from '../../public/voice-alerts.mjs';
+import { emptyWatchState } from '../onchain-watch.mjs';
 import { assertCheckpointGeneration, SqliteControlStateStore } from './control-state.mjs';
 import {
   readSchedulerStateInTransaction,
@@ -613,6 +614,8 @@ export class SqliteRecoverableScannerStore {
       for (const outcome of outcomes) this.#upsertOutcome(outcome);
       for (const { address, event } of events) this.#recordEvent(event, next.chain, address);
       this.#writeState(`feed.snapshot:${next.chain}`, value.feed);
+      // The new-pool watchlist and its log cursor advance only with the screen that used them, so a crash replays the range.
+      if (value.watchState) this.#writeState(`discovery.pools:${next.chain}`, value.watchState);
       this.#mergeSourceHealth(value.sourceHealth);
       this.#writeCheckpoint(next);
       return Object.freeze({ tenantId: this.tenantId, ...next });
@@ -636,6 +639,12 @@ export class SqliteRecoverableScannerStore {
       watched: Boolean(row.watched),
       ...parseJson(row.details_json, 'audit queue details')
     }));
+  }
+
+  /** The chain's new-pool watchlist and log cursor. */
+  readWatchState(chainName) {
+    const row = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, `discovery.pools:${chain(chainName)}`).toArray()[0];
+    return row ? parseJson(row.value_json, 'new-pool watchlist') : emptyWatchState();
   }
 
   /** Every stored candidate's address on the chain. */
