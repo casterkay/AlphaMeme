@@ -274,12 +274,14 @@ Buying is never blocked merely because the safety check is pending or
 incomplete; it asks once. Only a `FATAL` verdict still blocks buying (unchanged).
 
 A token is **verified** when its recorded GoPlus/DexScreener check has status
-`COMPLETE` and a security verdict other than `FATAL` or `UNKNOWN`. Everything
-else — a lead whose check has not run yet, a degraded or unknown check, a hot-list
+`COMPLETE`, the security verdict `NO_FATAL_FLAGS` and no blocking source conflict
+(`MARKET_MISMATCH`/`SECURITY_MISMATCH`). Everything else — a lead whose check has
+not run yet, a degraded, unknown or conflicted check, a hot-list
 row that never became a candidate, a pasted token whose lookup is still running —
-is **unverified**. One function (`safetyState(chain, address)` →
-`VERIFIED | UNVERIFIED | VETOED`) owns this rule for the panel, the command
-handler and the engine.
+is **unverified**. One pure function (`safetyVerdict({ status, secondary })` in
+`src/scoring/safety.mjs` → `VETOED | PASSED | INCOMPLETE | PENDING`) owns this rule
+for panels, alerts and the engine; the engine's `safetyState` maps it, plus risk
+exclusions, to `VERIFIED | UNVERIFIED | VETOED`.
 
 Every buy path (preset buttons and the custom-amount reply) on an unverified
 token edits the panel into a confirmation before any quote is requested:

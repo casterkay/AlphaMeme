@@ -28,6 +28,7 @@ const check = ({ dex = 'OK', security = SECURITY } = {}) => aggregateSecondarySo
   dexScreener: { value: { source: { status: dex }, market: { complete: true, priceUsd: null, marketCap: null, liquidityUsd: null, websites: [] } } },
   goPlus: { value: { source: { status: 'OK' }, security } } } });
 const VERIFIED = check();
+const conflicted = type => ({ ...VERIFIED, conflicts: [{ type, field: 'isHoneypot', primary: true, secondary: false }] });
 const FATAL = check({ security: { ...SECURITY, verdict: 'FATAL', fatal: [{ field: 'honeypot', reason: 'honeypot' }] } });
 
 // A hand-written EVM node and KyberSwap endpoint; nothing touches the network.
@@ -432,6 +433,8 @@ describe('buying before the safety check verified a token', () => {
     ['a degraded check', 'LIVE_READY', check({ dex: 'ERROR' }), 'UNVERIFIED'],
     ['an unknown verdict', 'LIVE_READY', check({ security: { ...SECURITY, complete: false, verdict: 'UNKNOWN', unknownFields: ['honeypot'] } }), 'UNVERIFIED'],
     ['a complete record whose verdict is unknown', 'LIVE_READY', { status: 'COMPLETE', security: { verdict: 'UNKNOWN' } }, 'UNVERIFIED'],
+    ['a complete check with a security conflict', 'LIVE_READY', conflicted('SECURITY_MISMATCH'), 'UNVERIFIED'],
+    ['a complete check with a market conflict', 'LIVE_READY', conflicted('MARKET_MISMATCH'), 'UNVERIFIED'],
     ['a complete check without fatal flags', 'LIVE_READY', VERIFIED, 'VERIFIED'],
     ['a fatal verdict', 'LIVE_READY', FATAL, 'VETOED'],
     ['a hard reject with a clean check', 'HARD_REJECT', VERIFIED, 'VETOED'],
@@ -484,6 +487,28 @@ describe('buying before the safety check verified a token', () => {
       await run(() => tradeOf(detail).state === 'QUOTED');
       expect(lastText()).toContain('Bought before the safety check verified it.');expect(lastText()).toContain('Confirm');
       expect(session().query.returnTo.panel).toBe('detail');
+    });
+  });
+
+  it('asks before buying a token whose sources conflict, even though its check is complete', async () => {
+    await withTrading('unverified-conflict', async ({ runtime, click, link, seed, createWallet, openDetail, trades }) => {
+      seed('arc', 'LIVE_READY', conflicted('SECURITY_MISMATCH'));await createWallet();
+      const detail = await openDetail();
+      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      expect(runtime().commands.sessions.get(detail.id)).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { usdCents: 1000 } } });
+      expect(trades()).toEqual([]);
+    });
+  });
+
+  it('fails a buy loudly on a malformed recorded check instead of guessing, and still sells', async () => {
+    await withTrading('unverified-corrupt', async ({ runtime, storage, tenantId, seed, createWallet, trades }) => {
+      seed('arc');await createWallet();
+      storage.sql.exec('UPDATE candidates SET secondary_json=? WHERE tenant_id=?', '{not json', tenantId);
+      const request = changes => storage.transactionSync(() => runtime().trading.requestTradeInTransaction({ chain: 'arc', token: TOKEN, usdCents: 1000, slippageBps: 500, capUsd: 100, ...changes }));
+      expect(() => safetyState(storage, tenantId, 'arc', TOKEN)).toThrow(SyntaxError);
+      expect(() => request({ side: 'buy', unverifiedAcknowledged: true })).toThrow(SyntaxError);
+      expect(trades()).toEqual([]);
+      expect(request({ side: 'sell', usdCents: null, percent: 50 })).toMatchObject({ side: 'sell' });
     });
   });
 

@@ -1,3 +1,5 @@
+import { blockingConflicts } from './safety.mjs';
+
 export function classifyDeepResult(deep, auditMeta = {}) {
   const failed = new Set(deep?.failed || []);
   const unknown = new Set(deep?.blockingUnknownFields || deep?.unknownFields || []);
@@ -27,22 +29,20 @@ export function mergeSecondaryClassification(baseClassification, secondary) {
   const sources = Object.values(secondary.sources || {});
   const supported = sources.some(source => source?.status !== 'UNSUPPORTED');
   const fatal = secondary.security?.verdict === 'FATAL';
-  const blockingConflicts = (secondary.conflicts || []).filter(conflict =>
-    ['MARKET_MISMATCH', 'SECURITY_MISMATCH'].includes(conflict?.type)
-  );
+  const conflicted = blockingConflicts(secondary).length > 0;
   const incomplete = supported && (secondary.status !== 'COMPLETE' || secondary.security?.verdict === 'UNKNOWN');
   return {
     ...base,
     status: fatal
       ? 'HARD_REJECT'
-      : base.status === 'X_REVIEW' && (incomplete || blockingConflicts.length)
+      : base.status === 'X_REVIEW' && (incomplete || conflicted)
         ? 'WAIT_RECHECK'
         : base.status,
     secondaryReason: fatal
       ? '第二安全源触发一票否决'
       : incomplete
         ? '第二数据源不完整，等待复查'
-        : blockingConflicts.length
+        : conflicted
           ? '多源数据冲突，等待复查'
           : (!supported ? '当前链暂无第二数据源，仅供人工查看' : '')
   };

@@ -17,6 +17,7 @@ import { EvmRpc, rpc, decodeErc20, approveCalldata, feeFields, hexQuantity, rece
 import { percentOf, usdCentsToStableUnits, usdCentsToNativeUnits, nativePriceMicroUsd, withinBuyCap, decimalToMicro } from './amounts.mjs';
 import { readTradingWallet, tradingAccount } from './wallet.mjs';
 import { readTrade, listTrades, writeTradeInTransaction, pruneTradesInTransaction, TERMINAL_STATES, EXECUTING_STATES } from './trades.mjs';
+import { safetyVerdict } from '../scoring/safety.mjs';
 
 // Balance refreshes and receipt rechecks get a task id per request, so a request the
 // scheduler gave up on never blocks a later one.
@@ -39,16 +40,16 @@ export class TradeRefusal extends Error {
 }
 
 /**
- * The one safety rule for buying. VETOED blocks a buy; UNVERIFIED (no recorded
- * check, or one that is degraded or unknown) needs the owner's acknowledgement;
- * VERIFIED is a complete GoPlus/DexScreener check without fatal flags.
+ * Buy safety from the recorded facts. VETOED (a vetoed verdict or a risk
+ * exclusion) blocks a buy; VERIFIED needs a PASSED verdict; anything else is
+ * UNVERIFIED and needs the owner's acknowledgement. A malformed recorded check
+ * throws rather than guessing: buys fail loudly, and sells never read it.
  */
 export function safetyState(storage, tenantId, chain, token) {
   const candidate = storage.sql.exec('SELECT status, secondary_json FROM candidates WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray()[0];
-  const secondary = candidate?.secondary_json ? JSON.parse(candidate.secondary_json) : null;
-  if (candidate?.status === 'HARD_REJECT' || secondary?.security?.verdict === 'FATAL') return 'VETOED';
-  if (storage.sql.exec('SELECT 1 AS held FROM risk_exclusions WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray().length) return 'VETOED';
-  return secondary?.status === 'COMPLETE' && secondary.security?.verdict === 'NO_FATAL_FLAGS' ? 'VERIFIED' : 'UNVERIFIED';
+  const verdict = safetyVerdict({ status: candidate?.status ?? null, secondary: candidate?.secondary_json ? JSON.parse(candidate.secondary_json) : null });
+  if (verdict === 'VETOED' || storage.sql.exec('SELECT 1 AS held FROM risk_exclusions WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray().length) return 'VETOED';
+  return verdict === 'PASSED' ? 'VERIFIED' : 'UNVERIFIED';
 }
 
 export const tradeVetoed = (storage, tenantId, chain, token) => safetyState(storage, tenantId, chain, token) === 'VETOED';
