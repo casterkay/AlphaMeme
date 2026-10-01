@@ -281,7 +281,8 @@ risk reason comes from the candidate's recorded veto reason through the existing
 ### 3.9 Buying before the safety check has verified a token
 
 Buying is never blocked merely because the safety check is pending or
-incomplete; it asks once. Only a `FATAL` verdict still blocks buying (unchanged).
+incomplete; it asks once. Only a veto — `HARD_REJECT`, a `FATAL` verdict or a
+risk exclusion — still blocks buying (unchanged).
 
 A token is **verified** when its recorded GoPlus/DexScreener check has status
 `COMPLETE`, the security verdict `NO_FATAL_FLAGS` and no blocking source conflict
@@ -308,7 +309,7 @@ It could be a honeypot or carry hidden taxes.
 
 - **Yes** requests the quote with an acknowledgement; the normal quote screen
   follows and still needs ✅ Confirm. The quote screen repeats one line:
-  "⚠️ Bought before the safety check verified it."
+  "⚠️ Requested before the safety check verified it."
 - **No** returns to the token detail; nothing is requested.
 - The buttons are bound to the session version like every other callback, so a
   stale Yes cannot be replayed.
@@ -454,5 +455,7 @@ README command list) is updated in the slice that changes the behavior.
 2. Non-Chinese Telegram users default to English.
 3. Buying any unverified token — a lead, a hot-list row or a pasted token — asks
    a Yes/No confirmation (Yes left, No right) instead of being blocked; only a
-   `FATAL` verdict blocks buying.
+   `FATAL` verdict blocks buying. (Clarified in implementation: "blocked" means
+   any veto — `HARD_REJECT`, a `FATAL` verdict or a risk exclusion — all of which
+   already blocked buying before this plan.)
 4. An EVM address is looked up on the scan chain first, with a picker for the rest.

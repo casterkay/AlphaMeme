@@ -489,7 +489,7 @@ describe('buying before the safety check verified a token', () => {
       await click(link(session(), 'trade.acknowledge_unverified'));
       expect(tradeOf(detail)).toMatchObject({ state: 'QUOTING', usdCents: 1000, unverifiedAtRequest: true });
       await run(() => tradeOf(detail).state === 'QUOTED');
-      expect(lastText()).toContain('Bought before the safety check verified it.');expect(lastText()).toContain('Confirm');
+      expect(lastText()).toContain('Requested before the safety check verified it.');expect(lastText()).toContain('Confirm');
       expect(session().query.returnTo.panel).toBe('detail');
     });
   });
