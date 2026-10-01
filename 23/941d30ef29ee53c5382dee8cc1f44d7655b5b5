@@ -1,0 +1,70 @@
+src/onchain-watch.mjs
+  s_c497d5c9be8144::t_13887737863c40 1-33,35-42,46-61
+  s_c497d5c9be8144::t_dcf26b61f6ec59 34,43-45
+src/providers/ave.mjs
+  s_c497d5c9be8144::t_cee825b2c7e07a 261-266
+src/bot/panels.mjs
+  s_c497d5c9be8144::t_f9acf8682609e0 179
+README.md
+  s_c497d5c9be8144::t_1158c0aea9adcf 21-27,93
+workers/storage-writes.runtime.mjs
+  s_c497d5c9be8144::t_f5522be8d7b247 65-66,68-76,115-116
+  s_c497d5c9be8144::t_e78d7d2c1761dc 16-18
+src/scanner-settings.mjs
+  s_c497d5c9be8144::t_dcf26b61f6ec59 20-23
+test/radar-agent.test.mjs
+  s_c497d5c9be8144::t_831b64e798af84 49,68-73,76-81,90,114,118
+  s_c497d5c9be8144::t_f91eb40fedead1 507-511
+  s_c497d5c9be8144::t_f40f4ef75c2c55 284-323,325-351
+  s_c497d5c9be8144::t_17344ba1f6bd5c 324
+src/providers/secondary.mjs
+  s_c497d5c9be8144::t_f91eb40fedead1 8-9
+  s_c497d5c9be8144::t_cee825b2c7e07a 318-328
+src/recoverable-scanner.mjs
+  s_c497d5c9be8144::t_53a5396ebfa9c8 8-9,13-15,19,21,23-24,105-111,264-270,299,304-308,310
+  s_c497d5c9be8144::t_ebc89b743a4532 20,22,233,236,460-461
+  s_c497d5c9be8144::t_ed2aefa228c21a 413,415-416,422,458-459,462-468,481
+  s_c497d5c9be8144::t_d82686ebf7285b 7
+  s_c497d5c9be8144::t_a150124b1ea8e5 112
+src/recoverable-scan-executor.mjs
+  s_c497d5c9be8144::t_dcf26b61f6ec59 2-3,15,20-36,47,70-71
+src/radar-agent.mjs
+  s_c497d5c9be8144::t_f9acf8682609e0 6,308-309
+  s_c497d5c9be8144::t_ebc89b743a4532 363-364
+test/chain-logs.test.mjs
+  s_c497d5c9be8144::t_e258229506103d 46
+  s_c497d5c9be8144::t_3b96dd53a36c1d 1-45,47-81
+test/onchain-watch.test.mjs
+  s_c497d5c9be8144::t_0acdc2ce554ea4 1-60
+src/storage/recoverable-scanner.mjs
+  s_c497d5c9be8144::t_ed2aefa228c21a 3,617-618,644-647
+  s_c497d5c9be8144::t_f4f11d62771f6d 648-649
+vitest.workers.config.mjs
+  s_c497d5c9be8144::t_d2c39adc9feb03 9
+src/bot/snapshot.mjs
+  s_c497d5c9be8144::t_f9acf8682609e0 104
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_c497d5c9be8144::t_1158c0aea9adcf 15-17
+src/bot/runtime.mjs
+  s_c497d5c9be8144::t_ebc89b743a4532 16,258
+src/providers/chain-logs.mjs
+  s_c497d5c9be8144::t_abfe5675aba611 1-142
+test/scheduler.test.mjs
+  s_c497d5c9be8144::t_f91eb40fedead1 360,385,443-444
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "23941d30ef29ee53c5382dee8cc1f44d7655b5b5",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
