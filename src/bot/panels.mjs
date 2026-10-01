@@ -211,21 +211,23 @@ const LOOKUP_FAILURES = {
 
 // A pasted token's lookup (§4): progress while it runs, then AVE's market facts and the shared verdict.
 function lookupDetail(snapshot,session,locale,lookup,listed) {
-  const L = (zh,en) => localize(locale,zh,en), identity = token(lookup), annotation = annotationFor(snapshot,lookup), safety = tokenSafety(lookup);
+  const L = (zh,en) => localize(locale,zh,en), identity = token(lookup), annotation = annotationFor(snapshot,lookup);
+  // A recorded veto stands until a later complete check clears it, whatever this run's state.
+  const safety = lookup.veto ? { verdict:'VETOED', checkedAt:lookup.veto.checkedAt, reasons:lookup.veto.fields, counts:{} } : tokenSafety(lookup);
   const where = chainLabel(lookup.chain), others = SCAN_CHAINS.filter(chain => chain !== lookup.chain);
   const status = ['DETAILS','DEXSCREENER','GOPLUS'].includes(lookup.state)
     ? lookup.state === 'DETAILS' && snapshot.ave?.readyAt > snapshot.at ? `${ICONS.checking} ${L('等待AVE额度','Waiting for AVE capacity')}` : `${ICONS.checking} ${L(`正在 ${where} 上查询…`,`Looking up on ${where}…`)}`
     : lookup.state === 'NOT_FOUND' ? `${ICONS.unknown} ${L(`AVE在 ${where} 上没有此地址的代币。`,`AVE has no token at this address on ${where}.`)}`
       : lookup.state === 'FAILED' ? `${ICONS.unknown} ${L('查询失败','Lookup failed')}${L('：',': ')}${L(...(LOOKUP_FAILURES[lookup.reason] ?? ['无法读取AVE','AVE could not be read']))}`
-        : safetyLine(safety,snapshot,locale);
+        : null;
   const fact = key => lookup[key] ?? listed?.[key] ?? null, createdAt = fact('createdAt');
-  const blocks = [status,
+  const blocks = [status,lookup.state === 'DONE' || lookup.veto ? safetyLine(safety,snapshot,locale) : null,
     [present(fact('marketCap')) ? L(`市值 ${money(fact('marketCap'),locale)}`,`MC ${money(fact('marketCap'),locale)}`) : '',present(fact('liquidity')) ? L(`流动性 ${money(fact('liquidity'),locale)}`,`Liq ${money(fact('liquidity'),locale)}`) : '',present(fact('holders')) ? L(`持有人 ${numberText(fact('holders'),locale)}`,`${numberText(fact('holders'),locale)} holders`) : ''].filter(Boolean).join(' · '),
     [createdAt > 0 ? L(`币龄${duration(snapshot.at-createdAt*1000,locale)}`,`${duration(snapshot.at-createdAt*1000,locale)} old`) : '',present(fact('priceChange5m')) ? `5m ${percent(fact('priceChange5m'),locale,true)}` : '',present(fact('volume5m')) ? L(`5分钟成交 ${money(fact('volume5m'),locale)}`,`5m vol ${money(fact('volume5m'),locale)}`) : ''].filter(Boolean).join(' · '),
     `<code>${userText(lookup.address,80)}</code>`,
     [annotation?.favorite ? `${ICONS.saved} ${L('已加入自选','In watchlist')}` : '',annotation?.note ? `${ICONS.note} "${userText(annotation.note,140)}${annotation.note.length>140 ? '…' : ''}"` : ''].filter(Boolean).join(' · '),
     present(lookup.capturedAt) ? `AVE · ${relativeTime(lookup.capturedAt,snapshot.at,locale)}` : ''];
-  const trading = tokenTradeControls(snapshot,lookup,locale,identity,safety.verdict === 'VETOED');
+  const trading = tokenTradeControls(snapshot,lookup,locale,identity,lookup.verdict === 'VETOED');
   blocks.push(...trading.blocks);
   const keyboard = [...trading.keyboard,
     [urlButton(`${ICONS.site} ${L('官网','Site')}`,lookup.secondary?.market?.websites?.[0]),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,lookup.secondary?.market?.pairUrl),urlButton(`${ICONS.ave} AVE`,aveTokenUrl(lookup.chain,lookup.address))],
@@ -233,7 +235,7 @@ function lookupDetail(snapshot,session,locale,lookup,listed) {
     lookup.state === 'FAILED' ? [button(`${ICONS.refresh} ${L('重试','Retry')}`,'lookup.start',{retry:true},identity)] : [],
     // The likely cause of a miss is the wrong chain, whichever way AVE says it.
     ...(['NOT_FOUND','FAILED'].includes(lookup.state) ? rowsOf(others.map(chain => button(L(`在 ${chainLabel(chain)} 上查询`,`Try on ${chainLabel(chain)}`),'lookup.start',{},{ chain,address:lookup.address })),2) : [])];
-  return finishPanel(`${safeTelegramText(lookup.symbol || '?',30)} · ${where}`,blocks.filter(value => value !== ''),keyboard,snapshot,session,locale,{token:identity});
+  return finishPanel(`${safeTelegramText(lookup.symbol || '?',30)} · ${where}`,blocks.filter(value => value !== '' && value !== null),keyboard,snapshot,session,locale,{token:identity});
 }
 
 function detailPanel(snapshot,session,locale) {
@@ -271,7 +273,9 @@ function detailPanel(snapshot,session,locale) {
   if (!row.auditedAt) blocks.push(L('审计快照已不再保留，或尚未审计。','Audit snapshot no longer retained, or not yet audited.'));
   if (backendDisposition(row) === 'chain') blocks.push(L('链上硬门通过；请人工查看X社区评论与回复。','On-chain gates passed; review X community comments and replies.'));
   if (backendDisposition(row) === 'lead' && safety.verdict !== 'VETOED' && row.secondary?.status !== 'COMPLETE') blocks.push(L('市场线索：安全性尚未核验。','Market lead: safety not yet verified.'));
-  const trading = tokenTradeControls(snapshot,row,locale,identity,safety.verdict === 'VETOED');
+  // Buy follows the engine's safetyState: a vetoed lookup of the same token vetoes it too.
+  const lookupVetoed = (snapshot.lookups || []).some(item => id(item) === id(row) && item.verdict === 'VETOED');
+  const trading = tokenTradeControls(snapshot,row,locale,identity,safety.verdict === 'VETOED' || lookupVetoed);
   blocks.push(...trading.blocks);
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };
   const eligible = !mark?.decision && row.reviewRevision && backendDisposition(row) === 'chain' && row.auditedAt && snapshot.at-row.auditedAt <= 600_000;

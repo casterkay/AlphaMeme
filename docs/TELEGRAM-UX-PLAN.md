@@ -469,6 +469,15 @@ time per tenant; scheduler priority equals `command`.
   Yes/No confirmation. `safetyState` reads the lookup record, so a `FATAL` lookup
   verdict is refused by `tradeVetoed` and by the engine's per-step veto recheck.
   Selling is always available.
+- **A lookup veto is durable** (amended in #87 review). A `FATAL` finding is a
+  safety fact, so the record keeps it as `veto` across reruns: a new run that is
+  still running, ends `NOT_FOUND` or `FAILED`, or finishes without a complete
+  GoPlus answer leaves it standing. Only a run that reaches `DONE` with a complete
+  GoPlus check free of fatal flags clears it. Pruning (the newest 20, 24 h) never
+  drops a vetoed record. Vetoes are rare and owner-initiated, so keeping their
+  records stays small, and the detail keeps showing why. Buy is hidden wherever
+  `safetyState` would refuse it, so a vetoed lookup hides Buy on a candidate's
+  detail too.
 - Detail shows the source and age: "AVE · 20s ago".
 - DexScreener and GoPlus receive an address only after AVE has confirmed it as a
   token on that chain; `NOT_FOUND` and `FAILED` end the lookup first. (The 32-byte
