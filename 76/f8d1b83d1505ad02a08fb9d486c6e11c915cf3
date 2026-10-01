@@ -1,0 +1,29 @@
+src/bot/snapshot.mjs
+  s_6295713717bc33::t_8db3ffd125493a 55
+src/render/whitelist.mjs
+  s_6295713717bc33::t_f30682d57fa762 2,145
+src/scoring/classification.mjs
+  s_6295713717bc33::t_fb04ab6488abc4 1,5
+src/scoring/safety.mjs
+  s_6295713717bc33::t_25d166ee3848e9 9-13,24
+test/safety.test.mjs
+  s_6295713717bc33::t_5c3c0596e3e833 41,63-66
+workers/trading.runtime.mjs
+  s_6295713717bc33::t_399a7148f20985 441
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "76f8d1b83d1505ad02a08fb9d486c6e11c915cf3",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
