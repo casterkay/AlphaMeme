@@ -28,6 +28,9 @@ const REFUSALS = {
   TRADES_OPEN: ['仍有进行中或结果未知的交易，暂不能移除钱包。请打开钱包点击刷新，待回执确认结果后再试。', 'A trade is still open or its outcome unknown, so the wallet cannot be removed yet. Refresh the wallet until the receipts resolve it, then try again.'],
   EXPORT_FIRST: ['钱包仍有余额且私钥从未导出，请先导出私钥。', 'The wallet still holds funds and its key was never exported; export it first.']
 };
+const tradeView = (tradeId, returnTo) => ({ panel: 'trade', query: { schemaVersion: 1, page: 0, tradeId, returnTo } });
+// An unverified buy waits for the owner's Yes; the session holds exactly the buy the engine refused.
+const unverifiedQuestion = (request, returnTo) => ({ panel: 'trade_unverified', query: { schemaVersion: 1, page: 0, unverifiedBuy: request, returnTo } });
 
 export class TelegramCommands {
   constructor({ storage, tenantId, inbox, outbox, controls, trading = null, now = Date.now, snapshot = readTelegramSnapshot }) {
@@ -222,11 +225,11 @@ export class TelegramCommands {
     this.noticeInTransaction(updateId, text(this.language, ...message));
   }
 
-  /** Session changes for a trading action; a refusal is explained and leaves the panel as it was. */
+  /** Session changes for a trading action; a refusal is explained and leaves the panel as it was, except that an unverified buy becomes its Yes/No question. */
   tradingActionInTransaction(row, session, action, params, token, prepared) {
     if (!this.trading) throw new ReviewConflict('trading_unavailable');
-    const returnTo = session.panel === 'trade' ? session.query.returnTo : { panel: session.panel, viewChain: session.viewChain, query: { ...session.query, pendingInput: undefined } };
-    const show = trade => ({ panel: 'trade', query: { schemaVersion: 1, page: 0, tradeId: trade.id, returnTo } });
+    const returnTo = ['trade', 'trade_unverified'].includes(session.panel) ? session.query.returnTo : { panel: session.panel, viewChain: session.viewChain, query: { ...session.query, pendingInput: undefined } };
+    const show = trade => tradeView(trade.id, returnTo);
     // A wallet action lands on the wallet, and Back leaves the wallet: it must never
     // reopen a spent dialog such as "Send the private key" or a removed wallet's warning.
     let exit = { panel: session.panel, viewChain: session.viewChain, query: session.query };
@@ -237,6 +240,20 @@ export class TelegramCommands {
         if (!token) throw new ReviewConflict('invalid_token');
         const amount = action === 'trade.buy' ? { usdCents: Number.isSafeInteger(params.usd) ? params.usd * 100 : null } : { percent: params.percent };
         return show(this.startTradeInTransaction(session, token, action === 'trade.buy' ? 'buy' : 'sell', amount));
+      }
+      if (action === 'trade.acknowledge_unverified' || action === 'trade.decline_unverified') {
+        const request = session.panel === 'trade_unverified' ? session.query.unverifiedBuy : null;
+        if (!request) throw new ReviewConflict('invalid_confirmation');
+        const back = { panel: returnTo.panel, viewChain: returnTo.viewChain, query: returnTo.query };
+        if (action === 'trade.decline_unverified') return back;
+        try {
+          return show(this.startTradeInTransaction(session, { chain: request.chain, address: request.token }, 'buy', { usdCents: request.usdCents }, true));
+        } catch (error) {
+          // A refused Yes (vetoed meanwhile, or now above the cap) must not leave the question open.
+          if (!(error instanceof TradeRefusal)) throw error;
+          this.refuseInTransaction(row.update_id, error);
+          return back;
+        }
       }
       if (action === 'trade.input') {
         if (!token || !['buy','sell'].includes(params.side)) throw new ReviewConflict('invalid_input');
@@ -278,14 +295,15 @@ export class TelegramCommands {
       }
     } catch (error) {
       if (!(error instanceof TradeRefusal)) throw error;
+      if (error.code === 'UNVERIFIED') return unverifiedQuestion(error.request, returnTo);
       this.refuseInTransaction(row.update_id, error);
       return {};
     }
     throw new ReviewConflict('unsupported_action');
   }
 
-  startTradeInTransaction(session, token, side, amount) {
-    return this.trading.requestTradeInTransaction({ chain: token.chain, token: token.address, side, ...amount, sessionId: session.id, ...this.tradingSettings() });
+  startTradeInTransaction(session, token, side, amount, unverifiedAcknowledged = false) {
+    return this.trading.requestTradeInTransaction({ chain: token.chain, token: token.address, side, ...amount, sessionId: session.id, ...this.tradingSettings(), unverifiedAcknowledged });
   }
 
   beginInputInTransaction(session, kind, token = null, expectedVersion = null) {
@@ -323,14 +341,17 @@ export class TelegramCommands {
       return;
     }
     const { pendingInput, ...query } = session.query;
-    let trade;
-    try { trade = this.startTradeInTransaction(session, pending.target, buy ? 'buy' : 'sell', amount); } catch (error) {
-      if (!(error instanceof TradeRefusal)) throw error;
-      this.refuseInTransaction(row.update_id, error);
-      return this.renderInTransaction(this.sessions.advanceInTransaction(session, { query }));
-    }
     const returnTo = { panel: session.panel, viewChain: session.viewChain, query };
-    this.renderInTransaction(this.sessions.advanceInTransaction(session, { panel: 'trade', query: { schemaVersion: 1, page: 0, tradeId: trade.id, returnTo } }));
+    let changes;
+    try { changes = tradeView(this.startTradeInTransaction(session, pending.target, buy ? 'buy' : 'sell', amount).id, returnTo); } catch (error) {
+      if (!(error instanceof TradeRefusal)) throw error;
+      if (error.code !== 'UNVERIFIED') {
+        this.refuseInTransaction(row.update_id, error);
+        return this.renderInTransaction(this.sessions.advanceInTransaction(session, { query }));
+      }
+      changes = unverifiedQuestion(error.request, returnTo);
+    }
+    this.renderInTransaction(this.sessions.advanceInTransaction(session, changes));
   }
 
   resolveNoteInTransaction(session, value) {

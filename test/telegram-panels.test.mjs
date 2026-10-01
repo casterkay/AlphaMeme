@@ -60,7 +60,7 @@ test('help is three pages: what the radar does, commands, then safety',()=>{
 
 // Panels whose content cannot change by re-reading: choices, confirmations, help, evidence
 // pages, and the trading dialogs (in this fixture trading is off, so they are all static).
-const STATIC_PANELS=new Set(['view_chain','filter','sort','language','horizon','cohort','chains','disconnect','help','evidence','trade','wallet','wallet_export','wallet_remove','trade_settings']);
+const STATIC_PANELS=new Set(['view_chain','filter','sort','language','horizon','cohort','chains','disconnect','help','evidence','trade','trade_unverified','wallet','wallet_export','wallet_remove','trade_settings']);
 test('every panel ends with the standard footer and keeps navigation out of its body',()=>{
   const home=item=>item.action==='panel.open'&&item.params.panel==='radar';
   const nav=item=>item.action==='panel.refresh'||item.action==='panel.back'||home(item);

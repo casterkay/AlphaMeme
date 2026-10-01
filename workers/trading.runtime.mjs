@@ -9,6 +9,8 @@ import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { KYBER_API_ORIGIN, KYBER_ROUTER } from '../src/trading/kyber.mjs';
 import { ARC_USDC_ERC20, KYBER_NATIVE_TOKEN } from '../src/trading/config.mjs';
 import { listTrades } from '../src/trading/trades.mjs';
+import { safetyState, TradeRefusal } from '../src/trading/engine.mjs';
+import { aggregateSecondarySources } from '../src/providers/secondary.mjs';
 import { swapCalldata } from '../test/fixtures/kyber-calldata.mjs';
 import { revealTradingKey, tradingWalletEnvelope } from '../src/trading/wallet.mjs';
 
@@ -20,6 +22,13 @@ const TRANSFER = toEventSelector('Transfer(address,address,uint256)');
 const word = value => '0x' + BigInt(value).toString(16).padStart(64, '0');
 const topic = address => '0x' + '0'.repeat(24) + address.slice(2).toLowerCase();
 const json = value => new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
+const SECURITY = { complete: true, verdict: 'NO_FATAL_FLAGS', fatal: [], unknownFields: [], fields: {}, buyTax: 0, sellTax: 0 };
+// A GoPlus/DexScreener check recorded the way the scanner stores it.
+const check = ({ dex = 'OK', security = SECURITY } = {}) => aggregateSecondarySources({ chain: 'arc', tokenAddress: TOKEN, sources: {
+  dexScreener: { value: { source: { status: dex }, market: { complete: true, priceUsd: null, marketCap: null, liquidityUsd: null, websites: [] } } },
+  goPlus: { value: { source: { status: 'OK' }, security } } } });
+const VERIFIED = check();
+const FATAL = check({ security: { ...SECURITY, verdict: 'FATAL', fatal: [{ field: 'honeypot', reason: 'honeypot' }] } });
 
 // A hand-written EVM node and KyberSwap endpoint; nothing touches the network.
 function venue() {
@@ -164,7 +173,9 @@ async function withTrading(name, operation) {
       }
       throw new Error('trade did not reach the expected state');
     };
-    const seed = (chain = 'arc', status = 'LIVE_READY') => storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,chain,address) DO UPDATE SET status=excluded.status', tenantId, chain, TOKEN, 'MEME', status, clock - 1000, 'revision', JSON.stringify({ chainPass: true, chartRisk: { version: CHART_RISK_VERSION }, checks: {}, failed: [], unknownFields: [] }));
+    // A candidate with its recorded safety check; `secondary: null` is a lead whose check has not run.
+    const seed = (chain = 'arc', status = 'LIVE_READY', secondary = VERIFIED) => storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json,secondary_json) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,chain,address) DO UPDATE SET status=excluded.status, secondary_json=excluded.secondary_json',
+      tenantId, chain, TOKEN, 'MEME', status, clock - 1000, 'revision', JSON.stringify({ chainPass: true, chartRisk: { version: CHART_RISK_VERSION }, checks: {}, failed: [], unknownFields: [] }), secondary === null ? null : JSON.stringify(secondary));
     const createWallet = async () => {
       await command('wallet');
       const panel = sessions().at(-1);
@@ -194,8 +205,13 @@ async function withTrading(name, operation) {
     };
     const confirm = async detail => click(link(runtime.commands.sessions.get(detail.id), 'trade.confirm'));
     const lastText = () => sent.filter(row => row.params.text).at(-1).params.text;
+    const reply = async (session, text) => {
+      const pending = runtime.commands.sessions.get(session.id).query.pendingInput;
+      const input = receipt('reply', { source: 'reply', text, replyToMessageId: pending.promptMessageId });
+      runtime.receive(input);await runtime.runCommand(input.updateId);await drain();
+    };
     await command('lang', 'en');
-    await operation({ tradeOf, quote, confirm, runtime: () => runtime, restart: () => { runtime = make(); }, storage, tenantId, network, sent, command, sessions, link, has, click, run, seed, createWallet, openDetail, trades, lastText, drain,
+    await operation({ tradeOf, quote, confirm, reply, runtime: () => runtime, restart: () => { runtime = make(); }, storage, tenantId, network, sent, command, sessions, link, has, click, run, seed, createWallet, openDetail, trades, lastText, drain,
       clock: { now: () => clock, advance: ms => { clock += ms; } }, faultTransport: fault => { transportFault = fault; } });
   });
 }
@@ -405,6 +421,163 @@ describe('one-tap trading', () => {
       expect(trades()).toEqual([]);expect(sent.some(row => row.params.text?.includes('Above your per-trade buy cap of $100'))).toBe(true);
       await reply('12.5');
       expect(trades()[0]).toMatchObject({ state: 'QUOTING', usdCents: 1250 });
+    });
+  });
+});
+
+describe('buying before the safety check verified a token', () => {
+  it.each([
+    ['a hot-list row that never became a candidate', null, 'none', 'UNVERIFIED'],
+    ['a lead whose check has not run', 'LIVE_READY', null, 'UNVERIFIED'],
+    ['a degraded check', 'LIVE_READY', check({ dex: 'ERROR' }), 'UNVERIFIED'],
+    ['an unknown verdict', 'LIVE_READY', check({ security: { ...SECURITY, complete: false, verdict: 'UNKNOWN', unknownFields: ['honeypot'] } }), 'UNVERIFIED'],
+    ['a complete record whose verdict is unknown', 'LIVE_READY', { status: 'COMPLETE', security: { verdict: 'UNKNOWN' } }, 'UNVERIFIED'],
+    ['a complete check without fatal flags', 'LIVE_READY', VERIFIED, 'VERIFIED'],
+    ['a fatal verdict', 'LIVE_READY', FATAL, 'VETOED'],
+    ['a hard reject with a clean check', 'HARD_REJECT', VERIFIED, 'VETOED'],
+    ['a risk exclusion with a clean check', 'exclusion', VERIFIED, 'VETOED']
+  ])('classifies %s as %s', async (name, status, secondary, expected) => {
+    await withTrading(`unverified-state-${name.replaceAll(' ', '-')}`, async ({ storage, tenantId, seed }) => {
+      if (status !== null) seed('arc', status === 'exclusion' ? 'LIVE_READY' : status, secondary);
+      if (status === 'exclusion') storage.sql.exec('INSERT INTO risk_exclusions (tenant_id,chain,address,version,codes_json,reasons_json,at) VALUES (?,?,?,?,?,?,?)', tenantId, 'arc', TOKEN, 1, '[]', '[]', start);
+      expect(safetyState(storage, tenantId, 'arc', TOKEN)).toBe(expected);
+      expect(safetyState(storage, tenantId, 'arc', TOKEN.toLowerCase())).toBe(expected);
+    });
+  });
+
+  it('the engine refuses an unverified buy without the acknowledgement and records one made with it; sells and verified buys need none', async () => {
+    await withTrading('unverified-engine', async ({ runtime, storage, seed, createWallet, trades }) => {
+      seed('arc', 'LIVE_READY', null);await createWallet();
+      const request = changes => storage.transactionSync(() => runtime().trading.requestTradeInTransaction({ chain: 'arc', token: TOKEN, side: 'buy', usdCents: 1000, slippageBps: 500, capUsd: 100, ...changes }));
+      let refusal;
+      try { request({}); } catch (error) { refusal = error; }
+      expect(refusal).toBeInstanceOf(TradeRefusal);
+      expect(refusal).toMatchObject({ code: 'UNVERIFIED', request: { chain: 'arc', token: TOKEN, usdCents: 1000 } });
+      expect(trades()).toEqual([]);
+      expect(request({ unverifiedAcknowledged: true })).toMatchObject({ side: 'buy', usdCents: 1000, unverifiedAtRequest: true });
+      expect(request({ side: 'sell', usdCents: null, percent: 50 })).toMatchObject({ side: 'sell', unverifiedAtRequest: false });
+      seed('arc', 'LIVE_READY', FATAL);
+      expect(() => request({ unverifiedAcknowledged: true })).toThrow(expect.objectContaining({ code: 'VETOED' }));
+      seed('arc', 'LIVE_READY', VERIFIED);
+      expect(request({})).toMatchObject({ unverifiedAtRequest: false });
+      expect(trades()).toHaveLength(3);
+    });
+  });
+
+  it('asks Yes/No before a preset buy of an unverified token: No requests nothing, Yes quotes with a warning', async () => {
+    await withTrading('unverified-preset', async ({ runtime, network, sent, click, link, run, seed, createWallet, openDetail, trades, tradeOf, lastText }) => {
+      seed('arc', 'LIVE_READY', null);await createWallet();network.fund('arc', 50n * 10n ** 18n, { [ARC_USDC_ERC20]: 50_000_000n });
+      const detail = await openDetail();
+      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      const session = () => runtime().commands.sessions.get(detail.id);
+      expect(session()).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { chain: 'arc', token: TOKEN, usdCents: 1000 } } });
+      expect(lastText()).toContain('Safety check not finished');expect(lastText()).toContain('MEME · Arc — buy $10?');
+      expect(sent.at(-1).params.reply_markup.inline_keyboard[0].map(item => item.text)).toEqual(['Yes', 'No']);
+      expect(trades()).toEqual([]);expect(network.kyber).toEqual([]);
+
+      await click(link(session(), 'trade.decline_unverified'));
+      expect(session().panel).toBe('detail');expect(trades()).toEqual([]);expect(network.kyber).toEqual([]);
+
+      await click(link(session(), 'trade.buy', params => params.usd === 10));
+      await click(link(session(), 'trade.acknowledge_unverified'));
+      expect(tradeOf(detail)).toMatchObject({ state: 'QUOTING', usdCents: 1000, unverifiedAtRequest: true });
+      await run(() => tradeOf(detail).state === 'QUOTED');
+      expect(lastText()).toContain('Bought before the safety check verified it.');expect(lastText()).toContain('Confirm');
+      expect(session().query.returnTo.panel).toBe('detail');
+    });
+  });
+
+  it('asks before a custom-amount buy of an unverified token and buys exactly that amount on Yes', async () => {
+    await withTrading('unverified-custom', async ({ runtime, click, link, seed, createWallet, openDetail, trades, reply }) => {
+      seed('arc', 'LIVE_READY', null);await createWallet();
+      const detail = await openDetail();
+      await click(link(detail, 'trade.input', params => params.side === 'buy'));
+      await reply(detail, '12.5');
+      const session = () => runtime().commands.sessions.get(detail.id);
+      expect(session()).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { usdCents: 1250 } } });
+      expect(trades()).toEqual([]);
+      await click(link(session(), 'trade.acknowledge_unverified'));
+      expect(trades()).toEqual([expect.objectContaining({ usdCents: 1250, unverifiedAtRequest: true })]);
+    });
+  });
+
+  it('binds Yes to the question it answered: a stale Yes is rejected and a replayed Yes buys once', async () => {
+    await withTrading('unverified-stale', async ({ runtime, click, link, seed, createWallet, openDetail, trades, sent }) => {
+      seed('arc', 'LIVE_READY', null);await createWallet();
+      const detail = await openDetail();
+      const session = () => runtime().commands.sessions.get(detail.id);
+      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      const yesFor10 = link(session(), 'trade.acknowledge_unverified');
+      await click(link(session(), 'trade.decline_unverified'));
+      await click(link(session(), 'trade.buy', params => params.usd === 20));
+      await click(yesFor10);
+      expect(trades()).toEqual([]);expect(sent.at(-1).params.text).toMatch(/old action was not applied/);
+      expect(session()).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { usdCents: 2000 } } });
+      const yesFor20 = link(session(), 'trade.acknowledge_unverified');
+      await click(yesFor20);
+      await click(yesFor20);
+      expect(trades()).toEqual([expect.objectContaining({ usdCents: 2000, unverifiedAtRequest: true })]);
+    });
+  });
+
+  it('lets Yes proceed once the check verifies the token, and refuses it once the check finds it fatal', async () => {
+    await withTrading('unverified-meanwhile', async ({ runtime, click, link, seed, createWallet, openDetail, trades, sent }) => {
+      seed('arc', 'LIVE_READY', null);await createWallet();
+      const first = await openDetail();
+      await click(link(first, 'trade.buy', params => params.usd === 10));
+      seed('arc', 'LIVE_READY', VERIFIED);
+      await click(link(runtime().commands.sessions.get(first.id), 'trade.acknowledge_unverified'));
+      expect(trades()).toEqual([expect.objectContaining({ usdCents: 1000, unverifiedAtRequest: false })]);
+
+      seed('arc', 'LIVE_READY', null);
+      const second = await openDetail();
+      await click(link(second, 'trade.buy', params => params.usd === 20));
+      seed('arc', 'LIVE_READY', FATAL);
+      await click(link(runtime().commands.sessions.get(second.id), 'trade.acknowledge_unverified'));
+      expect(trades()).toHaveLength(1);
+      expect(sent.some(row => row.params.text?.includes('buy was refused'))).toBe(true);
+      expect(runtime().commands.sessions.get(second.id).panel).toBe('detail');
+    });
+  });
+
+  it('never asks for a sell or a verified buy', async () => {
+    await withTrading('unverified-skip', async ({ runtime, click, link, seed, createWallet, openDetail, tradeOf }) => {
+      seed('arc', 'LIVE_READY', null);await createWallet();
+      const detail = await openDetail();
+      await click(link(detail, 'trade.sell', params => params.percent === 25));
+      expect(runtime().commands.sessions.get(detail.id).panel).toBe('trade');
+      expect(tradeOf(detail)).toMatchObject({ side: 'sell', unverifiedAtRequest: false });
+
+      seed('arc', 'LIVE_READY', VERIFIED);
+      const verified = await openDetail();
+      await click(link(verified, 'trade.buy', params => params.usd === 10));
+      expect(runtime().commands.sessions.get(verified.id).panel).toBe('trade');
+      expect(tradeOf(verified)).toMatchObject({ side: 'buy', unverifiedAtRequest: false });
+    });
+  });
+
+  it('keeps an acknowledged buy acknowledged on requote, and asks again when a verified quote expires onto an unverified token', async () => {
+    await withTrading('unverified-requote', async ({ runtime, network, click, link, run, seed, createWallet, openDetail, confirm, tradeOf, trades, clock }) => {
+      seed('bsc', 'LIVE_READY', null);await createWallet();network.fund('bsc', 10n ** 18n);
+      const acknowledged = await openDetail('bsc');
+      await click(link(acknowledged, 'trade.buy', params => params.usd === 10));
+      await click(link(runtime().commands.sessions.get(acknowledged.id), 'trade.acknowledge_unverified'));
+      await run(() => tradeOf(acknowledged).state === 'QUOTED');
+      clock.advance(30_000);
+      await confirm(acknowledged);
+      expect(runtime().commands.sessions.get(acknowledged.id).panel).toBe('trade');
+      expect(tradeOf(acknowledged)).toMatchObject({ state: 'QUOTING', unverifiedAtRequest: true });
+
+      seed('bsc', 'LIVE_READY', VERIFIED);
+      const verified = await openDetail('bsc');
+      await click(link(verified, 'trade.buy', params => params.usd === 20));
+      await run(() => tradeOf(verified).state === 'QUOTED');
+      const expiring = tradeOf(verified).id;
+      seed('bsc', 'LIVE_READY', check({ dex: 'ERROR' }));
+      clock.advance(30_000);
+      await confirm(verified);
+      expect(trades().find(trade => trade.id === expiring).state).toBe('EXPIRED');
+      expect(runtime().commands.sessions.get(verified.id)).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { chain: 'bsc', usdCents: 2000 } } });
     });
   });
 });

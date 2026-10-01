@@ -5,8 +5,8 @@ import { TRADING_SETTINGS, KYBER_NATIVE_TOKEN } from '../trading/config.mjs';
 import { displayUnits, centsText, microUsdText } from '../trading/amounts.mjs';
 import { localize, userText, chainLabel, button, escapeHtml, clockTime, relativeTime, finishPanel, ICONS } from '../render/telegram.mjs';
 
-export const TRADING_PANELS = Object.freeze(['trade', 'wallet', 'wallet_export', 'wallet_remove', 'trade_settings']);
-export const TRADING_PANEL_NAMES = Object.freeze({ trade: ['交易', 'Trade'], wallet: ['钱包', 'Wallet'], wallet_export: ['导出私钥', 'Export private key'], wallet_remove: ['移除交易钱包', 'Remove trading wallet'], trade_settings: ['交易限额', 'Trade limits'] });
+export const TRADING_PANELS = Object.freeze(['trade', 'trade_unverified', 'wallet', 'wallet_export', 'wallet_remove', 'trade_settings']);
+export const TRADING_PANEL_NAMES = Object.freeze({ trade: ['交易', 'Trade'], trade_unverified: ['安全核验未完成', 'Safety check not finished'], wallet: ['钱包', 'Wallet'], wallet_export: ['导出私钥', 'Export private key'], wallet_remove: ['移除交易钱包', 'Remove trading wallet'], trade_settings: ['交易限额', 'Trade limits'] });
 
 const REASONS = {
   VETOED: ['安全核验未通过，已拒绝买入。', 'Safety check failed; the buy was refused.'],
@@ -92,6 +92,7 @@ function tradePanel(snapshot, session, locale) {
   const chain = trading.chainFacts[trade.chain];
   const symbol = trade.tokenMeta?.symbol ?? '?';
   const blocks = [`<b>${trade.side === 'buy' ? L('买入', 'Buy') : L('卖出', 'Sell')} ${userText(symbol, 30)}</b> · ${chainLabel(trade.chain)} · ${L(...STATUS[trade.state])}`, `CA: <code>${userText(trade.token, 42)}</code>`];
+  if (trade.unverifiedAtRequest) blocks.push(`${ICONS.unknown} ${L('在安全核验通过前买入。', 'Bought before the safety check verified it.')}`);
   const keyboard = [];
   if (trade.state === 'QUOTING') {
     blocks.push(L('正在获取报价…', 'Fetching a quote…'));
@@ -121,6 +122,20 @@ function tradePanel(snapshot, session, locale) {
     if (trade.result.needed !== null && chain) blocks.push(`${L('需要', 'Needed')}: ${displayUnits(trade.result.needed, trade.result.reason === 'INSUFFICIENT_TOKEN' && trade.side === 'buy' ? chain.quoteDecimals : trade.result.reason === 'INSUFFICIENT_TOKEN' ? trade.tokenMeta.decimals : 18)} ${trade.result.reason === 'INSUFFICIENT_TOKEN' && trade.side === 'sell' ? userText(symbol, 30) : chain.nativeSymbol}`);
   }
   return finishPanel(L('交易', 'Trade'), blocks, keyboard, snapshot, session, locale);
+}
+
+/** The Yes/No question before buying a token the safety check has not verified. */
+function unverifiedBuyPanel(snapshot, session, locale) {
+  const L = L_(locale), request = session.query?.unverifiedBuy, title = `${ICONS.unknown} ${L('安全核验未完成', 'Safety check not finished')}`;
+  if (!request) return finishPanel(title, [L('此买入请求已不可用。', 'This buy request is no longer available.')], [], snapshot, session, locale, { refresh: false });
+  const known = [...snapshot.candidates, ...Object.values(snapshot.feedByChain ?? {}).flatMap(feed => feed.rows)]
+    .find(row => row.chain === request.chain && row.address?.toLowerCase() === request.token.toLowerCase());
+  const name = known?.symbol ? userText(known.symbol, 30) : `<code>${userText(request.token, 42)}</code>`;
+  const amount = centsText(request.usdCents);
+  return finishPanel(title, [`${name} · ${chainLabel(request.chain)} — ${L(`买入 ${amount}？`, `buy ${amount}?`)}`,
+    L('GoPlus 和 DexScreener 尚未核验此代币。', 'GoPlus and DexScreener have not verified this token yet.'),
+    L('它可能是貔貅盘，或含隐藏税费。', 'It could be a honeypot or carry hidden taxes.')],
+  [[button(L('是', 'Yes'), 'trade.acknowledge_unverified'), button(L('否', 'No'), 'trade.decline_unverified')]], snapshot, session, locale, { refresh: false });
 }
 
 function walletPanel(snapshot, session, locale) {
@@ -166,6 +181,7 @@ function settingsPanel(snapshot, session, locale) {
 export function renderTradingPanel(snapshot, session, locale) {
   const L = L_(locale), stay = { refresh: false };
   if (session.panel === 'trade') return tradePanel(snapshot, session, locale);
+  if (session.panel === 'trade_unverified') return unverifiedBuyPanel(snapshot, session, locale);
   if (session.panel === 'wallet') return walletPanel(snapshot, session, locale);
   if (session.panel === 'trade_settings') return settingsPanel(snapshot, session, locale);
   if (session.panel === 'wallet_export') {

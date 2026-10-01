@@ -40,9 +40,10 @@ uses a separate hot wallet the bot generates for you, and every trade needs a co
 - 支持链：Arc（用 USDC 买入，Gas 也用 USDC）、BNB Chain、Base、Ethereum（用原生币买入）。Solana 与 Robinhood 不支持交易。
   Chains: Arc (buys spend USDC, which also pays gas), BNB Chain, Base and Ethereum (buys
   spend the native coin). Solana and Robinhood cannot trade.
-- 安全核验否决（GoPlus 致命风险）的代币禁止买入，卖出不受限制。单笔买入上限默认 $100，滑点默认 5%，可在交易限额中调整。
-  A token vetoed by the safety check cannot be bought; selling is never blocked. The
-  per-trade buy cap defaults to $100 and slippage to 5%; both are adjustable under Trade limits.
+- 安全核验否决（GoPlus 致命风险）的代币禁止买入，卖出不受限制。安全核验尚未完成的代币，买入前需先确认「是 / 否」。单笔买入上限默认 $100，滑点默认 5%，可在交易限额中调整。
+  A token vetoed by the safety check cannot be bought; selling is never blocked. Buying a
+  token the check has not verified yet first asks Yes/No. The per-trade buy cap defaults
+  to $100 and slippage to 5%; both are adjustable under Trade limits.
 - 费用：只有 DEX 路由费用和链上 Gas，机器人不收取任何费用。Fees: DEX routing and gas only; the bot charges 0.
 - 导出私钥需二次确认，私钥只发送一次并在 60 秒后尝试删除；移除钱包会删除私钥，未导出时资金无法找回。
   `/disconnect` 只断开 AVE，不影响交易钱包。

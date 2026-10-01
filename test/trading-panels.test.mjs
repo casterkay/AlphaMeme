@@ -71,3 +71,22 @@ test('a live trade offers Refresh and Back to its origin; the wallet refreshes b
   assert.deepEqual(footer(wallet), ['panel.open']);
   assert.ok(buttons(wallet).some(item => item.action === 'wallet.refresh'));
 });
+
+test('the unverified-buy question names the token and amount and offers Yes then No before the footer', () => {
+  const origin = { panel: 'detail', viewChain: 'bsc', query: { selectedToken: { chain: 'bsc', address: TOKEN } } };
+  const question = (locale, rows = [candidate()]) => renderPanel(snapshot({}, rows), { panel: 'trade_unverified', viewChain: 'bsc', query: { unverifiedBuy: { chain: 'bsc', token: TOKEN, usdCents: 2550 }, returnTo: origin }, version: 1 }, locale);
+  const en = question('en');
+  for (const line of ['Safety check not finished', 'MEME · BNB Chain — buy $25.50?', 'have not verified this token yet', 'honeypot']) assert.ok(en.text.includes(line), line);
+  assert.deepEqual(en.keyboard[0].map(item => [item.text, item.action]), [['Yes', 'trade.acknowledge_unverified'], ['No', 'trade.decline_unverified']]);
+  assert.deepEqual(en.keyboard.at(-1).map(item => item.action), ['panel.back', 'panel.open']);
+  assert.ok(!buttons(en).some(item => item.action === 'panel.refresh'));
+  assert.match(question('zh').text, /安全核验未完成[\s\S]*买入 \$25\.50？/);
+  assert.ok(question('en', []).text.includes(`<code>${TOKEN}</code>`), 'an unknown symbol falls back to the contract address');
+});
+
+test('the quote screen repeats the warning only for a buy requested before the token was verified', () => {
+  const trade = unverifiedAtRequest => ({ id: 'e'.repeat(32), chain: 'bsc', token: TOKEN, side: 'buy', usdCents: 1000, percent: null, state: 'QUOTING', tokenMeta: null, createdAt: now, unverifiedAtRequest });
+  const render = value => renderPanel(snapshot({ trades: [trade(value)] }), { panel: 'trade', viewChain: 'bsc', query: { tradeId: 'e'.repeat(32) }, version: 1 }, 'en').text;
+  assert.match(render(true), /⚠️ Bought before the safety check verified it\./);
+  assert.doesNotMatch(render(false), /Bought before/);
+});
