@@ -61,10 +61,12 @@ test('help is three pages: what the radar does, commands, then safety',()=>{
 // Panels whose content cannot change by re-reading: choices, confirmations, help, evidence
 // pages, and the trading dialogs (in this fixture trading is off, so they are all static).
 const STATIC_PANELS=new Set(['view_chain','filter','sort','language','horizon','cohort','chains','disconnect','help','connection','evidence','trade','trade_unverified','wallet','wallet_export','wallet_remove','trade_settings']);
+// An alert is a message, not a place to navigate: it has no footer (its own tests cover it).
+const NAVIGABLE_PANELS=PANEL_NAMES.filter(panel=>panel!=='alert');
 test('every panel ends with the standard footer and keeps navigation out of its body',()=>{
   const home=item=>item.action==='panel.open'&&item.params.panel==='radar';
   const nav=item=>item.action==='panel.refresh'||item.action==='panel.back'||home(item);
-  for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) for(const returning of [false,true]) {
+  for(const locale of ['zh','en']) for(const panel of NAVIGABLE_PANELS) for(const returning of [false,true]) {
     const snapshot=fixture(), query={selectedToken:{chain:'robinhood',address:snapshot.candidates[0].address},outcome:'connected',...(returning?{returnTo:{panel:'audits',viewChain:'robinhood',query:{}}}:{})};
     const result=renderPanel(snapshot,session(panel,query),locale), footer=result.keyboard.at(-1), label=`${panel} ${locale} ${returning}`;
     assert.ok(footer.every(nav),label);

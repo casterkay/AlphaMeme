@@ -1,12 +1,13 @@
 import { NotificationPolicy } from './notification-policy.mjs';
 import { alertCard } from './alerts.mjs';
-import { safetyVerdict } from '../scoring/safety.mjs';
+import { renderPanel } from './panels.mjs';
+import { ALERT_SESSION_TTL } from './sessions.mjs';
 import { TelegramInbox } from './inbox.mjs';
 import { TelegramOutbox } from './outbox.mjs';
 import { createTelegramTransport } from './telegram-transport.mjs';
 import { TelegramCommands } from './commands.mjs';
 import { annotationVersion, nextReviewExpiry, reviewProjectionRevision } from './review.mjs';
-import { createTelegramExport, readTelegramSnapshot, tokenIdentity } from './snapshot.mjs';
+import { createTelegramExport, projectTelegramCandidate, readTelegramSnapshot } from './snapshot.mjs';
 import { readTelegramStatistics } from './statistics.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
 import { aveCreditsUsed, parseAveBudget } from '../ave-admission.mjs';
@@ -287,40 +288,61 @@ export class TelegramRuntime {
   }
 
   deliveryIneligibleReason(row, payload) {
-    if (payload.token && payload.projectionRevision !== reviewProjectionRevision(this.storage, this.tenantId, payload.token, this.now())) return 'projection_changed';
+    // A new-lead alert is corrected after it is sent instead of cancelled before.
+    if (payload.token && !payload.notification && payload.projectionRevision !== reviewProjectionRevision(this.storage, this.tenantId, payload.token, this.now())) return 'projection_changed';
     return this.notifications.ineligibleReason(row, payload, { issues: this.actionableIssues() });
   }
 
-  // Recorded facts for an alert row. They are optional: an unreadable one is left out, never allowed to drop the alert.
-  alertTokenInTransaction(member, feeds) {
-    const recorded = (value, what) => {
-      try { return value == null ? null : JSON.parse(value); } catch (error) {
-        if (!(error instanceof SyntaxError)) throw error;
-        console.log(JSON.stringify({ event: 'alert_fact_unreadable', chain: member.chain, address: member.address, fact: what }));
-        return null;
-      }
-    };
-    const candidate = this.storage.sql.exec('SELECT symbol,status,market_cap,liquidity,created_at,secondary_json,deep_json FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, member.chain, member.address).toArray()[0];
-    if (!feeds.has(member.chain)) feeds.set(member.chain, recorded(this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, `feed.snapshot:${member.chain}`).toArray()[0]?.value_json, 'feed'));
-    const key = tokenIdentity(member.chain, member.address), rows = feeds.get(member.chain)?.rows;
-    const feedRow = Array.isArray(rows) ? rows.find(row => typeof row?.address === 'string' && tokenIdentity(member.chain, row.address) === key) : undefined;
-    const secondary = recorded(candidate?.secondary_json, 'secondary');
-    const security = secondary?.security;
+  // Recorded facts for a risk notice. They are optional: an unreadable one is left out, never allowed to drop the notice.
+  riskTokenInTransaction(member) {
+    const candidate = this.storage.sql.exec('SELECT symbol,secondary_json FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, member.chain, member.address).toArray()[0];
+    let security = null;
+    try { security = candidate?.secondary_json == null ? null : JSON.parse(candidate.secondary_json)?.security; } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      console.log(JSON.stringify({ event: 'alert_fact_unreadable', chain: member.chain, address: member.address, fact: 'secondary' }));
+    }
     return { chain: member.chain, address: member.address, symbol: candidate?.symbol ?? '',
-      marketCap: candidate?.market_cap ?? null, liquidity: candidate?.liquidity ?? null, createdAt: candidate?.created_at ?? null, priceChange5m: feedRow?.priceChange5m ?? null,
-      verdict: safetyVerdict({ status: candidate?.status ?? null, secondary, deep: recorded(candidate?.deep_json, 'deep') }),
       fatal: Array.isArray(security?.fatal) ? security.fatal.filter(item => typeof item?.field === 'string').map(item => ({ field: item.field, value: security.fields?.[item.field] ?? null })) : [] };
   }
 
+  // The token's alert message, which a later notice about it replies to.
+  alertMessageId(token) {
+    const row = this.storage.sql.exec("SELECT m.message_id FROM message_map m JOIN ui_sessions s ON s.tenant_id=m.tenant_id AND s.id=m.ui_session_id WHERE m.tenant_id=? AND m.chain=? AND m.address=? AND s.panel='alert' ORDER BY m.rowid DESC LIMIT 1", this.tenantId, token.chain, token.address).toArray()[0];
+    return row ? Number(row.message_id) : null;
+  }
+
+  // The facts new-lead alerts render from. An unreadable record never holds an alert back: the alert then shows the plain columns only.
+  alertSnapshotInTransaction(tokens) {
+    try { return readTelegramSnapshot(this.storage, this.tenantId, this.now()); } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      console.log(JSON.stringify({ event: 'alert_fact_unreadable', fact: 'snapshot' }));
+      const candidates = tokens.flatMap(token => this.storage.sql.exec('SELECT chain,address,symbol,status,market_cap,liquidity,created_at,audited_at,review_revision FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, token.chain, token.address).toArray())
+        .map(row => projectTelegramCandidate({ chain: row.chain, address: row.address, symbol: row.symbol, status: row.status, marketCap: row.market_cap, liquidity: row.liquidity, createdAt: row.created_at, auditedAt: row.audited_at, reviewRevision: row.review_revision }));
+      return { at: this.now(), candidates, feedByChain: {}, annotations: [], marks: [] };
+    }
+  }
+
+  // A new lead gets its own alert, which is edited in place as its checks finish; risk and account notices are sent once.
+  // Every alert's buttons last as long as the alert, and what they open arrives as a new message.
   reconcileNotificationsInTransaction() {
     const { notifications } = this.notifications.reconcileInTransaction({ issues: this.actionableIssues() });
+    const leads = notifications.filter(item => item.actionReason === 'CANDIDATE_NEW' && !this.outbox.has(item.id)).map(item => item.members[0]);
+    const snapshot = leads.length ? this.alertSnapshotInTransaction(leads) : null;
     for (const notification of notifications) {
       if (this.outbox.has(notification.id)) continue;
-      const session = this.commands.sessions.createInTransaction('audits', this.control.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN);
-      const feeds = new Map();
-      const tokens = notification.members.map(member => this.alertTokenInTransaction(member, feeds));
-      const { text, keyboard } = alertCard(notification, tokens, { locale: this.commands.language, now: this.now() });
-      this.outbox.enqueueInTransaction({ id: notification.id, chatId: this.tenantId, method: 'sendMessage', params: { text, parse_mode: 'HTML', reply_markup: { inline_keyboard: this.commands.sessions.bindKeyboardInTransaction(session, keyboard, this.control.snapshot()) }, link_preview_options: { is_disabled: true } }, sessionId: session.id, sessionVersion: session.version, deliveryClass: notification.deliveryClass, actionReason: notification.actionReason, notification, expiresAt: notification.expiresAt });
+      const scanChain = this.control.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN, member = notification.members[0];
+      const token = member && { chain: member.chain, address: member.address };
+      const session = this.commands.sessions.createInTransaction('alert', token?.chain ?? scanChain, token ? { selectedToken: token } : {}, { ttl: ALERT_SESSION_TTL });
+      let rendered, params = {};
+      if (notification.actionReason === 'CANDIDATE_NEW') {
+        rendered = renderPanel(snapshot, session, this.commands.language);
+      } else {
+        rendered = alertCard(notification, notification.members.map(item => this.riskTokenInTransaction(item)), { locale: this.commands.language });
+        const replyTo = token ? this.alertMessageId(token) : null;
+        if (replyTo !== null) params = { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } };
+      }
+      const tracked = notification.actionReason === 'CANDIDATE_NEW' ? { token, projectionRevision: reviewProjectionRevision(this.storage, this.tenantId, token, this.now()) } : {};
+      this.outbox.enqueueInTransaction({ id: notification.id, chatId: this.tenantId, method: 'sendMessage', params: { ...params, text: rendered.text, parse_mode: 'HTML', reply_markup: { inline_keyboard: this.commands.sessions.bindKeyboardInTransaction(session, rendered.keyboard, this.control.snapshot()) }, link_preview_options: { is_disabled: true } }, sessionId: session.id, sessionVersion: session.version, deliveryClass: notification.deliveryClass, actionReason: notification.actionReason, notification, expiresAt: notification.expiresAt, ...tracked });
     }
   }
 
@@ -349,7 +371,9 @@ export class TelegramRuntime {
       const fingerprint = reviewProjectionRevision(this.storage, this.tenantId, token, this.now());
       const rendered = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, `telegram.rendered:${map.message_id}`).toArray()[0];
       const session = map.ui_session_id ? this.commands.sessions.get(map.ui_session_id) : null;
-      if (!session || !['detail','evidence'].includes(session.panel) || session.query.selectedToken?.address !== map.address || session.query.selectedToken?.chain !== map.chain) continue;
+      if (!session || !['alert','detail','evidence'].includes(session.panel) || session.query.selectedToken?.address !== map.address || session.query.selectedToken?.chain !== map.chain) continue;
+      // An alert keeps the last facts it showed once its token is no longer stored.
+      if (session.panel === 'alert' && !this.storage.sql.exec('SELECT 1 FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, map.chain, map.address).toArray().length) continue;
       if (!rendered || JSON.parse(rendered.value_json) !== fingerprint) {
         const pending = this.outbox.correctionRows(session.id).some(row => this.outbox.payload(row)?.projectionRevision === fingerprint);
         if (!pending) {

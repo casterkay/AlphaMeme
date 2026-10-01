@@ -1,99 +1,92 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { alertCard } from '../src/bot/alerts.mjs';
-import { safetyVerdict } from '../src/scoring/safety.mjs';
+import { renderPanel } from '../src/bot/panels.mjs';
+import { projectTelegramCandidate, projectTelegramFeedRow } from '../src/bot/snapshot.mjs';
 
 const now = 1_800_000_000_000;
-const newLeads = { actionReason: 'CANDIDATE_NEW', members: [] };
-const lead = (symbol, overrides = {}) => ({ chain: 'arc', address: `0x${symbol.toLowerCase().padStart(40, '0')}`, symbol, marketCap: null, liquidity: null, createdAt: null, priceChange5m: null, verdict: 'PENDING', fatal: [], ...overrides });
-const pepe = lead('PEPE', { marketCap: 120_400, liquidity: 30_100, createdAt: (now - 4 * 60_000) / 1000, priceChange5m: 0.35 });
-const doge = lead('DOGE2', { marketCap: 48_000, liquidity: 9_000, createdAt: (now - 61_000) / 1000, priceChange5m: -0.08 });
+const lead = (symbol, overrides = {}) => ({ chain: 'arc', address: `0x${symbol.toLowerCase().replace(/[^0-9a-z]/g, '').padStart(40, '0')}`, symbol, marketCap: null, liquidity: null, createdAt: null, fatal: [], ...overrides });
 const buttons = keyboard => keyboard.flat().map(({ text, action, params, token }) => ({ text, action, params, ...(token ? { token } : {}) }));
+const clean = { status: 'COMPLETE', security: { verdict: 'NO_FATAL_FLAGS', fatal: [] }, conflicts: [] };
 
-test('a new-lead batch shows market facts per row, the chain, and leads plus mute buttons without a Status button', () => {
-  const { text, keyboard } = alertCard(newLeads, [pepe, doge], { locale: 'en', now });
+// A token's alert as the 'alert' panel renders it from a snapshot; `feed` is its hot-list row.
+function alert(recorded, { locale = 'en', feed = null } = {}) {
+  const row = projectTelegramCandidate({ status: 'LIVE_READY', auditedAt: now - 60_000, reviewRevision: 'revision', deep: {}, ...recorded });
+  const snapshot = { at: now, candidates: [row], annotations: [], marks: [], feedByChain: { arc: { rows: feed ? [projectTelegramFeedRow({ address: recorded.address, ...feed }, 'arc')] : [] } } };
+  return renderPanel(snapshot, { panel: 'alert', viewChain: 'arc', query: { selectedToken: { chain: 'arc', address: recorded.address } }, version: 0 }, locale);
+}
+const pepe = lead('PEPE', { marketCap: 120_400, liquidity: 30_100, createdAt: (now - 4 * 60_000) / 1000 });
+
+test('a new-lead alert names one token with its facts, check state and address, and opens it, lists leads or mutes', () => {
+  const { text, keyboard, token } = alert(pepe, { feed: { priceChange5m: 0.35 } });
   assert.equal(text, [
-    '<b>🆕 2 new leads · Arc</b>',
-    '1. PEPE — $120K MC · $30.1K liq · 4m old · 5m +35%',
-    '2. DOGE2 — $48K MC · $9K liq · 1m old · 5m -8%',
-    'Safety check still running; not verified.'
+    '<b>🆕 New lead · PEPE · Arc</b>',
+    '$120K MC · $30.1K liq · 4m old · 5m +35%',
+    '⏳ Checking',
+    `<code>${pepe.address}</code>`,
+    'Safety check still running; not verified.',
+    '',
+    'Updated Jan 15 08:00 UTC'
   ].join('\n'));
-  assert.doesNotMatch(text, /Action required/);
-  assert.deepEqual(keyboard.map(row => row.length), [2, 2]);
+  assert.deepEqual(token, { chain: 'arc', address: pepe.address }, 'the alert is tracked so later checks edit it');
   assert.deepEqual(buttons(keyboard), [
-    { text: '1 PEPE', action: 'panel.open', params: { panel: 'detail' }, token: { chain: 'arc', address: pepe.address } },
-    { text: '2 DOGE2', action: 'panel.open', params: { panel: 'detail' }, token: { chain: 'arc', address: doge.address } },
+    { text: 'Open PEPE', action: 'panel.open', params: { panel: 'detail' }, token: { chain: 'arc', address: pepe.address } },
     { text: '🎯 All leads', action: 'panel.open', params: { panel: 'audits' } },
     { text: '🔕 Mute alerts', action: 'notifications.set', params: { value: false } }
   ]);
 });
 
-test('a new-lead row leaves out each missing fact instead of printing a placeholder', () => {
-  const sparse = lead('BARE', { liquidity: 5_000, createdAt: (now + 60_000) / 1000 });
-  const { text } = alertCard(newLeads, [sparse, lead('NONE', { symbol: '' })], { locale: 'en', now });
-  const lines = text.split('\n');
-  assert.equal(lines[0], '<b>🆕 2 new leads · Arc</b>');
-  assert.equal(lines[1], '1. BARE — $5K liq');
-  assert.equal(lines[2], '2. 0000none', 'no symbol falls back to the address tail and no facts leave a bare row');
-  assert.doesNotMatch(text, /Unknown|NaN|undefined|null/);
+test('a new-lead alert renders in Chinese with the same facts', () => {
+  const lines = alert(pepe, { locale: 'zh', feed: { priceChange5m: 0.35 } }).text.split('\n');
+  assert.deepEqual(lines.slice(0, 3), ['<b>🆕 新线索 · PEPE · Arc</b>', '市值 $120K · 流动性 $30.1K · 币龄 4分钟 · 5分钟 +35%', '⏳ 检查中']);
+  assert.equal(lines[4], '安全检查仍在进行，尚未核验。');
 });
 
-test('rows carry the shared safety badge once any check has finished', () => {
-  const { text } = alertCard(newLeads, [lead('WAIT'), lead('OK', { verdict: 'PASSED' }), lead('PART', { verdict: 'INCOMPLETE' })], { locale: 'en', now });
-  assert.deepEqual(text.split('\n'), ['<b>🆕 3 new leads · Arc</b>', '1. WAIT · ⏳ Checking', '2. OK · ✅ No failures found', '3. PART · ⚠️ Needs review', 'Checks are not a safety guarantee.']);
-  assert.doesNotMatch(text, /still running; not verified/, 'the blanket line would be false for checked rows');
+test('a new-lead alert leaves out each missing fact instead of printing a placeholder', () => {
+  const lines = alert(lead('NONE', { symbol: '', liquidity: 5_000, createdAt: (now + 60_000) / 1000 })).text.split('\n');
+  assert.equal(lines[0], '<b>🆕 New lead · 0000none · Arc</b>', 'no symbol falls back to the address tail');
+  assert.equal(lines[1], '$5K liq');
+  assert.doesNotMatch(lines.join('\n'), /Unknown|NaN|undefined|null/);
 });
 
-test('a finished check that needs review alone is enough to badge rows and replace the still-running line', () => {
-  const { text } = alertCard(newLeads, [lead('WAIT'), lead('PART', { verdict: 'INCOMPLETE' })], { locale: 'zh', now });
-  assert.deepEqual(text.split('\n'), ['<b>🆕 2 个新线索 · Arc</b>', '1. WAIT · ⏳ 检查中', '2. PART · ⚠️ 待复核', '检查结果不构成安全保证。']);
-});
-
-test('a complete clean check with a blocking source conflict or an open deep audit needs review, never passes', () => {
-  const clean = { status: 'COMPLETE', security: { verdict: 'NO_FATAL_FLAGS', fatal: [] }, conflicts: [] };
-  const rows = [
-    ['CLEAN', { status: 'LIVE_READY', secondary: clean }],
-    ['MARKET', { status: 'LIVE_READY', secondary: { ...clean, conflicts: [{ type: 'MARKET_MISMATCH', field: 'marketCap' }] } }],
-    ['SECURITY', { status: 'LIVE_READY', secondary: { ...clean, conflicts: [{ type: 'SECURITY_MISMATCH', field: 'honeypot' }] } }],
-    ['AUDIT', { status: 'X_REVIEW', secondary: clean, deep: { failed: [], blockingUnknownFields: ['lpBurned'] } }]
-  ].map(([symbol, recorded]) => lead(symbol, { verdict: safetyVerdict(recorded) }));
-  const { text } = alertCard(newLeads, rows, { locale: 'en', now });
-  assert.deepEqual(text.split('\n').slice(1, 5), ['1. CLEAN · ✅ No failures found', '2. MARKET · ⚠️ Needs review', '3. SECURITY · ⚠️ Needs review', '4. AUDIT · ⚠️ Needs review']);
-});
-
-test('a single new lead is singular and an odd batch keeps the last token button alone on its row', () => {
-  const { text, keyboard } = alertCard(newLeads, [pepe, doge, lead('ODD')], { locale: 'en', now });
-  assert.match(text, /^<b>🆕 3 new leads · Arc<\/b>/);
-  assert.deepEqual(keyboard.map(row => row.length), [2, 1, 2]);
-  assert.match(alertCard(newLeads, [pepe], { locale: 'en', now }).text, /^<b>🆕 1 new lead · Arc<\/b>/);
-});
-
-test('a new-lead batch renders in Chinese with the same facts', () => {
-  const { text, keyboard } = alertCard(newLeads, [pepe], { locale: 'zh', now });
-  assert.equal(text, ['<b>🆕 1 个新线索 · Arc</b>', '1. PEPE — 市值 $120K · 流动性 $30.1K · 币龄 4分钟 · 5分钟 +35%', '安全检查仍在进行，尚未核验。'].join('\n'));
-  assert.deepEqual(buttons(keyboard).slice(1).map(button => button.text), ['🎯 全部线索', '🔕 关闭提醒']);
+test('an edited alert shows each finished check with the shared badge, and a veto says buying is blocked', () => {
+  for (const [secondary, extra, expected, closing] of [
+    [clean, {}, '✅ No failures found', 'Checks are not a safety guarantee.'],
+    [{ ...clean, conflicts: [{ type: 'MARKET_MISMATCH', field: 'marketCap' }] }, {}, '⚠️ Needs review', 'Checks are not a safety guarantee.'],
+    [clean, { status: 'X_REVIEW', deep: { failed: [], blockingUnknownFields: ['lpBurned'] } }, '⚠️ Needs review', 'Checks are not a safety guarantee.'],
+    [{ ...clean, security: { verdict: 'FATAL', fatal: [{ field: 'isHoneypot' }] } }, { status: 'HARD_REJECT' }, '⛔ Vetoed: Honeypot', 'Buying is blocked; selling still works.']
+  ]) {
+    const lines = alert({ ...pepe, secondary, ...extra }).text.split('\n');
+    assert.match(lines[2], new RegExp(`^${expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    assert.doesNotMatch(lines[2], /ago/, 'an alert is not re-rendered as time passes, so it states no relative time');
+    assert.equal(lines[4], closing);
+  }
+  assert.equal(alert({ ...pepe, status: 'HARD_REJECT', secondary: { ...clean, security: { verdict: 'FATAL', fatal: [{ field: 'isHoneypot' }] } } }).text.split('\n')[0], '<b>⛔ PEPE failed the safety check · Arc</b>');
 });
 
 test('token symbols are escaped as user text in every alert', () => {
-  const hostile = lead('<b>X</b>&', { verdict: 'PASSED' });
-  for (const notification of [newLeads, { actionReason: 'RISK_WORSENED', members: [] }]) {
-    const { text } = alertCard(notification, [hostile], { locale: 'en', now });
+  const hostile = lead('<b>X</b>&');
+  for (const text of [alert(hostile).text, alertCard({ actionReason: 'RISK_WORSENED', members: [] }, [hostile], { locale: 'en' }).text]) {
     assert.match(text, /&lt;b&gt;X&lt;\/b&gt;&amp;/);
     assert.doesNotMatch(text, /<b>X<\/b>/);
   }
 });
 
+test('a new lead is never rendered as a notice card', () => {
+  assert.throws(() => alertCard({ actionReason: 'CANDIDATE_NEW', members: [] }, [pepe], { locale: 'en' }), RangeError);
+});
+
 test('a risk alert names the token, the recorded fatal findings and that only buying is blocked', () => {
   const vetoed = lead('PEPE', { fatal: [{ field: 'isHoneypot', value: true }, { field: 'openSource', value: false }] });
-  const { text, keyboard } = alertCard({ actionReason: 'RISK_WORSENED', members: [] }, [vetoed], { locale: 'en', now });
+  const { text, keyboard } = alertCard({ actionReason: 'RISK_WORSENED', members: [] }, [vetoed], { locale: 'en' });
   assert.equal(text, ['<b>⛔ PEPE failed the safety check · Arc</b>', 'GoPlus flagged: Honeypot: Yes · Open source: No', 'Buying is blocked; selling still works.'].join('\n'));
   assert.deepEqual(buttons(keyboard), [{ text: 'Open PEPE', action: 'panel.open', params: { panel: 'detail' }, token: { chain: 'arc', address: vetoed.address } }]);
-  const zh = alertCard({ actionReason: 'RISK_WORSENED', members: [] }, [vetoed], { locale: 'zh', now }).text;
+  const zh = alertCard({ actionReason: 'RISK_WORSENED', members: [] }, [vetoed], { locale: 'zh' }).text;
   assert.equal(zh, ['<b>⛔ PEPE 未通过安全检查 · Arc</b>', 'GoPlus 标记：貔貅风险：是 · 开源：否', '已禁止买入；仍可卖出。'].join('\n'));
 });
 
 test('a risk alert without readable findings still names the token and the blocked buy', () => {
-  const { text, keyboard } = alertCard({ actionReason: 'RISK_WORSENED', members: [] }, [lead('PEPE')], { locale: 'en', now });
+  const { text, keyboard } = alertCard({ actionReason: 'RISK_WORSENED', members: [] }, [lead('PEPE')], { locale: 'en' });
   assert.equal(text, ['<b>⛔ PEPE failed the safety check · Arc</b>', 'Buying is blocked; selling still works.'].join('\n'));
   assert.equal(keyboard.flat().length, 1);
 });
@@ -105,7 +98,7 @@ test('account alerts carry the button that resolves them and no generic title', 
     [{ key: 'delivery-uncertain', reason: 'DELIVERY_UNCERTAIN', nextAction: '/status' }, 'en', '<b>📭 Some messages may not have arrived</b>', { text: '📊 Status', action: 'panel.open', params: { panel: 'status' } }],
     [{ key: 'delivery-uncertain', reason: 'DELIVERY_UNCERTAIN', nextAction: '/status' }, 'zh', '<b>📭 部分消息可能未送达</b>', { text: '📊 状态', action: 'panel.open', params: { panel: 'status' } }]
   ]) {
-    const { text, keyboard } = alertCard({ actionReason: 'ACCOUNT_ACTION_REQUIRED', members: [], issue }, [], { locale, now });
+    const { text, keyboard } = alertCard({ actionReason: 'ACCOUNT_ACTION_REQUIRED', members: [], issue }, [], { locale });
     assert.equal(text, expectedText);
     assert.deepEqual(buttons(keyboard), [expectedButton]);
   }

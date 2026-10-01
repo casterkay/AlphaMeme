@@ -6,7 +6,7 @@ import { tokenIdentity, safeTelegramText } from './snapshot.mjs';
 import { TRADING_PANELS, TRADING_PANEL_NAMES, tokenTradeControls, renderTradingPanel } from './trading-panels.mjs';
 import { localize, escapeHtml, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, safetyBadge, ICONS } from '../render/telegram.mjs';
 
-export const PANEL_NAMES = Object.freeze(['radar','feed','audits','saved','events','status','sources','delivery','settings','chains','onboard','help','detail','evidence','view_chain','filter','sort','language','disconnect','stats','horizon','cohort','connection',...TRADING_PANELS]);
+export const PANEL_NAMES = Object.freeze(['alert','radar','feed','audits','saved','events','status','sources','delivery','settings','chains','onboard','help','detail','evidence','view_chain','filter','sort','language','disconnect','stats','horizon','cohort','connection',...TRADING_PANELS]);
 export const AUDIT_FILTERS = Object.freeze(['all','lead','chain','waiting','passed','ignored','rejected','fresh','favorite']);
 export const AUDIT_SORTS = Object.freeze(['audit_desc','score_desc','market_desc','market_asc','liquidity_desc']);
 export const FEED_SORTS = Object.freeze(['priority','volume']);
@@ -351,10 +351,37 @@ export function renderStatisticsPanel(snapshot,session,locale='zh') {
 }
 
 /** Pure native Telegram panel renderer. Action descriptors are bound by the controller. */
+/**
+ * One token's alert. It is sent once and then edited in place as its checks finish, so it states
+ * facts as of its update time rather than relative to now.
+ */
+function alertPanel(snapshot,session,locale) {
+  const L = (zh,en) => localize(locale,zh,en), selected = session.query.selectedToken, found = findToken(snapshot,session);
+  const row = found?.row ?? { ...selected, symbol:'?' }, listed = found?.listed, deep = row.deep || {};
+  const shortName = row.symbol && row.symbol !== '?' ? row.symbol : selected.address.slice(-8), label = userText(shortName,30);
+  const safety = found ? { ...tokenSafety(row), checkedAt:null } : { verdict:null };
+  const fact = key => row[key] ?? listed?.[key] ?? null, liquidity = deep.security?.liquidity ?? fact('liquidity'), createdAt = fact('createdAt');
+  const facts = [
+    present(fact('marketCap')) ? L(`市值 ${money(fact('marketCap'),locale)}`,`${money(fact('marketCap'),locale)} MC`) : null,
+    present(liquidity) ? L(`流动性 ${money(liquidity,locale)}`,`${money(liquidity,locale)} liq`) : null,
+    // createdAt is in seconds, as AVE reports it.
+    createdAt > 0 && createdAt * 1000 <= snapshot.at ? L(`币龄 ${duration(snapshot.at-createdAt*1000,locale)}`,`${duration(snapshot.at-createdAt*1000,locale)} old`) : null,
+    present(listed?.priceChange5m) ? L(`5分钟 ${percent(listed.priceChange5m,locale,true)}`,`5m ${percent(listed.priceChange5m,locale,true)}`) : null
+  ].filter(Boolean);
+  const title = safety.verdict === 'VETOED' ? `${ICONS.vetoed} ${label} ${L('未通过安全检查','failed the safety check')} · ${chainLabel(selected.chain)}` : `${ICONS.newLead} ${L('新线索','New lead')} · ${label} · ${chainLabel(selected.chain)}`;
+  const closing = safety.verdict === 'VETOED' ? L('已禁止买入；仍可卖出。','Buying is blocked; selling still works.')
+    : [null,'PENDING'].includes(safety.verdict) ? L('安全检查仍在进行，尚未核验。','Safety check still running; not verified.') : L('检查结果不构成安全保证。','Checks are not a safety guarantee.');
+  const blocks = [facts.length ? userText(facts.join(' · ')) : null, safetyLine(safety,snapshot,locale), `<code>${userText(selected.address,80)}</code>`, closing].filter(Boolean);
+  const keyboard = [[button(L(`打开 ${safeTelegramText(shortName,30)}`,`Open ${safeTelegramText(shortName,30)}`),'panel.open',{ panel:'detail' },token(selected))],
+    [button(`${ICONS.audits} ${L('全部线索','All leads')}`,'panel.open',{ panel:'audits' }),button(`${ICONS.alertsOff} ${L('关闭提醒','Mute alerts')}`,'notifications.set',{ value:false })]];
+  return { text:`<b>${title}</b>\n${blocks.join('\n')}\n\n${L('更新于','Updated')} ${clockTime(snapshot.at,locale)}`, keyboard, version:session.version, token:token(selected) };
+}
+
 export function renderPanel(snapshot,session,locale='zh') {
   if(!['zh','en'].includes(locale)) throw new TypeError('Unsupported Telegram locale');
   if(!PANEL_NAMES.includes(session.panel)) throw new TypeError('Unsupported Telegram panel');
   const L=(zh,en)=>localize(locale,zh,en),query=session.query || {},control=snapshot.control || {};
+  if(session.panel === 'alert') return alertPanel(snapshot,session,locale);
   if(['feed','audits','saved'].includes(session.panel)) return listPanel(snapshot,session,locale);
   if(['detail','evidence'].includes(session.panel)) return detailPanel(snapshot,session,locale);
   if(['view_chain','filter','sort','language','horizon','cohort'].includes(session.panel)) return selectorPanel(snapshot,session,locale);

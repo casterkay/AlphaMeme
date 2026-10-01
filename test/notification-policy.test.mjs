@@ -60,15 +60,15 @@ test('each lead logs why it is held once per change, and an enqueued alert is lo
   assert.deepEqual(holds(log).sort(), ['fresh:alerts_off', 'old:alerts_off']);
 });
 
-test('a lead that is not alert-eligible, or waits for the next batch, says so', t => {
+test('every new lead is alerted at once, and a lead that is not alert-eligible says why', t => {
   const log = t.mock.method(console, 'log', () => {});
   const f = fixture(); f.candidate('seed');
   f.policy.reconcileInTransaction();
   f.advance(1); f.candidate('first');
   f.policy.reconcileInTransaction();
-  f.advance(1); f.candidate('second');
-  f.policy.reconcileInTransaction();
-  assert.ok(holds(log).includes('second:batch_interval'));
+  f.advance(1); f.candidate('second'); f.candidate('third');
+  assert.deepEqual(f.policy.reconcileInTransaction().notifications.map(item => item.members.map(member => member.address)), [['first'], ['second'], ['third']]);
+  assert.deepEqual(holds(log).filter(line => !line.startsWith('seed')), ['first:alerted', 'second:alerted', 'third:alerted']);
   log.mock.resetCalls();
   f.candidate('late', { status: 'LIVE_READY', age: 11 * 60_000 });
   f.policy.reconcileInTransaction();
@@ -81,13 +81,13 @@ test('an alert dropped before delivery is logged with the reason it no longer qu
   f.policy.reconcileInTransaction();
   f.advance(1); f.candidate('fresh');
   const [notice] = f.policy.reconcileInTransaction().notifications;
-  f.candidate('fresh', { revision: 'r2' });
+  f.candidate('fresh', { status: 'HARD_REJECT', qualified: false, revision: 'veto' });
   f.policy.reconcileInTransaction();
   assert.deepEqual(logLines(log).filter(line => line.event === 'notification_dropped'),
-    [{ event: 'notification_dropped', id: notice.id, actionReason: 'CANDIDATE_NEW', addresses: ['fresh'], reason: 'lead_revised' }]);
+    [{ event: 'notification_dropped', id: notice.id, actionReason: 'CANDIDATE_NEW', addresses: ['fresh'], reason: 'lead_not_eligible' }]);
 });
 
-test('delivery eligibility names the reason a pending alert may no longer be sent', () => {
+test('delivery eligibility names the reason a pending alert may no longer be sent, and a newer check is not one', () => {
   const f = fixture(); f.candidate('old');
   f.policy.reconcileInTransaction();
   f.advance(1); f.candidate('fresh');
@@ -95,7 +95,7 @@ test('delivery eligibility names the reason a pending alert may no longer be sen
   const outbox = { delivery_class: 'ACTION_REQUIRED', action_reason: 'CANDIDATE_NEW' };
   assert.equal(f.policy.ineligibleReason(outbox, { notification: notice }), null);
   f.candidate('fresh', { revision: 'r2' });
-  assert.equal(f.policy.ineligibleReason(outbox, { notification: notice }), 'lead_revised');
+  assert.equal(f.policy.ineligibleReason(outbox, { notification: notice }), null, 'the sent alert is edited to the newer check instead');
   f.pref('telegram.notifications', false);
   assert.equal(f.policy.ineligibleReason(outbox, { notification: notice }), 'alerts_off');
   assert.equal(f.policy.eligible(outbox, { notification: notice }), false);
@@ -129,11 +129,10 @@ test('ignored and incomplete candidates are excluded; mute cancels automatic not
   assert.equal(f.policy.eligible({delivery_class:'ACTION_REQUIRED',action_reason:'CANDIDATE_NEW'},{notification:notice}),false);
 });
 
-test('new-candidate batches are limited to one per minute and have 24h token suppression', () => {
+test('each new lead is alerted without waiting for another, and an alerted lead stays quiet when it qualifies again', () => {
   const f=fixture();f.policy.baselineInTransaction();f.advance(1);f.candidate('a');
   const first=f.policy.reconcileInTransaction().notifications[0];f.policy.acknowledgeInTransaction(first);
-  f.candidate('b'); assert.equal(f.policy.reconcileInTransaction().notifications.length,0);
-  f.advance(60000); const second=f.policy.reconcileInTransaction().notifications[0];assert.equal(second.members[0].address,'b');
+  f.candidate('b'); const second=f.policy.reconcileInTransaction().notifications[0];assert.equal(second.members[0].address,'b');
   f.policy.acknowledgeInTransaction(second);
   f.candidate('a',{status:'WAIT_RECHECK'});f.policy.reconcileInTransaction();f.advance(60000);f.candidate('a');
   assert.equal(f.policy.reconcileInTransaction().notifications.length,0);
@@ -203,13 +202,11 @@ for (const { scenario, transport, attempts, status, replacements } of [
   assert.ok(next.every(notification => !pending.some(item => item.id === notification.id)));
 });
 
-test('a new-lead alert dropped before delivery leaves the lead free to alert again', () => {
+test('a revised lead keeps its one pending alert', () => {
   const f = fixture(); f.policy.baselineInTransaction(); f.advance(1); f.candidate('a');
   const [first] = f.policy.reconcileInTransaction().notifications;
   f.advance(60_000); f.candidate('a', { revision: 'r2' });
-  const [second] = f.policy.reconcileInTransaction().notifications;
-  assert.notEqual(second.id, first.id);
-  assert.deepEqual(second.members.map(member => member.revision), ['r2']);
+  assert.deepEqual(f.policy.reconcileInTransaction().notifications.map(item => item.id), [first.id]);
 });
 
 test('a risk alert dropped before delivery alerts again for the revised lead', () => {

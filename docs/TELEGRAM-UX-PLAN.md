@@ -234,28 +234,33 @@ MC $120K · Liq $30K · 2,431 holders
 
 ### 3.7 Alerts (`reconcileNotificationsInTransaction`)
 
-Rendering lives in the pure module `src/bot/alerts.mjs` (`alertCard`); the
-runtime only reads each member's recorded facts and enqueues the card.
+A new lead is the `alert` panel (`src/bot/panels.mjs`); risk and account notices
+are rendered by the pure module `src/bot/alerts.mjs` (`alertCard`).
 
-New leads (one batched message, up to 10 as today):
+New leads (amended: one message per lead, sent at once, then edited in place):
 
 ```
-🆕 2 new leads · Arc
-1. PEPE — $120K MC · $30K liq · 4m old · 5m +35%
-2. DOGE2 — $48K MC · $9K liq · 1m old · 5m +12%
+🆕 New lead · PEPE · Arc
+$120K MC · $30K liq · 4m old · 5m +35%
+⏳ Checking
+<address>
 Safety check still running; not verified.
-[1 PEPE] [2 DOGE2]
+
+Updated 08:00 UTC
+[Open PEPE]
 [🎯 All leads] [🔕 Mute alerts]
 ```
 
 - Market cap, liquidity and age come from the candidate row; the 5m change from
   the token's row in the latest hot-list snapshot. A missing fact is omitted.
-- A lead's GoPlus/DexScreener check can finish before its batch is sent, so the
-  closing line above is used only while every row's check is still pending.
-  Otherwise each row carries the shared verdict's badge (`safetyVerdict` →
-  `safetyBadge`, e.g. `1. PEPE · ⚠️ Needs review — $120K MC …`), so a source
-  conflict or an open deep audit reads ⚠️ exactly as in Leads and detail, and
-  the closing line becomes "Checks are not a safety guarantee."
+- The alert is mapped to its token like a detail card. When the token's review
+  projection changes (its GoPlus/DexScreener check finishes, or it is vetoed),
+  the same message is edited to show the shared verdict's badge; a veto also
+  sends the short risk notice below as a reply to the alert. The alert states no
+  relative times, since it is not re-rendered as time passes.
+- An alert's buttons last 7 days, as long as an alerted token is kept. What they
+  open (detail, Leads, Settings after muting) arrives as a new message, so the
+  alert itself stays as sent.
 
 Risk worsened:
 
@@ -273,9 +278,8 @@ such as "Open source" would misstate the risk; the value says which way it faile
 Account issues: "🔑 Your AVE key stopped working" `[🔑 Reconnect AVE]`;
 "📭 Some messages may not have arrived" `[📊 Status]`.
 
-The "Action required" title and the Status button are removed. Eligibility,
-batching, deduplication and expiry are unchanged; only rendering changes. An
-unreadable optional fact is logged and omitted; it never drops the alert.
+The "Action required" title and the Status button are removed. An unreadable
+optional fact is logged and omitted; it never drops the alert.
 
 ### 3.8 First run and onboarding
 
@@ -471,7 +475,7 @@ README command list) is updated in the slice that changes the behavior.
   panel staying under `TELEGRAM_TEXT_BUDGET` with 10 max-length rows in both
   languages.
 - **Alerts:** eligibility tests unchanged and still passing (proves rendering-only
-  change); new rendering tests for batch, risk reason and account issues.
+  change); new rendering tests for the lead alert, risk reason and account issues.
 - **Intake:** fuzzing of the text classifier — no generated secret-shaped string is
   classified as a lookup, no `text`/`secret_warning` receipt carries the text, and
   every valid EVM address round-trips.

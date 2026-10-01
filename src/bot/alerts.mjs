@@ -1,36 +1,8 @@
-import { ICONS, button, chainLabel, duration, localize, money, percent, safetyBadge, truth, userText } from '../render/telegram.mjs';
+import { ICONS, button, chainLabel, localize, truth, userText } from '../render/telegram.mjs';
 import { reasonText } from './panels.mjs';
 
 const label = token => token.symbol || token.address.slice(-8);
 const tokenButton = (text, token) => button(text, 'panel.open', { panel: 'detail' }, { chain: token.chain, address: token.address });
-
-function marketFacts(token, now, L, locale) {
-  const finite = value => typeof value === 'number' && Number.isFinite(value);
-  return [
-    finite(token.marketCap) ? L(`市值 ${money(token.marketCap, locale)}`, `${money(token.marketCap, locale)} MC`) : null,
-    finite(token.liquidity) ? L(`流动性 ${money(token.liquidity, locale)}`, `${money(token.liquidity, locale)} liq`) : null,
-    // createdAt is in seconds, as AVE reports it.
-    finite(token.createdAt) && token.createdAt > 0 && token.createdAt * 1000 <= now ? L(`币龄 ${duration(now - token.createdAt * 1000, locale)}`, `${duration(now - token.createdAt * 1000, locale)} old`) : null,
-    finite(token.priceChange5m) ? L(`5分钟 ${percent(token.priceChange5m, locale, true)}`, `5m ${percent(token.priceChange5m, locale, true)}`) : null
-  ].filter(Boolean).join(' · ');
-}
-
-function newLeadsCard(tokens, now, L, locale) {
-  const chains = [...new Set(tokens.map(token => chainLabel(token.chain)))].join(', ');
-  // Badges only distinguish rows once some check has finished; otherwise the closing line covers them all.
-  const marked = tokens.some(token => token.verdict !== 'PENDING');
-  const lines = [`<b>${ICONS.newLead} ${L(`${tokens.length} 个新线索`, `${tokens.length} new lead${tokens.length === 1 ? '' : 's'}`)} · ${userText(chains)}</b>`];
-  tokens.forEach((token, index) => {
-    const facts = marketFacts(token, now, L, locale);
-    lines.push(`${index + 1}. ${userText(label(token), 30)}${marked ? ` · ${safetyBadge(token.verdict, locale)}` : ''}${facts ? ` — ${userText(facts)}` : ''}`);
-  });
-  lines.push(marked ? L('检查结果不构成安全保证。', 'Checks are not a safety guarantee.') : L('安全检查仍在进行，尚未核验。', 'Safety check still running; not verified.'));
-  const keyboard = [];
-  const buttons = tokens.map((token, index) => tokenButton(`${index + 1} ${label(token).slice(0, 30)}`, token));
-  for (let index = 0; index < buttons.length; index += 2) keyboard.push(buttons.slice(index, index + 2));
-  keyboard.push([button(`${ICONS.audits} ${L('全部线索', 'All leads')}`, 'panel.open', { panel: 'audits' }), button(`${ICONS.alertsOff} ${L('关闭提醒', 'Mute alerts')}`, 'notifications.set', { value: false })]);
-  return { lines, keyboard };
-}
 
 function riskCard(token, L, locale) {
   const name = userText(label(token), 30);
@@ -52,13 +24,12 @@ function accountCard(issue, L) {
 }
 
 /**
- * Render one alert. `tokens` aligns with the notification's members and carries
- * only recorded facts; any missing fact is left out rather than blocking the alert.
+ * Render a risk or account notice. A new lead is the 'alert' panel instead, since it is edited in place.
+ * `tokens` aligns with the notification's members and carries only recorded facts.
  */
-export function alertCard(notification, tokens, { locale, now }) {
+export function alertCard(notification, tokens, { locale }) {
   const L = (zh, en) => localize(locale, zh, en);
-  const { lines, keyboard } = notification.actionReason === 'CANDIDATE_NEW' ? newLeadsCard(tokens, now, L, locale)
-    : notification.actionReason === 'RISK_WORSENED' ? riskCard(tokens[0], L, locale)
-      : accountCard(notification.issue, L);
+  if (!['RISK_WORSENED', 'ACCOUNT_ACTION_REQUIRED'].includes(notification.actionReason)) throw new RangeError(`no notice for ${notification.actionReason}`);
+  const { lines, keyboard } = notification.actionReason === 'RISK_WORSENED' ? riskCard(tokens[0], L, locale) : accountCard(notification.issue, L);
   return { text: lines.join('\n'), keyboard };
 }
