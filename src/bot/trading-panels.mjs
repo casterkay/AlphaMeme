@@ -59,9 +59,9 @@ export function tokenTradeControls(snapshot, row, locale, identity) {
   const blocks = [], keyboard = [];
   if (row.status === 'HARD_REJECT') blocks.push(L('安全核验未通过：已禁止买入，仍可卖出。', 'Safety check failed: buying is disabled; selling stays available.'));
   else keyboard.push([...TRADING_SETTINGS.buyButtonsUsd.filter(usd => usd <= trading.settings.capUsd).map(usd => button(`${L('买', 'Buy')} $${usd}`, 'trade.buy', { usd }, identity)),
-    button(L('买 自定义', 'Buy custom'), 'trade.input', { side: 'buy' }, identity)]);
+    button(L('买 …', 'Buy …'), 'trade.input', { side: 'buy' }, identity)]);
   keyboard.push([...TRADING_SETTINGS.sellButtonsPercent.map(percent => button(`${L('卖', 'Sell')} ${percent}%`, 'trade.sell', { percent }, identity)),
-    button(L('卖 自定义%', 'Sell custom %'), 'trade.input', { side: 'sell' }, identity)]);
+    button(L('卖 …', 'Sell …'), 'trade.input', { side: 'sell' }, identity)]);
   return { blocks, keyboard };
 }
 

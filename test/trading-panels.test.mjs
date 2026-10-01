@@ -23,6 +23,7 @@ test('a tradable token detail offers buys up to the cap and sells', () => {
     ['trade.buy', { usd: 10 }], ['trade.buy', { usd: 20 }], ['trade.buy', { usd: 50 }], ['trade.input', { side: 'buy' }],
     ['trade.sell', { percent: 25 }], ['trade.sell', { percent: 50 }], ['trade.sell', { percent: 100 }], ['trade.input', { side: 'sell' }]]);
   assert.deepEqual(tradeActions(detail(snapshot({ settings: { slippageBps: 500, capUsd: 20 } }))).filter(([action]) => action === 'trade.buy').map(([, params]) => params.usd), [10, 20]);
+  assert.deepEqual(detail(snapshot()).keyboard.slice(0, 2).map(row => row.map(item => item.text)), [['Buy $10', 'Buy $20', 'Buy $50', 'Buy …'], ['Sell 25%', 'Sell 50%', 'Sell 100%', 'Sell …']]);
 });
 
 test('a safety veto hides the buy row with a reason and keeps selling', () => {

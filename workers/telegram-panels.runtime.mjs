@@ -22,7 +22,7 @@ describe('Telegram SQLite snapshot projection',()=>{
       expect(snapshot.feedByChain.sol.rows[0]).toMatchObject({chain:'sol',symbol:'FEED',marketCap:null,pass:true});expect(snapshot.feedByChain.sol.rows[0]).not.toHaveProperty('rawSecret');
       const exported=JSON.stringify(createTelegramExport(snapshot));expect(exported).not.toContain('secret-ciphertext');expect(exported).not.toContain('OTHER');expect(exported).not.toContain('do-not-show');
       const rendered=renderPanel(snapshot,{panel:'detail',viewChain:'sol',query:{selectedToken:{chain:'sol',address:'A'.repeat(32)}},version:1},'en');
-      expect(rendered.text).toContain('Manually approved');expect(rendered.text).toContain('Market cap Unknown');
+      expect(rendered.text).toContain('👍 Approved');expect(rendered.text).not.toContain('MC ');
     });
   });
   it('never renders a legacy stored AVE trade link on a lead or vetoed detail',async()=>{

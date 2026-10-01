@@ -129,7 +129,7 @@ test('five-row pagination clamps after deletion and token buttons bind identitie
   const snapshot=fixture(),result=renderPanel(snapshot,session('audits',{page:999}),'en');
   const buttons=result.keyboard.flat().filter(item=>item.token);
   assert.equal(buttons.length,3);assert.equal(buttons[0].token.address,snapshot.candidates[10].address);
-  assert.match(result.text,/11–13 \/ 13/);
+  assert.match(result.text,/11–13 of 13/);
 });
 
 test('search precedes sorting and live top-15 truncation, with stable volume ties',()=>{
@@ -215,14 +215,98 @@ test('export is all-chain and whitelist-only with original manual revision and s
 test('statistics distinguish unavailable from empty and require all three windows for overall readiness',()=>{
   const snapshot=fixture();assert.match(renderPanel(snapshot,session('stats'),'en').text,/unavailable/);
   snapshot.stats={sol:{tracked:60,completed30m:50,completed1h:1,completed2h:49,completed24h:0,averageReturn30m:null,averageReturn1h:null,averageReturn2h:null,averageReturn24h:null,calibrationReady:false,coverage:{passed:{h6:{eligible:0,completed:0,missing:0,median:null,positiveRate:null}}}}};
-  const summary=renderPanel(snapshot,session('stats'),'en');assert.match(summary.text,/30m Ready/);assert.match(summary.text,/Overall calibration gate: Not ready/);
-  const detail=renderPanel(snapshot,session('stats',{horizon:'h6'}),'en');assert.match(detail.text,/0\/0\/0/);assert.match(detail.text,/No samples/);
+  const summary=renderPanel(snapshot,session('stats'),'en');assert.doesNotMatch(summary.text,/gate/);
+  const coverage=renderPanel(snapshot,session('stats',{coverage:true}),'en');assert.match(coverage.text,/30 min Ready · 2 h Not ready · 24 h Not ready/);assert.match(coverage.text,/Overall calibration gate: Not ready/);
+  const detail=renderPanel(snapshot,session('stats',{horizon:'h6'}),'en');assert.match(detail.text,/Due 0 · measured 0 · missing 0/);assert.match(detail.text,/No samples/);
 });
 
 test('evidence pages keep the exact audit time while the detail summary shows it relatively',()=>{
   const snapshot=fixture(),query={selectedToken:{chain:'sol',address:snapshot.candidates[0].address}};
   assert.match(renderPanel(snapshot,session('evidence',query),'en').text,/Audit: 2027-01-15 07:59:00 UTC · 1m ago/);
-  assert.match(renderPanel(snapshot,session('detail',query),'en').text,/Audit: 1m ago\n/);
+  const detail=renderPanel(snapshot,session('detail',query),'en').text;
+  assert.match(detail,/· checked 1m ago\n/);assert.doesNotMatch(detail,/2027-01-15/);
+});
+
+const complete={status:'COMPLETE',complete:true,checkedAt:now-120_000,sources:{},market:{pairUrl:'https://dexscreener.com/solana/pair'},security:{complete:true,verdict:'NO_FATAL_FLAGS',fatal:[],unknownFields:[]},conflicts:[]};
+const lead=(changes={})=>candidate(0,{status:'LIVE_READY',deep:{},...changes});
+test('the safety verdict leads the detail and marks each list row, from the recorded check',()=>{
+  const feedRow=projectTelegramFeedRow({address:'F'.repeat(32),symbol:'HOT',pass:true,reasons:[]},'sol');
+  const cases=[
+    ['lead before its check',lead(),'⏳ Safety check running','⏳ Checking'],
+    ['candidate waiting for a recheck',candidate(0,{status:'WAIT_RECHECK',secondary:complete}),'⏳ Safety check running','⏳ Checking'],
+    ['complete check without fatal flags',lead({secondary:complete}),'✅ No failures found · checked 2m ago','✅ No failures'],
+    ['incomplete GoPlus fields',lead({secondary:{...complete,status:'DEGRADED',complete:false,security:{complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['buyTax','sellTax']}}}),'⚠️ 2 fields unknown · checked 2m ago','⚠️ Needs review'],
+    ['degraded market source only',lead({secondary:{...complete,status:'DEGRADED',complete:false}}),'⚠️ Check incomplete · checked 2m ago','⚠️ Needs review'],
+    ['blocking unknown and failure on a deep audit',candidate(0,{secondary:complete,deep:{chartRisk:{version:CHART_RISK_VERSION},chainPass:true,failed:['tax'],unknownFields:['top10','devHold','lockRate'],blockingUnknownFields:['top10']}}),'⚠️ 1 failed check, 1 blocking unknown, 2 fields unknown · checked 2m ago','⚠️ Needs review'],
+    ['conflicting sources',lead({secondary:{...complete,conflicts:[{type:'MARKET_MISMATCH',field:'marketCap'}]}}),'⚠️ 1 source conflict · checked 2m ago','⚠️ Needs review'],
+    ['secondary veto',lead({status:'HARD_REJECT',secondary:{...complete,security:{complete:true,verdict:'FATAL',fatal:[{field:'isHoneypot'},{field:'hiddenOwner'},{field:'mintable'}],unknownFields:[]}}}),'⛔ Vetoed: Honeypot, Hidden owner +1 · checked 2m ago','⛔ Vetoed']
+  ];
+  for(const [label,row,line,mark] of cases) {
+    const snapshot=fixture();snapshot.candidates=[row];
+    const detail=renderPanel(snapshot,session('detail',{selectedToken:row}),'en').text;
+    assert.equal(detail.split('\n')[1],line,label);
+    assert.match(renderPanel(snapshot,session('audits'),'en').text,new RegExp(`<b>1\\. COIN0</b> · ${mark}\n`),label);
+    assert.equal(/Market lead: safety not yet verified/.test(detail),row.status==='LIVE_READY'&&!line.startsWith('✅'),label);
+  }
+  const snapshot=fixture();snapshot.candidates=[];snapshot.feedByChain.sol={rows:[feedRow]};
+  assert.equal(renderPanel(snapshot,session('detail',{selectedToken:feedRow}),'zh').text.split('\n')[1],'⚠️ 未经安全核验','a hot-list row never checked');
+});
+
+test('list headers print only the chain and the state the owner changed',()=>{
+  const snapshot=fixture(),header=result=>result.text.split('\n')[1];
+  assert.equal(header(renderPanel(snapshot,session('audits'),'en')),'Solana');
+  assert.equal(header(renderPanel(snapshot,session('audits',{filter:'all',sort:'audit_desc'}),'en')),'Solana');
+  assert.equal(header(renderPanel(snapshot,session('audits',{filter:'fresh',sort:'market_desc',search:'coin'}),'en')),'Solana · Filter: Last 5 min · Sort: Market cap ↓ · Search: &quot;coin&quot;');
+  assert.equal(header(renderPanel(snapshot,session('feed',{sort:'priority'}),'en')),'Solana');
+  assert.equal(header(renderPanel(snapshot,session('feed',{sort:'volume'}),'zh')),'Solana · 排序: 5分钟成交额');
+});
+
+test('list, activity and detail panels fit the text budget with maximum-length rows in both languages',()=>{
+  const wide='<'.repeat(500),symbol='&'.repeat(30),rows=Array.from({length:10},(_,index)=>candidate(index,{symbol,deep:{chartRisk:{version:CHART_RISK_VERSION},failed:Array(32).fill('<'),unknownFields:Array(48).fill('<'),blockingUnknownFields:Array(48).fill('<')},secondary:{...complete,security:{verdict:'FATAL',fatal:Array(20).fill({field:wide}),unknownFields:[]}},status:'HARD_REJECT'}));
+  const snapshot=fixture();snapshot.candidates=rows;
+  snapshot.annotations=rows.map(row=>({chain:'sol',address:row.address,favorite:true,note:wide,updatedAt:now}));
+  snapshot.marks=rows.map(row=>({chain:'sol',address:row.address,decision:'ignored',at:now,reviewRevision:'revision',version:1}));
+  snapshot.events=rows.map((row,index)=>({at:now-index,chain:'sol',address:row.address,type:index%2?'CANDIDATE_NEW':'CUSTOM',message:wide}));
+  snapshot.feedByChain.sol={observedAt:now-1_000_000,status:'AVE_RATE_LIMITED',receivedCount:100,leadCount:10,rows:rows.map(row=>projectTelegramFeedRow({address:row.address,symbol,marketCap:-1.23e12,createdAt:1,volume5m:9.99e14,priceChange5m:-4.99,reasons:[wide.slice(0,120)]},'sol'))};
+  for(const locale of ['zh','en']) for(const panel of ['audits','feed','saved','events','detail']) for(const search of ['a'.repeat(32),wide.slice(0,128)]) {
+    const result=renderPanel(snapshot,session(panel,{search,selectedToken:rows[0]}),locale);
+    assert.ok(result.text.length<=3500,`${panel} ${locale}`);
+    if(search.startsWith('a')&&['audits','feed','saved'].includes(panel)) assert.equal(result.keyboard.flat().filter(item=>item.token).length,5,`${panel} ${locale} shows a full page`);
+  }
+});
+
+test('the token detail links only what exists, with the chart from DexScreener, and no unavailable-link notice',()=>{
+  const snapshot=fixture(),row=lead({secondary:complete,info:{twitter:'@coin',website:''}});snapshot.candidates=[row];
+  const result=renderPanel(snapshot,session('detail',{selectedToken:row}),'en'),links=result.keyboard.find(line=>line.some(item=>item.action==='panel.open'&&item.params.panel==='evidence'));
+  assert.deepEqual(links.map(item=>item.url||item.text),['https://x.com/coin','https://dexscreener.com/solana/pair','🔎 Evidence']);
+  assert.doesNotMatch(result.text,/unavailable|Manual approval does not change/);
+  snapshot.candidates=[lead()];
+  assert.deepEqual(renderPanel(snapshot,session('detail',{selectedToken:row}),'en').keyboard.flat().filter(item=>item.url),[]);
+});
+
+test('selectors lay out two choices per row, time windows three, and only the chain selector explains itself',()=>{
+  const snapshot=fixture(),choices=result=>result.keyboard.slice(0,-1).map(row=>row.length);
+  assert.deepEqual(choices(renderPanel(snapshot,session('view_chain',{returnTo:{panel:'saved'}}),'en')),[2,2,2,1]);
+  assert.deepEqual(choices(renderPanel(snapshot,session('horizon'),'en')),[3,3,1]);
+  assert.match(renderPanel(snapshot,session('view_chain'),'en').text,/^<b>[^<]+<\/b>\nViewing a chain does not change what is scanned\.\n\nUpdated/);
+  for(const panel of ['filter','sort','language','horizon','cohort']) assert.match(renderPanel(snapshot,session(panel),'en').text,/^<b>[^<]+<\/b>\n\nUpdated/,panel);
+});
+
+test('activity rows name the token and what happened in plain words',()=>{
+  const snapshot=fixture(),address=snapshot.candidates[0].address;
+  snapshot.events=[{at:now-240_000,chain:'sol',address,type:'CANDIDATE_NEW',message:'COIN0：新市场线索，安全性待核验'},{at:now-300_000,chain:'sol',address:'B'.repeat(32),type:'RISK_WORSENED',message:'?'}];
+  const result=renderPanel(snapshot,session('events'),'en');
+  assert.match(result.text,/\n1\. 4m ago · 🆕 COIN0 — new lead\n2\. 5m ago · ⛔ BBBBBB…BBBB — failed the safety check\n/);
+  assert.doesNotMatch(result.text,/新市场线索/);
+  assert.match(renderPanel(snapshot,{...session('events'),viewChain:'all'},'en').text,/4m ago · Solana · 🆕 COIN0/);
+});
+
+test('performance leads with the median return of screen passes in plain words',()=>{
+  const snapshot=fixture(),cell=(median,completed)=>({eligible:completed,completed,missing:0,median,positiveRate:null});
+  snapshot.stats={sol:{tracked:40,calibrationReady:false,coverage:{passed:{m30:cell(.042,37),h1:cell(-.5,1),h2:cell(null,0),h24:cell(null,0)}}}};
+  const text=renderPanel(snapshot,session('stats'),'en').text;
+  assert.match(text,/Tokens that passed the screen, 30 min later: median \+4\.2% \(37 tokens\)\n1 h later: median -50% \(1 token\)\n2 h later: no samples yet/);
+  assert.match(text,/Shadow observations; not executable returns\./);
 });
 
 const panelRows=result=>result.keyboard.slice(0,-1).map(row=>row.map(item=>item.action==='panel.open'?item.params.panel:item.action));
