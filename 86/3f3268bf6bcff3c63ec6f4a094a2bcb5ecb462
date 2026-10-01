@@ -1,0 +1,42 @@
+workers/telegram-e2e.runtime.mjs
+  s_6295713717bc33::t_49b0ff57323248 264-288
+  s_6295713717bc33::t_1cd359e6b9379a 102,121,211,224,232,256,291,402,419-420
+src/render/telegram.mjs
+  s_6295713717bc33::t_7c80e991ca9d6a 16-18
+src/bot/panels.mjs
+  s_6295713717bc33::t_e7b74b95228789 208-212,214-218
+  s_6295713717bc33::t_30ee4d08a104e0 220,239-242,308,310
+  s_6295713717bc33::t_360dd14e5c3b32 3,6,14,27-30,219,244,281,287-302,305-307,309,311-313,328-333,336
+README.md
+  s_6295713717bc33::t_7962a7fb628a1c 112
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_6295713717bc33::t_3673ff8dae2662 39-41,69-74
+scripts/telegram-register.mjs
+  s_6295713717bc33::t_130022075b439c 4-5,8,11
+src/bot/commands.mjs
+  s_6295713717bc33::t_d504202a39e6b2 11-15,145-146,149-150,171-172,220
+src/bot/inbox.mjs
+  s_6295713717bc33::t_d7dc84c855c4ec 7
+src/bot/trading-panels.mjs
+  s_6295713717bc33::t_bf0f3e1454b7dd 6,9,128,131,150,153,162
+test/telegram-panels.test.mjs
+  s_6295713717bc33::t_e16384d6d621a8 3,23-49,77,204-255
+workers/trading.runtime.mjs
+  s_6295713717bc33::t_d63b5da272a10a 177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "863f3268bf6bcff3c63ec6f4a094a2bcb5ecb462",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
