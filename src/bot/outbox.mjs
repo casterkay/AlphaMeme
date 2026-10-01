@@ -12,7 +12,7 @@ const retriesAmbiguous = (row, payload) => row.ambiguous_retries < 1 && payload.
 /** Tenant-local durable delivery. Call enqueueInTransaction inside the business transaction. */
 export class TelegramOutbox {
   // reveal(params) runs inside the send and may decrypt a secret for that one request; null refuses it.
-  constructor({ storage, tenantId, transport, now = Date.now, eligible = () => true, ineligibleReason = null, onConfirmedInTransaction = () => {}, reveal = async params => params }) {
+  constructor({ storage, tenantId, transport, now = Date.now, eligible = () => true, ineligibleReason = null, onConfirmedInTransaction = () => {}, onFailedInTransaction = () => {}, reveal = async params => params }) {
     this.storage = storage;
     this.tenantId = tenantId;
     this.transport = transport;
@@ -20,6 +20,7 @@ export class TelegramOutbox {
     this.eligible = eligible;
     this.ineligibleReason = ineligibleReason;
     this.onConfirmedInTransaction = onConfirmedInTransaction;
+    this.onFailedInTransaction = onFailedInTransaction;
     this.reveal = reveal;
   }
 
@@ -49,6 +50,12 @@ export class TelegramOutbox {
     const value = JSON.parse(row.payload_json);
     if (!METHODS.has(value?.method) || !value.params || !Number.isSafeInteger(value.expiresAt)) return null;
     return value;
+  }
+
+  // A send that failed, or whose ambiguous outcome will never be retried, is reported once so its owner stops waiting for confirmation.
+  failed(row, payload) {
+    const completion = this.onFailedInTransaction({ row: structuredClone(row), payload: structuredClone(payload) });
+    if (completion && typeof completion.then === 'function') throw new TypeError('Outbox failure hook must be synchronous');
   }
 
   terminalAt(payload) { return Math.max(this.now(), payload.expiresAt) + TERMINAL_RETENTION_MS; }
@@ -140,7 +147,11 @@ export class TelegramOutbox {
 
   reconcileInTransaction({ recoverSending = false } = {}) {
     this.pruneInTransaction();
-    if (recoverSending) for (const row of this.activeRows()) if (row.status === 'SENDING') this.update(row, 'UNKNOWN', this.now());
+    if (recoverSending) for (const row of this.activeRows()) if (row.status === 'SENDING') {
+      this.update(row, 'UNKNOWN', this.now());
+      const payload = this.payload(row);
+      if (payload && !retriesAmbiguous(row, payload)) this.failed(row, payload);
+    }
     for (const row of this.activeRows()) {
       if (!ACTIVE.has(row.status) || row.status === 'SENDING' || row.status === 'UNKNOWN') continue;
       const payload = this.payload(row);
@@ -212,13 +223,18 @@ export class TelegramOutbox {
         }
         this.update(row, 'SENT', this.terminalAt(payload));
       }
-      else if (result.kind === 'unknown') this.update(row, 'UNKNOWN', this.now() + 1000, 'DELIVERY_UNCERTAIN');
-      else if (result.kind === 'retryable') {
+      else if (result.kind === 'unknown') {
+        this.update(row, 'UNKNOWN', this.now() + 1000, 'DELIVERY_UNCERTAIN');
+        if (!retriesAmbiguous(row, payload)) this.failed(row, payload);
+      } else if (result.kind === 'retryable') {
         const nextAt = this.now() + Math.max(1000 * 2 ** (row.attempts - 1), result.retryAfterMs || 0);
-        this.update(row, row.attempts < 5 && nextAt < payload.expiresAt ? 'PENDING' : 'FAILED', nextAt);
+        const retry = row.attempts < 5 && nextAt < payload.expiresAt;
+        this.update(row, retry ? 'PENDING' : 'FAILED', nextAt);
+        if (!retry) this.failed(row, payload);
       } else {
         if (result.kind === 'deleted') this.storage.sql.exec('DELETE FROM message_map WHERE tenant_id = ? AND chat_id = ? AND message_id = ?', this.tenantId, row.chat_id, String(payload.params.message_id));
         this.update(row, 'FAILED', null, result.kind === 'deleted' ? 'MESSAGE_DELETED' : 'DELIVERY_REJECTED');
+        this.failed(row, payload);
       }
     });
     return success(id);
