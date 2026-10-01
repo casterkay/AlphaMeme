@@ -1,5 +1,6 @@
 src/providers/ave.mjs
   s_6295713717bc33::t_cd6091b02f4c01 17-19,21-22
+  s_6295713717bc33::t_7de5bbdc6fad09 20
 docs/TELEGRAM-UX-PLAN.md
   s_6295713717bc33::t_cd6091b02f4c01 199,218-221
 src/bot/panels.mjs
@@ -7,6 +8,7 @@ src/bot/panels.mjs
 test/telegram-panels.test.mjs
   s_6295713717bc33::t_5cc3aab8055ed1 7,180,186,469-470,472-473,474-478,480-482,484
   s_6295713717bc33::t_8e1a58899e8287 484
+  s_6295713717bc33::t_7de5bbdc6fad09 182-183,185,471,479,483
 src/render/telegram.mjs
   s_6295713717bc33::t_cd6091b02f4c01 20
 ---
