@@ -202,7 +202,7 @@ MC $120K · Liq $30K · 2,431 holders
 
 [Buy $10] [Buy $20] [Buy $50] [Buy …]
 [Sell 25%] [Sell 50%] [Sell 100%] [Sell …]
-[𝕏] [🌐 Site] [📊 Chart] [🔎 Evidence]
+[𝕏] [🌐 Site] [📊 Chart] [🔭 AVE] [🔎 Evidence]
 [⭐ Watch] [📝 Note] [🙈 Ignore]
 [👍 Approve]                ← only when eligible today
 [🔄 Refresh] [⬅ Back] [🏠 Home]
@@ -221,6 +221,10 @@ MC $120K · Liq $30K · 2,431 holders
   (verify which fields candidates retain; show only present facts).
 - Link row omits missing buttons silently; the "some links unavailable" line goes.
 - `📊 Chart` uses the DexScreener `pairUrl` already collected in `secondary.market`.
+- `🔭 AVE` (added in slice 7) opens the token's AVE page,
+  `https://ave.ai/token/<address>-<AVE chain id>`, built from the AVE chain ids in
+  `src/providers/ave.mjs` (`aveTokenUrl`); it is left out for a chain AVE has no id
+  for. It carries no referral and replaces nothing: buying stays in the bot.
 - The "manual approval does not change screening" disclaimer moves to Help.
 - Evidence pages keep their structure and exact values; titles gain icons.
 
