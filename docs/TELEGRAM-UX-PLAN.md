@@ -170,12 +170,17 @@ confirmation panel.
 - Lead row: `1. PEPE · ⏳ Checking` / `✅` / `⚠️` / `⛔`, then
   `$120K MC · $30K liq · 4m ago`. The "failed/unknown 0/3" counter moves to the detail
   screen as a verdict.
-- Hot-list row: `1. PEPE ✅ passed screen` or the first reason, then
+- Hot-list row: a token that became a candidate shows its safety badge
+  (`1. PEPE · ⛔ Vetoed` / `⏳` / `⚠️` / `✅`); a screen-only token shows plain
+  `passed screen` (no icon) or the first reason; then
   `$120K · 18m old · 5m vol $12K · +35%`. Holders and buys/sells move to detail.
+  ✅ is reserved for the safety check: a market-screen pass alone never earns it,
+  because a vetoed token can keep trending and passing the screen.
 - Footer line: `1–5 of 12`. The hot-list note "refreshes on interaction" becomes
   part of the `Updated` footer.
-- Keyboard: token buttons in pairs; `[🔗 Chain] [🔽 Filter] [↕️ Sort]` on one row;
+- Keyboard: token buttons in pairs; `[👁️ Chain] [🔽 Filter] [↕️ Sort]` on one row;
   `[🔍 Search]` (plus `[✖ Clear]` when active); pagination `[◀] [▶]`; standard footer.
+  Viewing a chain gets 👁️, not the scan chain's 🔗: one icon never opens two panels.
 - Filter labels shorten: Leads, Needs X review, Rechecking, Approved, Ignored,
   Vetoed, Last 5 min, Favorites.
 
