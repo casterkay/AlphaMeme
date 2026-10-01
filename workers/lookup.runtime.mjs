@@ -401,6 +401,26 @@ describe('pasted contract-address lookup', () => {
     });
   });
 
+  it('blames the check, not AVE, when the scheduler gives up after AVE confirmed the token', async () => {
+    await withLookups('26822', async ({ runtime, storage, tenantId, connect, paste, step, details, lookups, lastText, drain, clock }) => {
+      await connect();
+      await paste(TOKEN);
+      await step();
+      expect(lookups()[0].state).toBe('DEXSCREENER');
+      const secondary = { fetchSource: async () => { throw new Error('a defect in the check'); } };
+      const scheduler = new OneAlarmScheduler({ store: new SqliteSchedulerStore(storage, tenantId), now: clock.now, aveBudget: { monthlyCu: 1_000_000, resetDay: 1 },
+        alarms: { setAlarm: async () => {}, deleteAlarm: async () => {} },
+        handlers: { lookup: externalRequestHandler(({ task, request: scoped }) => runtime().lookups.runStep(task.id, { request: scoped, details, secondary })) },
+        taskReconciler: tasks => runtime().reconcileInTransaction({ tasks }).filter(task => task.kind === 'lookup') });
+      for (let attempt = 0; attempt < 20 && lookups()[0].state === 'DEXSCREENER'; attempt++) { await scheduler.alarm();clock.advance(30_000); }
+      await drain();
+      expect(lookups()[0]).toMatchObject({ state: 'FAILED', reason: 'SCHEDULER_STEP_FAILED' });
+      expect(runtime().commands.snapshot(storage, tenantId, clock.now()).lookups[0].failedStep).toBe('DEXSCREENER');
+      expect(lastText()).toMatch(/Lookup failed: the DexScreener check did not finish/);
+      expect(lastText()).not.toMatch(/AVE could not be read/);
+    });
+  });
+
   it('never makes a looked-up token a lead: no candidate, audit, outcome, notification, statistic or export entry', async () => {
     await withLookups('26802', async ({ runtime, storage, connect, paste, step, lookups, count, clock }) => {
       await connect();await paste(TOKEN);

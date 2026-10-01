@@ -497,7 +497,7 @@ test('the token detail link row reads X, Site, Chart, AVE, then Evidence',()=>{
 });
 
 // A pasted token's lookup as the snapshot projects it.
-function lookup(changes={}) { return {chain:'arc',address:'0x'+'cd'.repeat(20),state:'DETAILS',startedAt:now-5_000,reason:null,symbol:'',name:'',price:null,marketCap:null,liquidity:null,holders:null,createdAt:null,priceChange5m:null,volume5m:null,capturedAt:null,verdict:'PENDING',secondary:null,veto:null,...changes}; }
+function lookup(changes={}) { return {chain:'arc',address:'0x'+'cd'.repeat(20),state:'DETAILS',startedAt:now-5_000,reason:null,symbol:'',name:'',price:null,marketCap:null,liquidity:null,holders:null,createdAt:null,priceChange5m:null,volume5m:null,capturedAt:null,verdict:'PENDING',secondary:null,veto:null,failedStep:null,...changes}; }
 const lookupDetail=(changes,snapshotChanges={})=>{ const snapshot={...fixture(),...snapshotChanges},row=lookup(changes);snapshot.lookups=[row];return renderPanel(snapshot,{...session('detail',{selectedToken:{chain:row.chain,address:row.address}}),viewChain:row.chain},'en'); };
 const chainButtons=result=>result.keyboard.flat().filter(item=>item.action==='lookup.start'&&!item.params.retry).map(item=>item.token.chain);
 
@@ -516,7 +516,7 @@ test('a lookup AVE did not find, or that failed, offers the other EVM chains; on
   const missing=lookupDetail({state:'NOT_FOUND'});
   assert.match(missing.text,/⚠️ AVE has no token at this address on Arc\./);
   assert.deepEqual(chainButtons(missing),others);assert.ok(!missing.keyboard.flat().some(item=>item.params?.retry));
-  const failed=lookupDetail({state:'FAILED',reason:'AVE_SCHEMA'});
+  const failed=lookupDetail({state:'FAILED',reason:'AVE_SCHEMA',failedStep:'DETAILS'});
   assert.match(failed.text,/⚠️ Lookup failed: AVE returned an answer it could not be read from/);
   assert.deepEqual(chainButtons(failed),others);assert.ok(failed.keyboard.flat().some(item=>item.action==='lookup.start'&&item.params.retry===true&&item.token.chain==='arc'));
 });
@@ -540,4 +540,13 @@ test('a candidate whose lookup is vetoed shows no buy, as the engine refuses one
   assert.ok(actions(detail()).includes('trade.buy'));
   snapshot.lookups=[lookup({chain:row.chain,address:row.address,state:'DONE',verdict:'VETOED',veto:{checkedAt:now,fields:['honeypot']}})];
   assert.ok(!actions(detail()).includes('trade.buy'));assert.ok(actions(detail()).includes('trade.sell'));
+});
+
+test('a lookup that failed after AVE confirmed the token names the check and offers only Retry',()=>{
+  for(const [failedStep,check] of [['DEXSCREENER','DexScreener'],['GOPLUS','GoPlus']]) {
+    const failed=lookupDetail({state:'FAILED',reason:'SCHEDULER_LEASE_EXPIRED',failedStep,symbol:'LOOK',marketCap:50_000,capturedAt:now});
+    assert.match(failed.text,new RegExp(`⚠️ Lookup failed: the ${check} check did not finish`),failedStep);
+    assert.deepEqual(chainButtons(failed),[],failedStep);
+    assert.ok(failed.keyboard.flat().some(item=>item.action==='lookup.start'&&item.params.retry===true),failedStep);
+  }
 });

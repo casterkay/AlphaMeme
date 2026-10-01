@@ -209,6 +209,8 @@ const LOOKUP_FAILURES = {
   AVE_CREDENTIAL_MISSING:['AVE未连接','AVE is not connected'], AVE_CREDENTIAL_CORRUPT:['AVE密钥不可用，请重新连接','AVE key unavailable; reconnect']
 };
 
+const LOOKUP_CHECK_FAILURES = { DEXSCREENER:['DexScreener 检查未完成','the DexScreener check did not finish'], GOPLUS:['GoPlus 检查未完成','the GoPlus check did not finish'] };
+
 // A pasted token's lookup (§4): progress while it runs, then AVE's market facts and the shared verdict.
 function lookupDetail(snapshot,session,locale,lookup,listed) {
   const L = (zh,en) => localize(locale,zh,en), identity = token(lookup), annotation = annotationFor(snapshot,lookup);
@@ -218,7 +220,7 @@ function lookupDetail(snapshot,session,locale,lookup,listed) {
   const status = ['DETAILS','DEXSCREENER','GOPLUS'].includes(lookup.state)
     ? lookup.state === 'DETAILS' && snapshot.ave?.readyAt > snapshot.at ? `${ICONS.checking} ${L('等待AVE额度','Waiting for AVE capacity')}` : `${ICONS.checking} ${L(`正在 ${where} 上查询…`,`Looking up on ${where}…`)}`
     : lookup.state === 'NOT_FOUND' ? `${ICONS.unknown} ${L(`AVE在 ${where} 上没有此地址的代币。`,`AVE has no token at this address on ${where}.`)}`
-      : lookup.state === 'FAILED' ? `${ICONS.unknown} ${L('查询失败','Lookup failed')}${L('：',': ')}${L(...(LOOKUP_FAILURES[lookup.reason] ?? ['无法读取AVE','AVE could not be read']))}`
+      : lookup.state === 'FAILED' ? `${ICONS.unknown} ${L('查询失败','Lookup failed')}${L('：',': ')}${L(...(lookup.failedStep !== 'DETAILS' ? LOOKUP_CHECK_FAILURES[lookup.failedStep] : LOOKUP_FAILURES[lookup.reason] ?? ['无法读取AVE','AVE could not be read']))}`
         : null;
   const fact = key => lookup[key] ?? listed?.[key] ?? null, createdAt = fact('createdAt');
   const blocks = [status,lookup.state === 'DONE' || lookup.veto ? safetyLine(safety,snapshot,locale) : null,
@@ -233,8 +235,8 @@ function lookupDetail(snapshot,session,locale,lookup,listed) {
     [urlButton(`${ICONS.site} ${L('官网','Site')}`,lookup.secondary?.market?.websites?.[0]),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,lookup.secondary?.market?.pairUrl),urlButton(`${ICONS.ave} AVE`,aveTokenUrl(lookup.chain,lookup.address))],
     [button(`${ICONS.saved} ${annotation?.favorite ? L('取消自选','Unwatch') : L('自选','Watch')}`,'favorite.set',{value:annotation?.favorite !== true},identity),button(`${ICONS.note} ${L('备注','Note')}`,'note.begin',{},identity),annotation?.note ? button(`${ICONS.clear} ${L('清空备注','Clear note')}`,'note.clear',{},identity) : null],
     lookup.state === 'FAILED' ? [button(`${ICONS.refresh} ${L('重试','Retry')}`,'lookup.start',{retry:true},identity)] : [],
-    // The likely cause of a miss is the wrong chain, whichever way AVE says it.
-    ...(['NOT_FOUND','FAILED'].includes(lookup.state) ? rowsOf(others.map(chain => button(L(`在 ${chainLabel(chain)} 上查询`,`Try on ${chainLabel(chain)}`),'lookup.start',{},{ chain,address:lookup.address })),2) : [])];
+    // Until AVE confirms the token here, the likely cause of a miss is the wrong chain, whichever way AVE says it.
+    ...(lookup.state === 'NOT_FOUND' || lookup.failedStep === 'DETAILS' ? rowsOf(others.map(chain => button(L(`在 ${chainLabel(chain)} 上查询`,`Try on ${chainLabel(chain)}`),'lookup.start',{},{ chain,address:lookup.address })),2) : [])];
   return finishPanel(`${safeTelegramText(lookup.symbol || '?',30)} · ${where}`,blocks.filter(value => value !== '' && value !== null),keyboard,snapshot,session,locale,{token:identity});
 }
 

@@ -96,6 +96,8 @@ export function projectTelegramLookup(record) {
   const numbers = ['price','marketCap','liquidity','holders','createdAt','priceChange5m','volume5m','capturedAt'];
   return {
     chain: record.chain, address: record.address, state: record.state, startedAt: record.startedAt, reason: record.reason,
+    // The step a failed run stopped at: AVE until it confirmed the token, then each check in turn.
+    failedStep: record.state !== 'FAILED' ? null : !record.market ? 'DETAILS' : !record.sources.dexScreener ? 'DEXSCREENER' : 'GOPLUS',
     symbol: safeTelegramText(market.symbol, 30), name: safeTelegramText(market.name, 80),
     ...Object.fromEntries(numbers.map(key => [key, typeof market[key] === 'number' && Number.isFinite(market[key]) ? market[key] : null])),
     verdict: lookupVerdict(record), secondary: record.secondary ? projectSecondary(record.secondary) : null,
