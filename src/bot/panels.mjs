@@ -83,9 +83,10 @@ const selectorButton = (panel,locale) => {
 const present = value => value !== null && value !== undefined;
 
 // The shared safety verdict plus the facts the display explains it with. A row
-// that never became a candidate (hot-list or note-only) has no verdict at all.
+// that was never checked (hot-list or note-only) has no verdict at all; a pasted
+// token's finished lookup has its check without being a candidate.
 function tokenSafety(row) {
-  if (!row.status) return { verdict:null };
+  if (!row.status && !row.secondary) return { verdict:null };
   const deep = row.deep || {}, secondary = row.secondary || null, security = secondary?.security || {}, blocking = blockingUnknownFields(deep);
   return {
     verdict:safetyVerdict({ status:row.status, secondary, deep }), checkedAt:secondary?.checkedAt || row.auditedAt || null,
@@ -189,20 +190,55 @@ function evidenceLines(value,locale,prefix='') {
   return [`${prefix}: ${typeof value === 'boolean' ? truth(value,locale) : typeof value === 'number' ? numberText(value,locale) : value === null || value === undefined || value === '' ? name('unknown',locale) : safeTelegramText(value,500)}`];
 }
 
-// The candidate is the token of record; its latest hot-list row supplies the
-// age and 5-minute facts a candidate does not keep.
+// The candidate is the token of record, then a pasted token's lookup; the
+// latest hot-list row supplies the age and 5-minute facts a candidate does not keep.
 function findToken(snapshot,session) {
   const selected = session.query?.selectedToken;
   if (!selected) return null;
   const candidate = snapshot.candidates.find(row => id(row) === id(selected));
+  const lookup = candidate ? null : (snapshot.lookups || []).find(row => id(row) === id(selected)) || null;
   const listed = snapshot.feedByChain?.[selected.chain]?.rows?.find(row => id(row) === id(selected)) || null;
   const annotation = snapshot.annotations.find(row => id(row) === id(selected));
-  const row = candidate || (listed ? { ...listed, info:{} } : annotation ? { ...annotation, symbol:'?' } : null);
-  return row && { row, listed };
+  const row = candidate || lookup || (listed ? { ...listed, info:{} } : annotation ? { ...annotation, symbol:'?' } : null);
+  return row && { row, listed, lookup };
+}
+
+const LOOKUP_FAILURES = {
+  AVE_AUTH:['AVE密钥不可用，请重新连接','AVE key unavailable; reconnect'], AVE_SCHEMA:['AVE返回了无法识别的结果','AVE returned an answer it could not be read from'], AVE_SIZE:['AVE响应过大','AVE answered with too much data'],
+  AVE_TIMEOUT:['AVE响应超时','AVE timed out'], SCHEDULER_REQUEST_TIMEOUT:['AVE响应超时','AVE timed out'], AVE_NETWORK:['无法连接AVE','Could not reach AVE'], AVE_UPSTREAM:['AVE服务暂时出错','AVE is temporarily unavailable'],
+  AVE_CREDENTIAL_MISSING:['AVE未连接','AVE is not connected'], AVE_CREDENTIAL_CORRUPT:['AVE密钥不可用，请重新连接','AVE key unavailable; reconnect']
+};
+
+// A pasted token's lookup (§4): progress while it runs, then AVE's market facts and the shared verdict.
+function lookupDetail(snapshot,session,locale,lookup,listed) {
+  const L = (zh,en) => localize(locale,zh,en), identity = token(lookup), annotation = annotationFor(snapshot,lookup), safety = tokenSafety(lookup);
+  const where = chainLabel(lookup.chain), others = SCAN_CHAINS.filter(chain => chain !== lookup.chain);
+  const status = ['DETAILS','DEXSCREENER','GOPLUS'].includes(lookup.state)
+    ? lookup.state === 'DETAILS' && snapshot.ave?.readyAt > snapshot.at ? `${ICONS.checking} ${L('等待AVE额度','Waiting for AVE capacity')}` : `${ICONS.checking} ${L(`正在 ${where} 上查询…`,`Looking up on ${where}…`)}`
+    : lookup.state === 'NOT_FOUND' ? `${ICONS.unknown} ${L(`AVE在 ${where} 上没有此地址的代币。`,`AVE has no token at this address on ${where}.`)}`
+      : lookup.state === 'FAILED' ? `${ICONS.unknown} ${L('查询失败','Lookup failed')}${L('：',': ')}${L(...(LOOKUP_FAILURES[lookup.reason] ?? ['无法读取AVE','AVE could not be read']))}`
+        : safetyLine(safety,snapshot,locale);
+  const fact = key => lookup[key] ?? listed?.[key] ?? null, createdAt = fact('createdAt');
+  const blocks = [status,
+    [present(fact('marketCap')) ? L(`市值 ${money(fact('marketCap'),locale)}`,`MC ${money(fact('marketCap'),locale)}`) : '',present(fact('liquidity')) ? L(`流动性 ${money(fact('liquidity'),locale)}`,`Liq ${money(fact('liquidity'),locale)}`) : '',present(fact('holders')) ? L(`持有人 ${numberText(fact('holders'),locale)}`,`${numberText(fact('holders'),locale)} holders`) : ''].filter(Boolean).join(' · '),
+    [createdAt > 0 ? L(`币龄${duration(snapshot.at-createdAt*1000,locale)}`,`${duration(snapshot.at-createdAt*1000,locale)} old`) : '',present(fact('priceChange5m')) ? `5m ${percent(fact('priceChange5m'),locale,true)}` : '',present(fact('volume5m')) ? L(`5分钟成交 ${money(fact('volume5m'),locale)}`,`5m vol ${money(fact('volume5m'),locale)}`) : ''].filter(Boolean).join(' · '),
+    `<code>${userText(lookup.address,80)}</code>`,
+    [annotation?.favorite ? `${ICONS.saved} ${L('已加入自选','In watchlist')}` : '',annotation?.note ? `${ICONS.note} "${userText(annotation.note,140)}${annotation.note.length>140 ? '…' : ''}"` : ''].filter(Boolean).join(' · '),
+    present(lookup.capturedAt) ? `AVE · ${relativeTime(lookup.capturedAt,snapshot.at,locale)}` : ''];
+  const trading = tokenTradeControls(snapshot,lookup,locale,identity,safety.verdict === 'VETOED');
+  blocks.push(...trading.blocks);
+  const keyboard = [...trading.keyboard,
+    [urlButton(`${ICONS.site} ${L('官网','Site')}`,lookup.secondary?.market?.websites?.[0]),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,lookup.secondary?.market?.pairUrl),urlButton(`${ICONS.ave} AVE`,aveTokenUrl(lookup.chain,lookup.address))],
+    [button(`${ICONS.saved} ${annotation?.favorite ? L('取消自选','Unwatch') : L('自选','Watch')}`,'favorite.set',{value:annotation?.favorite !== true},identity),button(`${ICONS.note} ${L('备注','Note')}`,'note.begin',{},identity),annotation?.note ? button(`${ICONS.clear} ${L('清空备注','Clear note')}`,'note.clear',{},identity) : null],
+    lookup.state === 'FAILED' ? [button(`${ICONS.refresh} ${L('重试','Retry')}`,'lookup.start',{retry:true},identity)] : [],
+    // The likely cause of a miss is the wrong chain, whichever way AVE says it.
+    ...(['NOT_FOUND','FAILED'].includes(lookup.state) ? rowsOf(others.map(chain => button(L(`在 ${chainLabel(chain)} 上查询`,`Try on ${chainLabel(chain)}`),'lookup.start',{},{ chain,address:lookup.address })),2) : [])];
+  return finishPanel(`${safeTelegramText(lookup.symbol || '?',30)} · ${where}`,blocks.filter(value => value !== ''),keyboard,snapshot,session,locale,{token:identity});
 }
 
 function detailPanel(snapshot,session,locale) {
   const L = (zh,en) => localize(locale,zh,en), found = findToken(snapshot,session);
+  if (found?.lookup && session.panel === 'detail') return lookupDetail(snapshot,session,locale,found.lookup,found.listed);
   if (!found) return finishPanel(name('detail',locale),[L('未找到，请从列表选择代币','Not found; choose a token from a list')],[],snapshot,session,locale,{refresh:false});
   const { row, listed } = found, mark = markFor(snapshot,row), annotation = annotationFor(snapshot,row), identity = token(row), deep = row.deep || {};
   const safety = tokenSafety(row), invalidApproval = mark?.decision === 'passed' && effectiveStatus(row,mark,snapshot.at) !== 'passed';
@@ -235,7 +271,7 @@ function detailPanel(snapshot,session,locale) {
   if (!row.auditedAt) blocks.push(L('审计快照已不再保留，或尚未审计。','Audit snapshot no longer retained, or not yet audited.'));
   if (backendDisposition(row) === 'chain') blocks.push(L('链上硬门通过；请人工查看X社区评论与回复。','On-chain gates passed; review X community comments and replies.'));
   if (backendDisposition(row) === 'lead' && safety.verdict !== 'VETOED' && row.secondary?.status !== 'COMPLETE') blocks.push(L('市场线索：安全性尚未核验。','Market lead: safety not yet verified.'));
-  const trading = tokenTradeControls(snapshot,row,locale,identity);
+  const trading = tokenTradeControls(snapshot,row,locale,identity,safety.verdict === 'VETOED');
   blocks.push(...trading.blocks);
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };
   const eligible = !mark?.decision && row.reviewRevision && backendDisposition(row) === 'chain' && row.auditedAt && snapshot.at-row.auditedAt <= 600_000;

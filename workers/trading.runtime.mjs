@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { decodeFunctionData, encodeFunctionResult, erc20Abi, getAddress, keccak256, parseTransaction, toEventSelector } from 'viem';
 import { TelegramRuntime } from '../src/bot/runtime.mjs';
 import { OneAlarmScheduler, externalRequestHandler } from '../src/scheduler.mjs';
-import { SqliteSchedulerStore } from '../src/storage/scheduler-state.mjs';
+import { readSchedulerStateInTransaction, SqliteSchedulerStore, writeSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { KYBER_API_ORIGIN, KYBER_ROUTER } from '../src/trading/kyber.mjs';
 import { ARC_USDC_ERC20, KYBER_NATIVE_TOKEN } from '../src/trading/config.mjs';
@@ -211,8 +211,19 @@ async function withTrading(name, operation) {
       const input = receipt('reply', { source: 'reply', text, replyToMessageId: pending.promptMessageId });
       runtime.receive(input);await runtime.runCommand(input.updateId);await drain();
     };
+    // Paste a contract address with AVE connected; the lookup's steps run with stub AVE and secondary answers.
+    const paste = async address => {
+      storage.transactionSync(() => { const state = readSchedulerStateInTransaction(storage, tenantId);
+        writeSchedulerStateInTransaction(storage, tenantId, { ...state, runtime: { ...state.runtime, eligibility: { ...state.runtime.eligibility, configured: true } } }); });
+      const input = receipt('lookup', { family: 'evm', address: address.toLowerCase() });runtime.receive(input);await runtime.runCommand(input.updateId);await drain();
+      return sessions().at(-1);
+    };
+    const lookupStep = async ({ details, secondary }) => {
+      const [task] = storage.transactionSync(() => runtime.reconcileInTransaction()).filter(item => item.kind === 'lookup');
+      await runtime.lookups.runStep(task.id, { request, details, secondary });await drain();
+    };
     await command('lang', 'en');
-    await operation({ tradeOf, quote, confirm, reply, runtime: () => runtime, restart: () => { runtime = make(); }, storage, tenantId, network, sent, command, sessions, link, has, click, run, seed, createWallet, openDetail, trades, lastText, drain,
+    await operation({ paste, lookupStep, tradeOf, quote, confirm, reply, runtime: () => runtime, restart: () => { runtime = make(); }, storage, tenantId, network, sent, command, sessions, link, has, click, run, seed, createWallet, openDetail, trades, lastText, drain,
       clock: { now: () => clock, advance: ms => { clock += ms; } }, faultTransport: fault => { transportFault = fault; } });
   });
 }
@@ -490,6 +501,28 @@ describe('buying before the safety check verified a token', () => {
       seed('arc', 'LIVE_READY', VERIFIED);
       expect(request({})).toMatchObject({ unverifiedAtRequest: false });
       expect(trades()).toHaveLength(3);
+    });
+  });
+
+  it('asks Yes/No before buying a pasted token whose lookup is running, and refuses any buy once its lookup is vetoed', async () => {
+    await withTrading('lookup-buy', async ({ runtime, storage, network, paste, lookupStep, click, link, has, createWallet, trades, lastText }) => {
+      await createWallet();network.fund('arc', 50n * 10n ** 18n, { [ARC_USDC_ERC20]: 50_000_000n });
+      const detail = await paste(TOKEN), session = () => runtime().commands.sessions.get(detail.id);
+      expect(lastText()).toContain('Looking up on Arc');
+      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      expect(session()).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { chain: 'arc', token: TOKEN, usdCents: 1000 } } });
+      expect(trades()).toEqual([]);expect(network.kyber).toEqual([]);
+      await click(link(session(), 'trade.decline_unverified'));
+      const details = async () => ({ token: { symbol: 'MEME', name: 'Meme', current_price_usd: 0.001, market_cap: 1000, main_pair_tvl: 500, tvl: null, holders: 10, launch_at: null, created_at: null, token_price_change_5m: null, token_tx_volume_usd_5m: null }, capturedAt: Date.now() });
+      const secondary = { fetchSource: async ({ source }) => source === 'dexScreener'
+        ? { source: { status: 'OK' }, market: { complete: true, priceUsd: 0.001, marketCap: 1000, liquidityUsd: 500, pairUrl: '', websites: [] } }
+        : { source: { status: 'OK' }, security: FATAL.security } };
+      for (let index = 0; index < 3; index++) await lookupStep({ details, secondary });
+      expect(session().panel).toBe('detail');expect(lastText()).toContain('⛔ Vetoed');
+      expect(has(session(), 'trade.buy')).toBe(false);expect(has(session(), 'trade.sell')).toBe(true);
+      expect(() => storage.transactionSync(() => runtime().trading.requestTradeInTransaction({ chain: 'arc', token: TOKEN, side: 'buy', usdCents: 1000, slippageBps: 500, capUsd: 100, unverifiedAcknowledged: true })))
+        .toThrow(expect.objectContaining({ code: 'VETOED' }));
+      expect(trades()).toEqual([]);
     });
   });
 

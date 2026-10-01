@@ -18,6 +18,7 @@ import { percentOf, usdCentsToStableUnits, usdCentsToNativeUnits, nativePriceMic
 import { readTradingWallet, tradingAccount } from './wallet.mjs';
 import { readTrade, listTrades, writeTradeInTransaction, pruneTradesInTransaction, TERMINAL_STATES, EXECUTING_STATES } from './trades.mjs';
 import { safetyVerdict } from '../scoring/safety.mjs';
+import { readLookup, lookupVerdict } from '../lookup.mjs';
 
 // Balance refreshes and receipt rechecks get a task id per request, so a request the
 // scheduler gave up on never blocks a later one.
@@ -40,20 +41,23 @@ export class TradeRefusal extends Error {
 }
 
 /**
- * Buy safety from the recorded facts. VETOED (a vetoed verdict or a risk
- * exclusion) blocks a buy; VERIFIED needs a PASSED verdict; anything else is
- * UNVERIFIED and needs the owner's acknowledgement. A malformed recorded check or
- * deep audit throws rather than guessing: buys fail loudly, and sells never read them.
+ * Buy safety from the recorded facts. VETOED (a vetoed verdict of the candidate
+ * or of a pasted token's lookup, or a risk exclusion) blocks a buy; VERIFIED needs
+ * a PASSED verdict of the token of record, the candidate when there is one, else
+ * the lookup; anything else, a running lookup included, is UNVERIFIED and needs the
+ * owner's acknowledgement. A malformed record throws rather than guessing: buys
+ * fail loudly, and sells never read them.
  */
-export function safetyState(storage, tenantId, chain, token) {
+export function safetyState(storage, tenantId, chain, token, now = Date.now()) {
   const candidate = storage.sql.exec('SELECT status, secondary_json, deep_json FROM candidates WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray()[0];
   const recorded = column => candidate?.[column] ? JSON.parse(candidate[column]) : null;
   const verdict = safetyVerdict({ status: candidate?.status ?? null, secondary: recorded('secondary_json'), deep: recorded('deep_json') });
-  if (verdict === 'VETOED' || storage.sql.exec('SELECT 1 AS held FROM risk_exclusions WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray().length) return 'VETOED';
-  return verdict === 'PASSED' ? 'VERIFIED' : 'UNVERIFIED';
+  const lookup = lookupVerdict(readLookup(storage, tenantId, chain, token, now));
+  if (verdict === 'VETOED' || lookup === 'VETOED' || storage.sql.exec('SELECT 1 AS held FROM risk_exclusions WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray().length) return 'VETOED';
+  return (candidate ? verdict : lookup) === 'PASSED' ? 'VERIFIED' : 'UNVERIFIED';
 }
 
-export const tradeVetoed = (storage, tenantId, chain, token) => safetyState(storage, tenantId, chain, token) === 'VETOED';
+export const tradeVetoed = (storage, tenantId, chain, token, now = Date.now()) => safetyState(storage, tenantId, chain, token, now) === 'VETOED';
 
 export class TradingEngine {
   constructor({ storage, tenantId, masterKey, config, now = Date.now, onTradeInTransaction = () => {}, onBalancesInTransaction = () => {} }) {
@@ -66,7 +70,7 @@ export class TradingEngine {
   trade(id) { return readTrade(this.storage, this.tenantId, id); }
   trades() { return listTrades(this.storage, this.tenantId); }
   executing() { return this.trades().find(trade => EXECUTING_STATES.has(trade.state)) ?? null; }
-  vetoed(trade) { return trade.side === 'buy' && tradeVetoed(this.storage, this.tenantId, trade.chain, trade.token); }
+  vetoed(trade) { return trade.side === 'buy' && tradeVetoed(this.storage, this.tenantId, trade.chain, trade.token, this.now()); }
 
   // ---- user actions (inside the caller's transaction) ----
 
@@ -83,7 +87,7 @@ export class TradingEngine {
     const address = getAddress(token.toLowerCase());
     let unverifiedAtRequest = false;
     if (side === 'buy') {
-      const safety = safetyState(this.storage, this.tenantId, chain, address);
+      const safety = safetyState(this.storage, this.tenantId, chain, address, this.now());
       if (safety === 'VETOED') throw new TradeRefusal('VETOED');
       if (!withinBuyCap(usdCents, capUsd)) throw new TradeRefusal('OVER_CAP');
       if (safety === 'UNVERIFIED' && unverifiedAcknowledged !== true) throw new TradeRefusal('UNVERIFIED', { chain, token: address, usdCents });

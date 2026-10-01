@@ -1,6 +1,7 @@
 # Telegram interface improvement plan
 
-Status: approved plan, 2026-09-30. Nothing below is implemented yet.
+Status: approved plan, 2026-09-30. Implemented in slices 1–7 (#62–#68), with the
+amendments noted in place.
 
 Approved direction: sparse status emoji; a live AVE lookup when the owner pastes a
 contract address; `/disconnect` removed from the command menu (the typed command
@@ -405,10 +406,7 @@ characters decode to about 47 bytes), so a key shape there is a wallet key that
 verification would send to AVE. A transaction hash has the same shape as an EVM
 key and is deleted too; the warning says why, so the owner can tell. Other key
 formats are tracked in #82. The receipt type is `secret_warning`, not
-`command:secret_warning`, so a typed `/secret_warning` cannot pose as one. Until
-slice 7, a `lookup` receipt gets the step 3 hint, and that hint reads "I only act on
-commands and replies to my prompts. Open 📡 Radar or ❓ Help." rather than the
-§3.10 copy, which promises the lookup.
+`command:secret_warning`, so a typed `/secret_warning` cannot pose as one.
 
 ### 4.2 Command handling (`src/bot/commands.mjs`)
 
@@ -437,6 +435,22 @@ Terminal states: `DONE` (with `PASS`/`UNKNOWN`/`FATAL`), `NOT_FOUND` (detail
 offers `[Try on BNB Chain] [Try on Base] …`), `FAILED` (reason label + `[🔄 Retry]`).
 AVE rate-limit or quota waits show "⏳ Waiting for AVE capacity".
 
+Amended in slice 7 (#68):
+- AVE does not document its answer for an unknown token. `NOT_FOUND` is classified
+  narrowly as a successful envelope (`status: 1`) holding no token and no pairs;
+  every other unusable answer ends `FAILED`. Because "wrong chain" is the likely
+  cause either way, `FAILED` offers the other chains too. #86 captures
+  AVE's real answer.
+- Rate-limit and quota answers do not spend a scheduler retry: the step stays at
+  `DETAILS` behind admission. Other transient errors use the scheduler's limit and
+  backoff; when it gives up, the lookup ends `FAILED`. Each run's task id names its
+  start, so a run the scheduler gave up on never blocks a Retry.
+- Lookups queue: only the oldest pending one has a task, so they run in paste
+  order. At most 5 may wait; a sixth paste is refused with a banner. Each AVE read
+  waits at least 15 s for admission, ahead of the scan, so five already hold the
+  scan back over a minute, and a longer queue would answer later than the owner
+  will wait.
+
 Each step re-renders the bound detail session as a `PANEL_UPDATE`, as wallet
 balances do today.
 
@@ -456,6 +470,10 @@ time per tenant; scheduler priority equals `command`.
   verdict is refused by `tradeVetoed` and by the engine's per-step veto recheck.
   Selling is always available.
 - Detail shows the source and age: "AVE · 20s ago".
+- DexScreener and GoPlus receive an address only after AVE has confirmed it as a
+  token on that chain; `NOT_FOUND` and `FAILED` end the lookup first. (The 32-byte
+  Solana seed that reads as an address, raised in #68, no longer reaches a lookup:
+  Solana was dropped, so base58 text is plain text.)
 
 ## 5. Delivery slices
 
@@ -513,3 +531,4 @@ README command list) is updated in the slice that changes the behavior.
    any veto — `HARD_REJECT`, a `FATAL` verdict or a risk exclusion — all of which
    already blocked buying before this plan.)
 4. An EVM address is looked up on the scan chain first, with a picker for the rest.
+   (Implemented as chain buttons on a `NOT_FOUND` or `FAILED` lookup's detail.)
