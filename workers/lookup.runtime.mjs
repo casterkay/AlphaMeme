@@ -280,6 +280,11 @@ describe('pasted contract-address lookup', () => {
       expect(state(CLEAN_TOKEN)).toBe('UNVERIFIED');
       await step();await step();
       expect(state(CLEAN_TOKEN)).toBe('VERIFIED');
+      // A clean check verifies a buy for 15 minutes from its GoPlus read; then a buy asks again.
+      clock.advance(LOOKUP_SETTINGS.verifiedMs);
+      expect(state(CLEAN_TOKEN)).toBe('VERIFIED');
+      clock.advance(1);
+      expect(state(CLEAN_TOKEN)).toBe('UNVERIFIED');
       net.knobs.goPlus = { ...CLEAN, is_honeypot: '1' };
       await paste(FATAL_TOKEN);
       for (let index = 0; index < 3; index++) await step();
