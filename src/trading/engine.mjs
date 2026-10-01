@@ -42,12 +42,13 @@ export class TradeRefusal extends Error {
 /**
  * Buy safety from the recorded facts. VETOED (a vetoed verdict or a risk
  * exclusion) blocks a buy; VERIFIED needs a PASSED verdict; anything else is
- * UNVERIFIED and needs the owner's acknowledgement. A malformed recorded check
- * throws rather than guessing: buys fail loudly, and sells never read it.
+ * UNVERIFIED and needs the owner's acknowledgement. A malformed recorded check or
+ * deep audit throws rather than guessing: buys fail loudly, and sells never read them.
  */
 export function safetyState(storage, tenantId, chain, token) {
-  const candidate = storage.sql.exec('SELECT status, secondary_json FROM candidates WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray()[0];
-  const verdict = safetyVerdict({ status: candidate?.status ?? null, secondary: candidate?.secondary_json ? JSON.parse(candidate.secondary_json) : null });
+  const candidate = storage.sql.exec('SELECT status, secondary_json, deep_json FROM candidates WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray()[0];
+  const recorded = column => candidate?.[column] ? JSON.parse(candidate[column]) : null;
+  const verdict = safetyVerdict({ status: candidate?.status ?? null, secondary: recorded('secondary_json'), deep: recorded('deep_json') });
   if (verdict === 'VETOED' || storage.sql.exec('SELECT 1 AS held FROM risk_exclusions WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray().length) return 'VETOED';
   return verdict === 'PASSED' ? 'VERIFIED' : 'UNVERIFIED';
 }

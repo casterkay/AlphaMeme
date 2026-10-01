@@ -18,6 +18,17 @@ export const ICONS = Object.freeze({
   chains: '🔗', trade_settings: '🎚️', language: '🌐', export: '📤', sources: '🛜', delivery: '📭'
 });
 
+// The one wording of a safetyVerdict (src/scoring/safety.mjs) wherever it is shown.
+const SAFETY_BADGES = Object.freeze({
+  PASSED: [ICONS.passed, '未发现问题', 'No failures found'], INCOMPLETE: [ICONS.unknown, '待复核', 'Needs review'],
+  VETOED: [ICONS.vetoed, '已否决', 'Vetoed'], PENDING: [ICONS.checking, '检查中', 'Checking']
+});
+export function safetyBadge(verdict, locale) {
+  const badge = SAFETY_BADGES[verdict];
+  if (!badge) throw new RangeError(`unknown safety verdict: ${verdict}`);
+  return `${badge[0]} ${localize(locale, badge[1], badge[2])}`;
+}
+
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const unknownText = locale => localize(locale, '未知', 'Unknown');
 const numberFormat = (locale, options) => new Intl.NumberFormat(locale === 'en' ? 'en-US' : 'zh-CN', options);
