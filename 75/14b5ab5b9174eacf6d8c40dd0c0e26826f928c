@@ -1,0 +1,29 @@
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_6295713717bc33::t_eaa3cd3776788b 78-81,85
+src/bot/alerts.mjs
+  s_6295713717bc33::t_ecbe3c4aa1df2b 1-73
+test/telegram-alerts.test.mjs
+  s_6295713717bc33::t_448bd64112eeb4 1-108
+src/bot/panels.mjs
+  s_6295713717bc33::t_c2ed89d473304d 118
+src/bot/runtime.mjs
+  s_6295713717bc33::t_1410368b6d1447 2,8,290-310,316-319
+workers/telegram-e2e.runtime.mjs
+  s_6295713717bc33::t_a6a46845a039f8 230-284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7514b5ab5b9174eacf6d8c40dd0c0e26826f928c",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
