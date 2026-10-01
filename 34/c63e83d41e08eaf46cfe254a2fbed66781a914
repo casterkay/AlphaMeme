@@ -1,0 +1,96 @@
+test/telegram-outbox.test.mjs
+  s_c497d5c9be8144::t_9ee7f21ca89217 168,171,190,231
+workers/statistics.runtime.mjs
+  s_c497d5c9be8144::t_4c32769da8d564 12,14-18
+test/telegram-statistics.test.mjs
+  s_c497d5c9be8144::t_604b61d73666a7 13,27-29,38-39,48,52,54,64
+src/scoring/classification.mjs
+  s_c497d5c9be8144::t_4580de50b34ed0 8
+test/voice-alerts.test.mjs
+  s_c497d5c9be8144::t_9ee7f21ca89217 52
+src/bot/commands.mjs
+  s_c497d5c9be8144::t_4580de50b34ed0 400
+src/bot/snapshot.mjs
+  s_c497d5c9be8144::t_4580de50b34ed0 8
+src/address.mjs
+  s_c497d5c9be8144::t_ce41bb8aaca56b 4-5,10-11,13,17-18
+test/address.test.mjs
+  s_c497d5c9be8144::t_9ee7f21ca89217 6,9-12,16
+test/telegram-intake.test.mjs
+  s_c497d5c9be8144::t_9ee7f21ca89217 112,114,117
+src/scoring/chart-risk.mjs
+  s_c497d5c9be8144::t_4580de50b34ed0 6
+public/voice-alerts.mjs
+  s_c497d5c9be8144::t_4580de50b34ed0 5
+test/telegram-panels.test.mjs
+  s_c497d5c9be8144::t_604b61d73666a7 9-11,16,68,87,96,117,122,124,136,181,190,195,212,217,224,263-264,269,271-275,285,291-292,294,302-306,312-315,343,347,352,372,375,401,403,406,410,416,461
+  s_c497d5c9be8144::t_faeb7b6290142b 252,295,334,345
+test/radar-agent.test.mjs
+  s_c497d5c9be8144::t_21f14de846c6d2 96,622-625,627
+workers/fixtures/ave-egress-probe.mjs
+  s_c497d5c9be8144::t_4c32769da8d564 10
+workers/radar-agent.runtime.mjs
+  s_c497d5c9be8144::t_4c32769da8d564 360,365-366
+docs/TELEGRAM-UX-PLAN.md
+  s_c497d5c9be8144::t_ecd5a4a4cb615b 375-377,380-381,401,477
+test/scheduler.test.mjs
+  s_c497d5c9be8144::t_21f14de846c6d2 359,384,442-443
+src/providers/secondary.mjs
+  s_c497d5c9be8144::t_4580de50b34ed0 639
+  s_c497d5c9be8144::t_6f49af950453a1 209,248,339,388,393,396,412,536
+  s_c497d5c9be8144::t_c3a8b8b7e42db5 201,236,352,401
+  s_c497d5c9be8144::t_30ebaa326f8abe 242,246-247,279,285
+  s_c497d5c9be8144::t_424b03a5dd0ecc 341
+  s_c497d5c9be8144::t_d70b57dceeafef 4,75,77-78,82,232-233,420,429-431,434,533,539-541,675
+src/bot/panels.mjs
+  s_c497d5c9be8144::t_4580de50b34ed0 165
+test/secondary.test.mjs
+  s_c497d5c9be8144::t_9ee7f21ca89217 292,295
+README.md
+  s_c497d5c9be8144::t_ecd5a4a4cb615b 14-16,41,43
+src/chains.mjs
+  s_c497d5c9be8144::t_d70b57dceeafef 3
+src/pool-identity.mjs
+  s_c497d5c9be8144::t_d70b57dceeafef 6-7,10,12-13,15
+src/scanner-parity.mjs
+  s_c497d5c9be8144::t_4580de50b34ed0 23,43
+workers/telegram-panels.runtime.mjs
+  s_c497d5c9be8144::t_4c32769da8d564 14,16-17,19,22,24
+src/telegram-intake.mjs
+  s_c497d5c9be8144::t_c6fbefedfc2252 7-17
+  s_c497d5c9be8144::t_36554d4addb692 1,115-116,179-180
+  s_c497d5c9be8144::t_ccb7c4f2801e9c 20-22
+test/ave-provider.test.mjs
+  s_c497d5c9be8144::t_9ee7f21ca89217 43
+src/render/telegram.mjs
+  s_c497d5c9be8144::t_d70b57dceeafef 4
+src/storage/recoverable-scanner.mjs
+  s_c497d5c9be8144::t_36554d4addb692 117,350,357,372,589,591-592,636
+src/scoring/index.mjs
+  s_c497d5c9be8144::t_4580de50b34ed0 234-235,252,278,622,624,643,646-647,662,666-667,682,689
+  s_c497d5c9be8144::t_47211ae46168e6 64,86,143,218,289,307,421,563
+test/scoring.test.mjs
+  s_c497d5c9be8144::t_9ee7f21ca89217 36-39
+workers/telegram-e2e.runtime.mjs
+  s_c497d5c9be8144::t_4c32769da8d564 185,188
+src/providers/ave.mjs
+  s_c497d5c9be8144::t_d70b57dceeafef 13,84-85,98,100,137,154,173
+src/bot/review.mjs
+  s_c497d5c9be8144::t_4580de50b34ed0 10-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "34c63e83d41e08eaf46cfe254a2fbed66781a914",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
