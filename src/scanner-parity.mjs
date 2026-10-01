@@ -20,8 +20,7 @@ function first(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
 }
 
-// EVM addresses are case-insensitive. Solana addresses are base58 and
-// case-sensitive, so globally lower-casing every chain can merge distinct mints.
+// EVM addresses are case-insensitive; anything else is kept verbatim.
 export function addressKey(value) {
   const address = String(value ?? '').trim();
   return /^0x[0-9a-f]{40}$/i.test(address) ? address.toLowerCase() : address;
@@ -41,7 +40,7 @@ export async function reviewRevision(candidate) {
   const security = candidate.deep?.security || {};
   return (await sha256Hex(JSON.stringify({
     status: candidate.status, checks: candidate.deep?.checks, failed: candidate.deep?.failed,
-    owner: security.ownerRenounced, mint: security.renouncedMint, freeze: security.renouncedFreezeAccount,
+    owner: security.ownerRenounced,
     honeypot: security.honeypot, buyTax: security.buyTax, sellTax: security.sellTax,
     lock: security.lockRate, burned: security.lpBurned,
     secondary: candidate.secondary?.security?.verdict, conflicts: candidate.secondary?.conflicts,

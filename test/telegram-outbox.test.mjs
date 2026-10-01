@@ -165,10 +165,10 @@ test('an ineligible message is cancelled with the eligibility reason its owner s
 
 test('multiple messages retain independent token mappings; leaving detail removes only that message', async () => {
   const f = fixture();
-  f.enqueue('a', { token: { chain: 'sol', address: 'token' } });
+  f.enqueue('a', { token: { chain: 'arc', address: 'token' } });
   await f.deliver('a');
   f.outbox.transport = async () => ({ ok: true, result: { message_id: 43 } });
-  f.enqueue('b', { token: { chain: 'sol', address: 'token' } });
+  f.enqueue('b', { token: { chain: 'arc', address: 'token' } });
   await f.deliver('b');
   assert.equal(f.storage.sql.exec('SELECT * FROM message_map').toArray().length, 2);
   f.enqueue('c', { method: 'editMessageText', params: { message_id: 42, text: 'home' } });
@@ -187,7 +187,7 @@ test('prompt send does not replace parent panel ownership', async () => {
 
 test('permanent deleted message clears mapping and exposes only redacted diagnosis', async () => {
   const f = fixture();
-  f.enqueue('a', { token: { chain: 'sol', address: 'token' } });
+  f.enqueue('a', { token: { chain: 'arc', address: 'token' } });
   await f.deliver('a');
   f.outbox.transport = async () => ({ ok: false, kind: 'deleted', code: 'untrusted secret' });
   f.enqueue('b', { method: 'editMessageText', params: { message_id: 42, text: 'new' } });
@@ -228,7 +228,7 @@ test('reconciliation parses active payloads linearly and prunes resolved replay 
 
 test('acknowledging uncertain delivery clears its issue and mapped-message lock', async () => {
   const f = fixture();
-  f.enqueue('panel', { token: { chain: 'sol', address: 'token' } });
+  f.enqueue('panel', { token: { chain: 'arc', address: 'token' } });
   await f.deliver('panel');
   f.outbox.transport = async () => ({ ok: false, kind: 'unknown' });
   f.enqueue('uncertain', { method: 'editMessageText', params: { message_id: 42, text: 'changed' } });

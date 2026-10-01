@@ -4,7 +4,6 @@ import { DexBatchMarketOverlay, SecondaryValidator, secondaryChainSupport } from
 
 const evmAddress = '0x1111111111111111111111111111111111111111';
 const otherEvmAddress = '0x2222222222222222222222222222222222222222';
-const solAddress = 'So11111111111111111111111111111111111111112';
 
 function jsonResponse(value, { status = 200, contentType = 'application/json', contentLength } = {}) {
   const body = typeof value === 'string' ? value : JSON.stringify(value);
@@ -287,56 +286,13 @@ test('timeouts and upstream parse failures degrade without rejecting the validat
   assert.equal(malformed.sources.goPlus.errorCode, 'INVALID_JSON');
 });
 
-test('Solana uses its verified endpoints, preserves address case, and evaluates mint/freeze authority', async () => {
-  const urls = [];
-  const fetchImpl = async url => {
-    urls.push(url);
-    if (url.includes('dexscreener.com')) {
-      return jsonResponse([
-        {
-          chainId: 'solana', dexId: 'raydium', pairAddress: 'sol-pair', url: 'https://dexscreener.com/solana/pair',
-          baseToken: { address: solAddress, symbol: 'DOG', name: 'Sol Dog' }, priceUsd: '0.01',
-          marketCap: 40_000, fdv: 40_000, liquidity: { usd: 9_000 }, info: { websites: [] }
-        },
-        {
-          chainId: 'solana', dexId: 'raydium', pairAddress: 'wrong-case',
-          baseToken: { address: solAddress.replace(/^S/, 's') }, priceUsd: '1', marketCap: 9_999_999,
-          liquidity: { usd: 9_999_999 }
-        }
-      ]);
-    }
-    return jsonResponse({
-      code: 1,
-      result: {
-        mintable: { status: '0' },
-        freezable: { status: '0' },
-        closable: { status: '0' },
-        balance_mutable_authority: { status: '0' },
-        transfer_fee_upgradable: { status: '0' },
-        non_transferable: { status: '0' }
-      }
-    });
-  };
-  const result = await new SecondaryValidator({ fetchImpl }).validate({ chain: 'sol', tokenAddress: solAddress });
-
-  assert.equal(result.status, 'COMPLETE');
-  assert.equal(result.market.pairAddress, 'sol-pair');
-  assert.equal(result.security.verdict, 'NO_FATAL_FLAGS');
-  assert.equal(result.security.fields.mintable, false);
-  assert.equal(result.security.fields.freezable, false);
-  assert.equal(result.security.buyTax, null);
-  assert.deepEqual(urls.sort(), [
-    `https://api.dexscreener.com/token-pairs/v1/solana/${solAddress}`,
-    `https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${solAddress}`
-  ].sort());
-});
 
 test('exported support map contains only verified chain identifiers', () => {
   assert.deepEqual(secondaryChainSupport.dexScreener, {
-    sol: 'solana', bsc: 'bsc', base: 'base', eth: 'ethereum', arc: 'arc'
+    bsc: 'bsc', base: 'base', eth: 'ethereum', arc: 'arc'
   });
   assert.deepEqual(secondaryChainSupport.goPlus, {
-    sol: 'solana', eth: '1', bsc: '56', base: '8453', arc: '5042'
+    eth: '1', bsc: '56', base: '8453', arc: '5042'
   });
 });
 

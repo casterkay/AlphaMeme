@@ -33,13 +33,10 @@ test('discovery recognizes boolean variants and fails closed on malformed safety
   assert.ok(unknown.unknownFields.includes('rugRatio'));
 });
 
-test('discovery validates Solana and EVM addresses according to chain', () => {
-  const common = { market_cap: 50_000, liquidity: 10_000, creation_timestamp: nowSec - 600, rug_ratio: .1, bundler_rate: .1, rat_trader_amount_rate: .1, is_wash_trading: false };
-  const solConfig = { ...config, chain: 'sol' };
-  const solAddress = 'So11111111111111111111111111111111111111112';
-  assert.equal(discoveryScreen({ ...common, address: solAddress }, solConfig, nowSec).pass, true);
-  assert.match(discoveryScreen({ ...common, address }, solConfig, nowSec).reasons.join(' '), /地址格式异常/);
-  assert.match(discoveryScreen({ ...common, address: solAddress, is_honeypot: 0 }, config, nowSec).reasons.join(' '), /地址格式异常/);
+test('discovery rejects an address that is not an EVM token address', () => {
+  const common = { market_cap: 50_000, liquidity: 10_000, creation_timestamp: nowSec - 600, rug_ratio: .1, bundler_rate: .1, rat_trader_amount_rate: .1, is_wash_trading: false, is_honeypot: 0 };
+  assert.doesNotMatch(discoveryScreen({ ...common, address }, config, nowSec).reasons.join(' '), /地址格式异常/);
+  assert.match(discoveryScreen({ ...common, address: 'So11111111111111111111111111111111111111112' }, config, nowSec).reasons.join(' '), /地址格式异常/);
 });
 
 test('discovery ranking rewards multiple smart-money wallets but never rewards KOL-only interest', () => {
@@ -260,22 +257,6 @@ test('deep screen rejects materially asymmetric buy and sell taxes', () => {
   assert.ok(result.security.taxDifference > config.maxTaxAsymmetry);
 });
 
-test('Solana deep screen uses mint and freeze renouncement instead of EVM owner and honeypot fields', () => {
-  const solConfig = { ...config, chain: 'sol' };
-  const holders = Array.from({ length: 10 }, (_, i) => ({ address: `SolWallet${String(i).padStart(32, '1')}`, addr_type: 0, buy_tx_count_cur: 1, is_new: false, is_suspicious: false, amount_percentage: .01, native_transfer: { from_address: `SolSource${i}` }, tags: [], maker_token_tags: [] }));
-  const security = { open_source: true, renounced_mint: true, renounced_freeze_account: true, buy_tax: 0, sell_tax: 0, rug_ratio: .1, top_10_holder_rate: .2, creator_token_status: 'creator_close', rat_trader_amount_rate: .05, bundler_trader_amount_rate: .05, top70_sniper_hold_rate: .02, is_wash_trading: false, lock_percent: .9 };
-  const result = deepScreen({ discovery: {}, audit: { info: { liquidity: 10_000 }, security, pool: { liquidity: 10_000 }, holders, traders: [], candles: candles() }, nowMs: nowSec * 1000 }, solConfig);
-  assert.equal(result.checks.ownerRenounced, true);
-  assert.equal(result.checks.notHoneypot, true);
-  assert.equal(result.security.renouncedMint, true);
-  assert.equal(result.security.renouncedFreezeAccount, true);
-  assert.ok(!result.failed.includes('ownerRenounced'));
-  assert.ok(!result.blockingUnknownFields.includes('ownerRenounced'));
-
-  const unsafe = deepScreen({ discovery: {}, audit: { info: { liquidity: 10_000 }, security: { ...security, renounced_freeze_account: false }, pool: { liquidity: 10_000 }, holders, traders: [], candles: candles() }, nowMs: nowSec * 1000 }, solConfig);
-  assert.equal(unsafe.checks.ownerRenounced, false);
-  assert.ok(unsafe.failed.includes('ownerRenounced'));
-});
 
 test('deep screen hard-fails unrenounced ownership and unlocked LP', () => {
   const result = deepScreen({ discovery: {}, audit: { info: {}, security: { open_source: 'yes', owner_renounced: 'no' }, pool: {}, holders: [], traders: [], candles: [] } }, config);

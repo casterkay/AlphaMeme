@@ -397,7 +397,7 @@ export class TelegramCommands {
     const snapshot = this.snapshot(this.storage, this.tenantId, this.now());
     const rows = [...(snapshot.candidates ?? []), ...Object.values(snapshot.feedByChain ?? {}).flatMap(feed => feed.rows), ...(snapshot.annotations ?? [])];
     const unique = [...new Map(rows.map(row => [`${row.chain}:${row.address}`, row])).values()];
-    const exact = unique.filter(row => row.address === value || (row.chain !== 'sol' && row.address?.toLowerCase() === value.toLowerCase()));
+    const exact = unique.filter(row => row.address?.toLowerCase() === value.toLowerCase());
     const symbol = unique.filter(row => row.symbol?.toLowerCase() === value.toLowerCase());
     const matches = exact.length ? exact : symbol.length ? symbol : unique.filter(row => [row.symbol,row.name,row.address].some(item => typeof item === 'string' && item.toLowerCase().includes(value.toLowerCase())));
     if (matches.length === 1) {

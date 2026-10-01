@@ -93,7 +93,7 @@ function radar({ chain = 'bsc', settings: overrides = {} } = {}) {
   };
   // An AVE trending row as the API sends it, quoted `quoteAgeMs` before now.
   fixture.quote = (token, { price = 0.001, marketCap = 50_000, liquidity = 20_000, volume5m = 5_000, quoteAgeMs = 5_000, launchedAgoMs = 30 * MINUTE } = {}) => ({
-    token, chain: chain === 'sol' ? 'solana' : chain, symbol: `T${token.slice(2, 5)}`, name: 'Test token',
+    token, chain, symbol: `T${token.slice(2, 5)}`, name: 'Test token',
     current_price_usd: price, market_cap: marketCap, main_pair_tvl: liquidity, token_tx_volume_usd_5m: volume5m, holders: 120,
     updated_at: Math.floor((clock.now - quoteAgeMs) / 1000), launch_at: Math.floor((clock.now - launchedAgoMs) / 1000)
   });
@@ -619,10 +619,10 @@ test('a chain without secondary sources completes its source steps without a fet
 });
 
 test('stable effect IDs include the tenant, cycle, chain, address, and effect type', () => {
-  const id = stableEffectId('1000', 'cycle-1', 'sol', 'So11111111111111111111111111111111111111112', 'CANDIDATE_NEW');
-  assert.equal(id, stableEffectId('1000', 'cycle-1', 'sol', 'So11111111111111111111111111111111111111112', 'CANDIDATE_NEW'));
-  assert.notEqual(id, stableEffectId('1000', 'cycle-2', 'sol', 'So11111111111111111111111111111111111111112', 'CANDIDATE_NEW'));
-  assert.notEqual(id, stableEffectId('1001', 'cycle-1', 'sol', 'So11111111111111111111111111111111111111112', 'CANDIDATE_NEW'));
+  const id = stableEffectId('1000', 'cycle-1', 'arc', '0x1234567890abcdef1234567890abcdef12345678', 'CANDIDATE_NEW');
+  assert.equal(id, stableEffectId('1000', 'cycle-1', 'arc', '0x1234567890abcdef1234567890abcdef12345678', 'CANDIDATE_NEW'));
+  assert.notEqual(id, stableEffectId('1000', 'cycle-2', 'arc', '0x1234567890abcdef1234567890abcdef12345678', 'CANDIDATE_NEW'));
+  assert.notEqual(id, stableEffectId('1001', 'cycle-1', 'arc', '0x1234567890abcdef1234567890abcdef12345678', 'CANDIDATE_NEW'));
   assert.notEqual(id, stableEffectId('1000', 'cycle-1', 'bsc', 'So11111111111111111111111111111111111111112', 'CANDIDATE_NEW'));
-  assert.notEqual(id, stableEffectId('1000', 'cycle-1', 'sol', 'So11111111111111111111111111111111111111112', 'RISK_WORSENED'));
+  assert.notEqual(id, stableEffectId('1000', 'cycle-1', 'arc', '0x1234567890abcdef1234567890abcdef12345678', 'RISK_WORSENED'));
 });

@@ -372,14 +372,13 @@ Plain, non-reply, non-command text is classified at the boundary, in this order:
    `command:secret_warning` with an empty payload, the message is queued for
    deletion, and the owner is told "That looked like a private key. I tried to
    delete it; never paste keys here." The text is never persisted.
-2. **Token address** — `normalizeTokenAddress` succeeds for `eth` (EVM grammar)
-   or `sol` (32-byte base58): receipt `lookup` with `{ family: 'evm'|'sol',
-   address }` (normalized).
+2. **Token address** — `normalizeTokenAddress` succeeds (EVM grammar): receipt
+   `lookup` with `{ family: 'evm', address }` (normalized). Solana was dropped
+   from the supported chains, so a base58 address is plain text.
 3. **Anything else** — receipt `text` with an empty payload (§3.10).
 
-A random AVE API key cannot pass as a Solana address unless it is valid base58
-of exactly 32 bytes; step 1 and the strict decode keep keys out of third-party
-requests. Fuzz tests cover the classifier (§6).
+A random AVE API key cannot pass as an EVM address; step 1 and the strict
+grammar keep keys out of third-party requests. Fuzz tests cover the classifier (§6).
 
 Amended in slice 6 (#67): the secret check covers **every** inbound message, not
 only plain text. A private key sent as a prompt reply or a command argument would
@@ -399,8 +398,7 @@ commands and replies to my prompts. Open 📡 Radar or ❓ Help." rather than th
 
 ### 4.2 Command handling (`src/bot/commands.mjs`)
 
-1. **Chain.** Solana → `sol`. EVM → the scan chain when it is EVM; otherwise a
-   chain picker of EVM scan chains.
+1. **Chain.** The scan chain (every supported chain is EVM).
 2. **Known locally** (candidate, hot-list row, annotation or a fresh lookup on
    that chain) → open Token detail immediately; no credits spent.
 3. **AVE not connected** → the onboarding panel with a line explaining lookups
@@ -476,7 +474,7 @@ README command list) is updated in the slice that changes the behavior.
   change); new rendering tests for batch, risk reason and account issues.
 - **Intake:** fuzzing of the text classifier — no generated secret-shaped string is
   classified as a lookup, no `text`/`secret_warning` receipt carries the text, and
-  every valid EVM/Solana address round-trips.
+  every valid EVM address round-trips.
 - **Unverified buy:** table-driven `safetyState` cases (no check, degraded,
   unknown, complete, fatal, hot-list-only, lookup running); engine refuses an
   unverified buy without the acknowledgement and accepts it with one; preset and

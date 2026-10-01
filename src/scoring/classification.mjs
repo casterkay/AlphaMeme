@@ -5,7 +5,7 @@ export function classifyDeepResult(deep, auditMeta = {}) {
   const unknown = new Set(blockingUnknownFields(deep));
   const unknownCheck = name => {
     const prefixes = {
-      openSource: ['openSource'], ownerRenounced: ['ownerRenounced', 'renouncedMint', 'renouncedFreezeAccount'],
+      openSource: ['openSource'], ownerRenounced: ['ownerRenounced'],
       lpLocked: ['lockRate'], notHoneypot: ['honeypot', 'sellability.'], tax: ['buyTax', 'sellTax'],
       rug: ['rugRatio'], concentration: ['top10'], dev: ['devHold'], insider: ['insider'],
       bundler: ['bundler'], sniper: ['sniperHold'], wash: ['wash'], liquidity: ['liquidity'],

@@ -6,7 +6,6 @@ const NOW = 1_800_000_000_000;
 const MINUTE = 60_000;
 const API_KEY = 'ave-provider-test-key';
 const BSC_TOKEN = `0x${'a'.repeat(40)}`;
-const SOL_TOKEN = 'So11111111111111111111111111111111111111112';
 const WBNB = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c';
 
 // A hand-written fetch that records each request and answers with `respond`.
@@ -41,7 +40,7 @@ async function rejectsWith(promise, code, check = () => true) {
   });
 }
 
-for (const [chain, slug, token] of [['arc', 'arc', BSC_TOKEN], ['bsc', 'bsc', BSC_TOKEN], ['sol', 'solana', SOL_TOKEN]]) {
+for (const [chain, slug, token] of [['arc', 'arc', BSC_TOKEN], ['bsc', 'bsc', BSC_TOKEN], ['robinhood', 'robinhood', BSC_TOKEN]]) {
   test(`trending on ${chain} requests the ${slug} slug with the API key header`, async () => {
     const { ave, calls } = client(() => envelope([tokenRow(token, slug)]));
     const result = await ave.trending(chain);

@@ -148,9 +148,6 @@ export function publicCandidate(row = {}) {
       security: {
         openSource: security.openSource === true || security.openSource === false ? security.openSource : text(security.openSource, 16),
         ownerRenounced: security.ownerRenounced === true || security.ownerRenounced === false ? security.ownerRenounced : text(security.ownerRenounced, 16),
-        evmOwnerRenounced: security.evmOwnerRenounced === true || security.evmOwnerRenounced === false ? security.evmOwnerRenounced : null,
-        renouncedMint: security.renouncedMint === true || security.renouncedMint === false ? security.renouncedMint : null,
-        renouncedFreezeAccount: security.renouncedFreezeAccount === true || security.renouncedFreezeAccount === false ? security.renouncedFreezeAccount : null,
         honeypot: security.honeypot === true || security.honeypot === false ? security.honeypot : null,
         buyTax: finiteOrNull(security.buyTax),
         sellTax: finiteOrNull(security.sellTax),

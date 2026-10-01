@@ -182,10 +182,10 @@ describe('Telegram complete command and delivery flows',()=>{
       const obsoleteNotifications=await click(disable);
       expect(runtime.inbox.get(obsoleteNotifications.updateId).status).toBe('FAILED');expect(runtime.notifications.controls().enabled).toBe(true);
       expect(runtime.commands.sessions.get(oldSettings.id).version).toBe(oldSettings.version);
-      await command('chains');const oldChains=sessions().at(-1),toSol=link(oldChains,'chains.set',params=>params.value==='sol');
+      await command('chains');const oldChains=sessions().at(-1),toRobinhood=link(oldChains,'chains.set',params=>params.value==='robinhood');
       await command('chains');await click(link(sessions().at(-1),'chains.set',params=>params.value==='bsc'));
       expect(runtime.control.snapshot().activeChain).toBe('bsc');
-      const obsoleteChain=await click(toSol);
+      const obsoleteChain=await click(toRobinhood);
       expect(runtime.inbox.get(obsoleteChain.updateId).status).toBe('FAILED');expect(runtime.control.snapshot().activeChain).toBe('bsc');
     });
   });

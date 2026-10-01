@@ -7,8 +7,8 @@ export class ReviewConflict extends Error {
 
 export function tokenIdentity({ chain, address }) {
   if (!isScanChain(chain) || typeof address !== 'string'
-    || !(chain === 'sol' ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ : /^0x[0-9a-f]{40}$/i).test(address)) throw new ReviewConflict('invalid_token');
-  return { chain, address: chain === 'sol' ? address : address.toLowerCase() };
+    || !/^0x[0-9a-f]{40}$/i.test(address)) throw new ReviewConflict('invalid_token');
+  return { chain, address: address.toLowerCase() };
 }
 
 export function readReview(storage, tenantId, token) {
