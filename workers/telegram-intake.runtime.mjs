@@ -252,7 +252,7 @@ describe('Telegram text that is not a command', () => {
   const webhookEnv = { ...env, TELEGRAM_WEBHOOK_SECRET: 'test-webhook-secret' };
   const pem = () => `-----BEGIN PRIVATE KEY-----\nMIIE${base58(random(24))}\n-----END PRIVATE KEY-----`;
 
-  // Run the webhook end to end, then let the tenant's commands and deliveries run against a recording Telegram.
+  // Run the webhook end to end, then the tenant's commands, and read what its outbox would send.
   async function deliver(tenantId, message) {
     const logged = [];
     const spies = ['log', 'info', 'warn', 'error', 'debug'].map(level => vi.spyOn(console, level).mockImplementation((...values) => { logged.push(values); }));
@@ -268,19 +268,14 @@ describe('Telegram text that is not a command', () => {
       expect(await (await worker.fetch(webhookRequest(update), webhookEnv)).json()).toEqual({ accepted: true });
       const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
       return await runInDurableObject(radar, async (_instance, { storage }) => {
+        // The tenant's real alarm may already have tried a delivery (this env has no bot token), so the
+        // proof reads the queued rows, which hold exactly what would be sent, rather than transport calls.
+        await storage.deleteAlarm();
         const storedAtIntake = await everythingStored(storage);
         const runtime = new TelegramRuntime({ storage, env: webhookEnv, tenantId });
-        const requests = [];
-        runtime.outbox.transport = async input => {
-          requests.push(structuredClone({ method: input.method, params: input.params }));
-          return { ok: true, result: input.method === 'sendMessage' ? { message_id: 500 + requests.length } : true };
-        };
-        for (const { update_id: updateId } of storage.sql.exec("SELECT update_id FROM inbox WHERE status = 'RECEIVED'").toArray()) await runtime.runCommand(updateId);
-        for (let count = 0; count < 20; count++) {
-          const task = storage.transactionSync(() => runtime.outbox.reconcileInTransaction()).find(task => task.dueAt <= Date.now());
-          if (!task) break;
-          await runtime.outbox.deliverOne(task.id.slice('outbox:'.length), { request: operation => operation({ signal: new AbortController().signal, timeoutMs: 1000 }) });
-        }
+        for (const { update_id: updateId } of storage.sql.exec("SELECT update_id FROM inbox WHERE status IN ('RECEIVED', 'RUNNING')").toArray()) await runtime.runCommand(updateId);
+        const requests = storage.sql.exec('SELECT payload_json FROM outbox ORDER BY rowid').toArray()
+          .map(row => JSON.parse(row.payload_json)).map(payload => ({ method: payload.method, params: payload.params }));
         const inbox = storage.sql.exec('SELECT command_type, payload_json, status FROM inbox').one();
         const verifications = readSchedulerStateInTransaction(storage, tenantId).tasks.filter(task => task.kind === 'credential');
         const keys = storage.sql.exec('SELECT name FROM keys').toArray().map(row => row.name);
