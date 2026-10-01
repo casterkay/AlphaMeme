@@ -389,7 +389,7 @@ describe('Radar control generations', () => {
         const now = Date.now();
         const accepted = await instance.receiveTelegramCredential({
           tenantId, actorUserId: tenantId, updateId: '1', commandType: 'credential', payload: { source: 'message' },
-          dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: '10'
+          dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: '10', locale: 'zh'
         }, `/setkey ${apiKey}`);
         expect(accepted.accepted).toBe(true);
 

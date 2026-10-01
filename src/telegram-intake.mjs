@@ -26,6 +26,11 @@ function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
+// Telegram's interface language for the sender: Chinese clients get Chinese, every other client English.
+function senderLocale(from) {
+  return typeof from.language_code === 'string' && /^zh/i.test(from.language_code) ? 'zh' : 'en';
+}
+
 function privateOwner(envelope) {
   if (!plainObject(envelope?.chat) || !plainObject(envelope?.from) || envelope.chat.type !== 'private') return null;
   const tenantId = positiveTelegramIdentifier(envelope.chat.id);
@@ -47,7 +52,8 @@ function messageReceipt(updateId, message, dueAt, botUsername) {
     updateId,
     dueAt,
     messageDate: positiveInteger(message.date),
-    sourceMessageId: String(sourceMessageId)
+    sourceMessageId: String(sourceMessageId),
+    locale: senderLocale(message.from)
   };
   if (match?.[2] && (!botUsername || match[2].toLowerCase() !== botUsername.toLowerCase())) return null;
   const argumentsText = match?.[3] || '';
@@ -90,7 +96,8 @@ function callbackReceipt(updateId, callback, dueAt) {
       payload: { callbackId: data.slice(3), callbackQueryId: callback.id },
       dueAt,
       messageDate: positiveInteger(callback.message.date),
-      sourceMessageId: String(sourceMessageId)
+      sourceMessageId: String(sourceMessageId),
+      locale: senderLocale(callback.from)
     }
   };
 }
@@ -113,7 +120,7 @@ export function validateTelegramReceipt(value) {
     || !/^(command:[a-z][a-z0-9_]{0,31}|callback|reply|credential)$/.test(value.commandType)
     || !plainObject(value.payload) || !Number.isSafeInteger(value.dueAt) || value.dueAt < 0
     || (value.messageDate !== null && !positiveInteger(value.messageDate))
-    || !positiveTelegramIdentifier(value.sourceMessageId)) {
+    || !positiveTelegramIdentifier(value.sourceMessageId) || !['zh', 'en'].includes(value.locale)) {
     throw new TypeError('Telegram receipt has an unsupported shape');
   }
   const input = value.payload;
@@ -146,6 +153,7 @@ export function validateTelegramReceipt(value) {
     payload: Object.freeze(payload),
     dueAt: value.dueAt,
     messageDate: value.messageDate,
-    sourceMessageId: value.sourceMessageId
+    sourceMessageId: value.sourceMessageId,
+    locale: value.locale
   });
 }

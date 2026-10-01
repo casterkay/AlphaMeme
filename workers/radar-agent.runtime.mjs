@@ -542,7 +542,7 @@ describe('AVE onboarding and scanning through the Durable Object', () => {
         const now = Date.now();
         await instance.receiveTelegramCredential({
           tenantId, actorUserId: tenantId, updateId: '7', commandType: 'credential', payload: { source: 'message' },
-          dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: '70'
+          dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: '70', locale: 'zh'
         }, `/setkey ${onboardingKey}`);
         const runUntil = async (reached, label) => {
           for (let step = 0; step < 20; step++) {
@@ -596,7 +596,7 @@ describe('AVE onboarding and scanning through the Durable Object', () => {
         const now = Date.now();
         await instance.receiveTelegramCredential({
           tenantId, actorUserId: tenantId, updateId: '9', commandType: 'credential', payload: { source: 'message' },
-          dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: '90'
+          dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: '90', locale: 'zh'
         }, `/setkey ${unavailableKey}`);
         const inboxStatus = () => state.storage.sql.exec("SELECT status FROM inbox WHERE tenant_id = ? AND update_id = '9'", tenantId).one().status;
         for (let step = 0; step < 30 && inboxStatus() !== 'FAILED'; step++) {
@@ -641,7 +641,7 @@ describe('AVE onboarding and scanning through the Durable Object', () => {
           const now = Date.now();
           await instance.receiveTelegramCredential({
             tenantId, actorUserId: tenantId, updateId, commandType: 'credential', payload: { source: 'message' },
-            dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: `${updateId}0`
+            dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: `${updateId}0`, locale: 'zh'
           }, `/setkey ${key}`);
         };
         const inboxStatus = updateId => state.storage.sql.exec('SELECT status FROM inbox WHERE tenant_id = ? AND update_id = ?', tenantId, updateId).one().status;

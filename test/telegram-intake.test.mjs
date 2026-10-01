@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseTelegramUpdate, validateTelegramReceipt } from '../src/telegram-intake.mjs';
 
-function privateMessage({ updateId = 10, chatId = 16000, fromId = chatId, text = '/start secret-argument', messageId = 7 } = {}) {
+function privateMessage({ updateId = 10, chatId = 16000, fromId = chatId, text = '/start secret-argument', messageId = 7, languageCode } = {}) {
   return {
     update_id: updateId,
     message: {
       message_id: messageId,
       date: 1_700_000_000,
       chat: { id: chatId, type: 'private' },
-      from: { id: fromId },
+      from: { id: fromId, ...(languageCode === undefined ? {} : { language_code: languageCode }) },
       text
     }
   };
@@ -28,7 +28,8 @@ test('private command receipts derive the tenant from chat and from while retain
       payload: { source: 'message', arguments: 'secret-argument' },
       dueAt: 1234,
       messageDate: 1_700_000_000,
-      sourceMessageId: '7'
+      sourceMessageId: '7',
+      locale: 'en'
     }
   });
   assert.equal(validateTelegramReceipt(result.receipt).payload.arguments, 'secret-argument');
@@ -44,6 +45,17 @@ test('setkey arguments and pasted private keys use only transient protected hand
     assert.equal(JSON.stringify(result.receipt).includes(text), false);
   }
   assert.equal(parseTelegramUpdate(privateMessage({ text: '/setkey' })).receipt.commandType, 'command:setkey');
+});
+
+test('the receipt carries the sender\'s Telegram language: Chinese for zh clients, English for every other', () => {
+  for (const [languageCode, locale] of [['zh', 'zh'], ['zh-hans', 'zh'], ['zh-TW', 'zh'], ['ZH', 'zh'], ['en', 'en'], ['ru', 'en'], ['', 'en'], [undefined, 'en'], [7, 'en']]) {
+    const message = parseTelegramUpdate(privateMessage({ languageCode }), { now: () => 1234 }).receipt;
+    assert.equal(validateTelegramReceipt(message).locale, locale, String(languageCode));
+    const callback = parseTelegramUpdate({ update_id: 12, callback_query: { id: 'q', from: { id: 16000, language_code: languageCode }, data: 'cb:abc', message: privateMessage().message } }, { now: () => 1234 }).receipt;
+    assert.equal(validateTelegramReceipt(callback).locale, locale, `callback ${languageCode}`);
+  }
+  const receipt = parseTelegramUpdate(privateMessage(), { now: () => 1234 }).receipt;
+  for (const locale of [undefined, 'fr', 'zh-hans']) assert.throws(() => validateTelegramReceipt({ ...receipt, locale }), /unsupported shape/, String(locale));
 });
 
 test('unsupported and unauthorized updates do not construct a receipt', () => {
@@ -76,7 +88,8 @@ test('callback receipts route from their private message envelope rather than ca
       payload: { callbackId: '99999', callbackQueryId: 'callback-id' },
       dueAt: 1234,
       messageDate: 1_700_000_001,
-      sourceMessageId: '8'
+      sourceMessageId: '8',
+      locale: 'en'
     }
   });
 });

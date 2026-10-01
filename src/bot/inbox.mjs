@@ -31,7 +31,12 @@ export class TelegramInbox {
       this.reconcileInTransaction();
       return { accepted: true, duplicate: true, status: existing.status };
     }
-    if (!owner) this.storage.sql.exec('INSERT INTO tenants (tenant_id, owner_user_id, created_at) VALUES (?, ?, ?)', this.tenantId, receipt.actorUserId, now);
+    if (!owner) {
+      if (!['zh', 'en'].includes(receipt.locale)) throw new TypeError('A new tenant needs the sender locale');
+      this.storage.sql.exec('INSERT INTO tenants (tenant_id, owner_user_id, created_at) VALUES (?, ?, ?)', this.tenantId, receipt.actorUserId, now);
+      // A new owner starts in their Telegram language; /lang changes it later.
+      this.storage.sql.exec('INSERT INTO preferences (tenant_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(tenant_id, key) DO NOTHING', this.tenantId, 'telegram.language', JSON.stringify(receipt.locale));
+    }
     const command = receipt.commandType.replace(/^command:/, '');
     const sensitive = command === 'credential';
     if (sensitive && (typeof payloadEnc !== 'string' || !payloadEnc)) throw new TypeError('Credential intake requires ciphertext');
