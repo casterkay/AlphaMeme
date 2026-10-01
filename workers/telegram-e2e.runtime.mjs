@@ -550,4 +550,21 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
+  it.each([['text',{}],['lookup',{family:'evm',address:'0x'+'ab'.repeat(20)}]])('answers a %s receipt with a hint whose buttons open Radar and Help',async(commandType,payload)=>{
+    await withRuntime(commandType==='text'?'23602':'23603',async({runtime,storage,tenantId,sent,receipt,drain,sessions,link,click})=>{
+      const input=receipt(commandType,payload);
+      runtime.receive(input);await runtime.runCommand(input.updateId);await drain();
+      expect(runtime.inbox.get(input.updateId)).toMatchObject({status:'DONE',payload_json:JSON.stringify(payload)});
+      expect(sent).toHaveLength(1);
+      expect(sent[0].params.text).toBe('我只响应命令和对提示的回复。打开 📡 雷达 或 ❓ 帮助。');
+      expect(sent[0].params.reply_markup.inline_keyboard.map(row=>row.map(item=>item.text))).toEqual([['📡 雷达','❓ 帮助']]);
+      const [hint]=sessions();
+      await click(link(hint,'panel.open',params=>params.panel==='help'));
+      expect(runtime.commands.sessions.get(hint.id).panel).toBe('help');
+      expect(sent.at(-1)).toMatchObject({method:'editMessageText',params:{message_id:hint.messageId}});
+      await click(link(runtime.commands.sessions.get(hint.id),'panel.back'));
+      expect(runtime.commands.sessions.get(hint.id).panel).toBe('radar');
+    });
+  });
+
 });

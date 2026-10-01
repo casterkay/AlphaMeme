@@ -7,6 +7,7 @@ import { TradeRefusal } from '../trading/engine.mjs';
 import { TRADING_SETTINGS } from '../trading/config.mjs';
 import { parseUsdCents, parsePercent } from '../trading/amounts.mjs';
 import { saveTradingWalletInTransaction, removeTradingWalletInTransaction, tradingWalletEnvelope, readTradingWallet } from '../trading/wallet.mjs';
+import { button, ICONS } from '../render/telegram.mjs';
 
 // Typed commands that open a panel. Retired slugs are deliberately absent: an
 // unknown command opens Help, which lists the current names.
@@ -67,7 +68,13 @@ export class TelegramCommands {
   }
 
   immediateInTransaction(row) {
+    if (row.command_type === 'secret_warning') {
+      this.secretWarningInTransaction(row);
+      this.inbox.finishInTransaction(row.update_id, 'DONE');
+      return true;
+    }
     if (row.command_type === 'callback') {
+
       const payload = JSON.parse(row.payload_json);
       const link = this.storage.sql.exec('SELECT action FROM shortlinks WHERE tenant_id=? AND id=?', this.tenantId, payload.callbackId).toArray()[0];
       if (!['scan.pause','scan.resume','connection.disconnect','notifications.set'].includes(link?.action)) return false;
@@ -104,6 +111,9 @@ export class TelegramCommands {
     try {
       if (row.command_type === 'callback') this.callbackInTransaction(row, payload, prepared);
       else if (row.command_type === 'reply') this.replyInTransaction(row, payload);
+      else if (row.command_type === 'secret_warning') this.secretWarningInTransaction(row);
+      else if (row.command_type === 'lookup') this.lookupInTransaction(row, payload);
+      else if (row.command_type === 'text') this.hintInTransaction(row);
       else this.commandInTransaction(row, payload);
       this.inbox.finishInTransaction(row.update_id, 'DONE');
     } catch (error) {
@@ -111,6 +121,29 @@ export class TelegramCommands {
       this.noticeInTransaction(row.update_id, text(this.language, '内容或操作已失效，未执行旧操作。请使用 /radar 重新打开。', 'Content or action expired; the old action was not applied. Reopen with /radar.'));
       this.inbox.finishInTransaction(row.update_id, 'FAILED', { reason: error.code });
     }
+  }
+
+  /** A message that held a private key: delete it and say why. Intake already dropped its text. */
+  secretWarningInTransaction(row) {
+    this.outbox.enqueueInTransaction({ id: `delete:${row.update_id}`, chatId: this.tenantId, method: 'deleteMessage', params: { message_id: row.source_message_id }, expiresAt: this.now() + 900_000 });
+    this.noticeInTransaction(row.update_id, text(this.language,
+      '你的消息看起来含有私钥（64位十六进制、Solana私钥或PEM密钥），因此我尝试删除了它。如果那只是交易哈希，无需处理。切勿在此发送私钥；删除无法保证，请确认消息已消失。',
+      'I tried to delete your message because it looked like it held a private key (64 hex characters, a Solana secret key or a PEM key). If it was only a transaction hash, nothing else is needed. Never send keys here; deletion is not guaranteed, so check that the message is gone.'));
+  }
+
+  /** A pasted contract address. Looking it up arrives with #68; until then it gets the hint. */
+  lookupInTransaction(row, _payload) {
+    this.hintInTransaction(row);
+  }
+
+  /** Text the bot does not act on gets a pointer instead of silence. Intake dropped the text itself. */
+  hintInTransaction(row) {
+    const L = (zh, en) => text(this.language, zh, en);
+    const session = this.sessions.createInTransaction('radar', this.controls.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN);
+    const keyboard = [[button(`${ICONS.radar} ${L('雷达', 'Radar')}`, 'panel.open', { panel: 'radar' }), button(`${ICONS.help} ${L('帮助', 'Help')}`, 'panel.open', { panel: 'help' })]];
+    this.outbox.enqueueInTransaction({ id: `hint:${row.update_id}`, chatId: this.tenantId, method: 'sendMessage',
+      params: { text: L(`我只响应命令和对提示的回复。打开 ${ICONS.radar} 雷达 或 ${ICONS.help} 帮助。`, `I only act on commands and replies to my prompts. Open ${ICONS.radar} Radar or ${ICONS.help} Help.`), reply_markup: { inline_keyboard: this.sessions.bindKeyboardInTransaction(session, keyboard, this.controls.snapshot()) }, link_preview_options: { is_disabled: true } },
+      sessionId: session.id, sessionVersion: session.version, expiresAt: session.expiresAt });
   }
 
   commandInTransaction(row, payload) {

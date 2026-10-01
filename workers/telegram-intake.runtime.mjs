@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import worker from '../src/worker.mjs';
+import { TelegramRuntime } from '../src/bot/runtime.mjs';
 
 function receipt({ tenantId = '18100', updateId = '1', commandType = 'command:start' } = {}) {
   return {
@@ -226,5 +227,84 @@ describe('Telegram first-contact intake', () => {
       schemaVersion: 2,
       aveAdmission: { cuUsed: 10, periodStartAt: 3, spacingReadyAt: 2, blockedUntil: 4, blockReason: 'RATE_LIMITED', keyEpoch: 0 }
     });
+  });
+});
+
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const random = length => crypto.getRandomValues(new Uint8Array(length));
+const hex = bytes => [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+function base58(bytes) {
+  let number = BigInt('0x' + hex(bytes)), text = '';
+  while (number > 0n) { text = BASE58[Number(number % 58n)] + text; number /= 58n; }
+  for (const byte of bytes) { if (byte !== 0) break; text = '1' + text; }
+  return text;
+}
+
+// Every row of every table, and every key-value entry, as one string.
+async function everythingStored(storage) {
+  const tables = storage.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'").toArray();
+  const rows = tables.map(({ name }) => storage.sql.exec(`SELECT * FROM "${name}"`).toArray());
+  return JSON.stringify([rows, [...(await storage.list())]]);
+}
+
+describe('Telegram text that is not a command', () => {
+  const webhookEnv = { ...env, TELEGRAM_WEBHOOK_SECRET: 'test-webhook-secret' };
+  const pem = () => `-----BEGIN PRIVATE KEY-----\nMIIE${base58(random(24))}\n-----END PRIVATE KEY-----`;
+
+  // Run the webhook end to end, then let the tenant's commands and deliveries run against a recording Telegram.
+  async function deliver(tenantId, message) {
+    const logged = [];
+    const spies = ['log', 'info', 'warn', 'error', 'debug'].map(level => vi.spyOn(console, level).mockImplementation((...values) => { logged.push(values); }));
+    try {
+      const update = { update_id: 1, message: { message_id: 77, date: Math.floor(Date.now() / 1000), chat: { id: Number(tenantId), type: 'private' }, from: { id: Number(tenantId), language_code: 'en' }, ...message } };
+      expect(await (await worker.fetch(webhookRequest(update), webhookEnv)).json()).toEqual({ accepted: true });
+      const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
+      return await runInDurableObject(radar, async (_instance, { storage }) => {
+        const storedAtIntake = await everythingStored(storage);
+        const runtime = new TelegramRuntime({ storage, env: webhookEnv, tenantId });
+        const requests = [];
+        runtime.outbox.transport = async input => {
+          requests.push(structuredClone({ method: input.method, params: input.params }));
+          return { ok: true, result: input.method === 'sendMessage' ? { message_id: 500 + requests.length } : true };
+        };
+        for (const { update_id: updateId } of storage.sql.exec("SELECT update_id FROM inbox WHERE status = 'RECEIVED'").toArray()) await runtime.runCommand(updateId);
+        for (let count = 0; count < 20; count++) {
+          const task = storage.transactionSync(() => runtime.outbox.reconcileInTransaction()).find(task => task.dueAt <= Date.now());
+          if (!task) break;
+          await runtime.outbox.deliverOne(task.id.slice('outbox:'.length), { request: operation => operation({ signal: new AbortController().signal, timeoutMs: 1000 }) });
+        }
+        const inbox = storage.sql.exec('SELECT command_type, payload_json, status FROM inbox').one();
+        return { inbox, requests, stored: storedAtIntake + await everythingStored(storage), logged: JSON.stringify(logged) };
+      });
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  }
+
+  it.each([
+    ['plain text', '23611', () => '0x' + hex(random(32)), secret => ({ text: secret })],
+    ['plain text', '23612', () => base58(random(64)), secret => ({ text: `here is my wallet ${secret} thanks` })],
+    ['a prompt reply', '23613', () => hex(random(32)), secret => ({ text: secret, reply_to_message: { message_id: 5 } })],
+    ['a command argument', '23614', () => base58(random(64)), secret => ({ text: `/note ${secret}` })],
+    ['a /setkey PEM block', '23615', pem, secret => ({ text: `/setkey ${secret}` })]
+  ])('deletes a private key sent as %s and keeps it out of storage, logs and every request', async (_path, tenantId, secret, message) => {
+    const value = secret();
+    const { inbox, requests, stored, logged } = await deliver(tenantId, message(value));
+    expect(inbox).toEqual({ command_type: 'secret_warning', payload_json: '{}', status: 'DONE' });
+    expect(requests.map(request => request.method)).toEqual(expect.arrayContaining(['deleteMessage', 'sendMessage']));
+    expect(requests.find(request => request.method === 'deleteMessage').params.message_id).toBe('77');
+    expect(requests.find(request => request.method === 'sendMessage').params.text).toMatch(/^I tried to delete your message because it looked like it held a private key .* If it was only a transaction hash, nothing else is needed\./);
+    for (const piece of value.split(/[^0-9A-Za-z]+/).filter(word => word.length >= 16)) {
+      for (const [where, text] of [['storage', stored], ['logs', logged], ['requests', JSON.stringify(requests)]]) expect(text.includes(piece), where).toBe(false);
+    }
+  });
+
+  it('answers unrecognized text with the hint in the sender\'s language and stores none of it', async () => {
+    const words = `what does ${base58(random(12))} mean`;
+    const { inbox, requests, stored, logged } = await deliver('23616', { text: words });
+    expect(inbox).toEqual({ command_type: 'text', payload_json: '{}', status: 'DONE' });
+    expect(requests.map(request => [request.method, request.params.text])).toEqual([['sendMessage', 'I only act on commands and replies to my prompts. Open 📡 Radar or ❓ Help.']]);
+    for (const text of [stored, logged, JSON.stringify(requests)]) expect(text.includes(words.split(' ')[2])).toBe(false);
+    expect(stored).toContain('"telegram.language","value_json":"\\"en\\""');
   });
 });
