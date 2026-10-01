@@ -436,12 +436,15 @@ describe('buying before the safety check verified a token', () => {
     ['a complete check with a security conflict', 'LIVE_READY', conflicted('SECURITY_MISMATCH'), 'UNVERIFIED'],
     ['a complete check with a market conflict', 'LIVE_READY', conflicted('MARKET_MISMATCH'), 'UNVERIFIED'],
     ['a complete check without fatal flags', 'LIVE_READY', VERIFIED, 'VERIFIED'],
+    ['a complete check with a waiting deep-audit failure', 'X_REVIEW', VERIFIED, 'UNVERIFIED', { failed: ['notHoneypot'], blockingUnknownFields: [] }],
+    ['a complete check with a blocking unknown deep-audit field', 'X_REVIEW', VERIFIED, 'UNVERIFIED', { failed: [], blockingUnknownFields: ['buyTax'] }],
     ['a fatal verdict', 'LIVE_READY', FATAL, 'VETOED'],
     ['a hard reject with a clean check', 'HARD_REJECT', VERIFIED, 'VETOED'],
     ['a risk exclusion with a clean check', 'exclusion', VERIFIED, 'VETOED']
-  ])('classifies %s as %s', async (name, status, secondary, expected) => {
+  ])('classifies %s as %s', async (name, status, secondary, expected, deep = null) => {
     await withTrading(`unverified-state-${name.replaceAll(' ', '-')}`, async ({ storage, tenantId, seed }) => {
       if (status !== null) seed('arc', status === 'exclusion' ? 'LIVE_READY' : status, secondary);
+      if (deep) storage.sql.exec('UPDATE candidates SET deep_json=? WHERE tenant_id=?', JSON.stringify(deep), tenantId);
       if (status === 'exclusion') storage.sql.exec('INSERT INTO risk_exclusions (tenant_id,chain,address,version,codes_json,reasons_json,at) VALUES (?,?,?,?,?,?,?)', tenantId, 'arc', TOKEN, 1, '[]', '[]', start);
       expect(safetyState(storage, tenantId, 'arc', TOKEN)).toBe(expected);
       expect(safetyState(storage, tenantId, 'arc', TOKEN.toLowerCase())).toBe(expected);
@@ -503,11 +506,14 @@ describe('buying before the safety check verified a token', () => {
   it('fails a buy loudly on a malformed recorded check instead of guessing, and still sells', async () => {
     await withTrading('unverified-corrupt', async ({ runtime, storage, tenantId, seed, createWallet, trades }) => {
       seed('arc');await createWallet();
-      storage.sql.exec('UPDATE candidates SET secondary_json=? WHERE tenant_id=?', '{not json', tenantId);
       const request = changes => storage.transactionSync(() => runtime().trading.requestTradeInTransaction({ chain: 'arc', token: TOKEN, usdCents: 1000, slippageBps: 500, capUsd: 100, ...changes }));
-      expect(() => safetyState(storage, tenantId, 'arc', TOKEN)).toThrow(SyntaxError);
-      expect(() => request({ side: 'buy', unverifiedAcknowledged: true })).toThrow(SyntaxError);
-      expect(trades()).toEqual([]);
+      for (const column of ['secondary_json', 'deep_json']) {
+        seed('arc');
+        storage.sql.exec(`UPDATE candidates SET ${column}=? WHERE tenant_id=?`, '{not json', tenantId);
+        expect(() => safetyState(storage, tenantId, 'arc', TOKEN), column).toThrow(SyntaxError);
+        expect(() => request({ side: 'buy', unverifiedAcknowledged: true }), column).toThrow(SyntaxError);
+        expect(trades(), column).toEqual([]);
+      }
       expect(request({ side: 'sell', usdCents: null, percent: 50 })).toMatchObject({ side: 'sell' });
     });
   });

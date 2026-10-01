@@ -9,11 +9,14 @@ export const blockingConflicts = secondary => (secondary?.conflicts || []).filte
 /**
  * VETOED: rejected, or GoPlus/DexScreener found a fatal flag. PENDING: no check
  * recorded yet. PASSED: a complete check without fatal flags or blocking
- * conflicts. INCOMPLETE: any other check (degraded, unknown or conflicted).
+ * conflicts, and no failed or blocking-unknown deep-audit field. INCOMPLETE:
+ * anything else (a degraded, unknown or conflicted check, or an open deep audit).
  */
-export function safetyVerdict({ status, secondary }) {
+export function safetyVerdict({ status, secondary, deep = null }) {
   if (status === 'HARD_REJECT' || secondary?.security?.verdict === 'FATAL') return 'VETOED';
   if (!secondary) return 'PENDING';
-  if (secondary.status === 'COMPLETE' && secondary.security?.verdict === 'NO_FATAL_FLAGS' && !blockingConflicts(secondary).length) return 'PASSED';
+  // A hard deep failure is already HARD_REJECT; what remains here is waiting or unknown.
+  const auditOpen = (deep?.failed?.length ?? 0) > 0 || (deep?.blockingUnknownFields?.length ?? 0) > 0;
+  if (!auditOpen && secondary.status === 'COMPLETE' && secondary.security?.verdict === 'NO_FATAL_FLAGS' && !blockingConflicts(secondary).length) return 'PASSED';
   return 'INCOMPLETE';
 }

@@ -55,9 +55,19 @@ Status icons (one table in `src/render/telegram.mjs`, the only source of icons):
 |---|---|---|---|
 | Scanning | 🟢 | Paused | ⏸ |
 | Not connected | 🔌 | Alerts on / off | 🔔 / 🔕 |
-| No failures found | ✅ | Unknown / needs review | ⚠️ |
-| Vetoed / failed | ⛔ | Check running | ⏳ |
+| No failures found | ✅ | Needs review | ⚠️ |
+| Vetoed | ⛔ | Checking | ⏳ |
 | New lead | 🆕 | Key / account issue | 🔑 |
+
+Safety verdicts have one wording everywhere: `safetyBadge(verdict, locale)` in
+`src/render/telegram.mjs` renders `safetyVerdict` from `src/scoring/safety.mjs` (§3.9).
+
+| Verdict | English | 中文 |
+|---|---|---|
+| `PASSED` | ✅ No failures found | ✅ 未发现问题 |
+| `INCOMPLETE` | ⚠️ Needs review | ⚠️ 待复核 |
+| `VETOED` | ⛔ Vetoed | ⛔ 已否决 |
+| `PENDING` | ⏳ Checking | ⏳ 检查中 |
 
 Rules: every icon marks a state or a destination; navigation buttons carry their
 panel icon; no decorative emoji in body text.
@@ -275,10 +285,11 @@ incomplete; it asks once. Only a `FATAL` verdict still blocks buying (unchanged)
 
 A token is **verified** when its recorded GoPlus/DexScreener check has status
 `COMPLETE`, the security verdict `NO_FATAL_FLAGS` and no blocking source conflict
-(`MARKET_MISMATCH`/`SECURITY_MISMATCH`). Everything else — a lead whose check has
-not run yet, a degraded, unknown or conflicted check, a hot-list
+(`MARKET_MISMATCH`/`SECURITY_MISMATCH`), and its deep audit has no failed or
+blocking-unknown field. Everything else — a lead whose check has not run yet, a
+degraded, unknown or conflicted check, an open deep audit, a hot-list
 row that never became a candidate, a pasted token whose lookup is still running —
-is **unverified**. One pure function (`safetyVerdict({ status, secondary })` in
+is **unverified**. One pure function (`safetyVerdict({ status, secondary, deep })` in
 `src/scoring/safety.mjs` → `VETOED | PASSED | INCOMPLETE | PENDING`) owns this rule
 for panels, alerts and the engine; the engine's `safetyState` maps it, plus risk
 exclusions, to `VERIFIED | UNVERIFIED | VETOED`.
