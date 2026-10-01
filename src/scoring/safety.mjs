@@ -6,6 +6,11 @@ export const BLOCKING_CONFLICTS = Object.freeze(['MARKET_MISMATCH', 'SECURITY_MI
 
 export const blockingConflicts = secondary => (secondary?.conflicts || []).filter(conflict => BLOCKING_CONFLICTS.includes(conflict?.type));
 
+// Deep-audit unknowns that block. An audit recorded before the blocking split
+// has only unknownFields, and every one of them blocks.
+export const blockingUnknownFields = deep => Array.isArray(deep?.blockingUnknownFields) ? deep.blockingUnknownFields
+  : Array.isArray(deep?.unknownFields) ? deep.unknownFields : [];
+
 /**
  * VETOED: rejected, or GoPlus/DexScreener found a fatal flag. PENDING: no check
  * recorded yet. PASSED: a complete check without fatal flags or blocking
@@ -16,7 +21,7 @@ export function safetyVerdict({ status, secondary, deep = null }) {
   if (status === 'HARD_REJECT' || secondary?.security?.verdict === 'FATAL') return 'VETOED';
   if (!secondary) return 'PENDING';
   // A hard deep failure is already HARD_REJECT; what remains here is waiting or unknown.
-  const auditOpen = (deep?.failed?.length ?? 0) > 0 || (deep?.blockingUnknownFields?.length ?? 0) > 0;
+  const auditOpen = (deep?.failed?.length ?? 0) > 0 || blockingUnknownFields(deep).length > 0;
   if (!auditOpen && secondary.status === 'COMPLETE' && secondary.security?.verdict === 'NO_FATAL_FLAGS' && !blockingConflicts(secondary).length) return 'PASSED';
   return 'INCOMPLETE';
 }

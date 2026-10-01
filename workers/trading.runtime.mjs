@@ -438,6 +438,7 @@ describe('buying before the safety check verified a token', () => {
     ['a complete check without fatal flags', 'LIVE_READY', VERIFIED, 'VERIFIED'],
     ['a complete check with a waiting deep-audit failure', 'X_REVIEW', VERIFIED, 'UNVERIFIED', { failed: ['notHoneypot'], blockingUnknownFields: [] }],
     ['a complete check with a blocking unknown deep-audit field', 'X_REVIEW', VERIFIED, 'UNVERIFIED', { failed: [], blockingUnknownFields: ['buyTax'] }],
+    ['a complete check with a legacy deep audit that has only unknownFields', 'X_REVIEW', VERIFIED, 'UNVERIFIED', { failed: [], unknownFields: ['top10'] }],
     ['a fatal verdict', 'LIVE_READY', FATAL, 'VETOED'],
     ['a hard reject with a clean check', 'HARD_REJECT', VERIFIED, 'VETOED'],
     ['a risk exclusion with a clean check', 'exclusion', VERIFIED, 'VETOED']

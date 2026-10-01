@@ -52,6 +52,7 @@ export function projectTelegramCandidate(source) {
   row.info.website = safeTelegramUrl(source.info?.website);
   row.status = template.status;
   row.deep.chainPass = template.deep.chainPass;
+  row.deep.blockingUnknownFields = template.deep.blockingUnknownFields;
   row.deep.chartRisk.codes = (source.deep?.chartRisk?.codes || []).map(value => safeTelegramText(value,80));
   row.deep.chartRisk.unknownFields = (source.deep?.chartRisk?.unknownFields || []).map(value => safeTelegramText(value,120));
   row.deep.security.wash = typeof source.deep?.security?.wash === 'boolean' ? source.deep.security.wash : null;

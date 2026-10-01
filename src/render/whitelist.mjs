@@ -1,4 +1,5 @@
 import { CHART_RISK_VERSION } from '../scoring/chart-risk.mjs';
+import { blockingUnknownFields } from '../scoring/safety.mjs';
 
 const CHECK_FIELDS = [
   'openSource', 'ownerRenounced', 'lpLocked', 'notHoneypot', 'tax', 'rug',
@@ -141,7 +142,7 @@ export function publicCandidate(row = {}) {
         reasons: (deep.chartRisk?.reasons || []).slice(0, 5).map(reason => text(reason, 100)) },
       failed: Array.isArray(deep.failed) ? deep.failed.slice(0, 32).map(value => text(value, 40)) : [],
       unknownFields: Array.isArray(deep.unknownFields) ? deep.unknownFields.slice(0, 48).map(value => text(value, 64)) : [],
-      blockingUnknownFields: Array.isArray(deep.blockingUnknownFields) ? deep.blockingUnknownFields.slice(0, 48).map(value => text(value, 64)) : [],
+      blockingUnknownFields: blockingUnknownFields(deep).slice(0, 48).map(value => text(value, 64)),
       checks: publicChecks(deep.checks),
       honeypotEvidence: text(deep.honeypotEvidence, 80),
       security: {
