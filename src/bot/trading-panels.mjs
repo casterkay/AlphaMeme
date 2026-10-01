@@ -92,7 +92,7 @@ function tradePanel(snapshot, session, locale) {
   const chain = trading.chainFacts[trade.chain];
   const symbol = trade.tokenMeta?.symbol ?? '?';
   const blocks = [`<b>${trade.side === 'buy' ? L('买入', 'Buy') : L('卖出', 'Sell')} ${userText(symbol, 30)}</b> · ${chainLabel(trade.chain)} · ${L(...STATUS[trade.state])}`, `CA: <code>${userText(trade.token, 42)}</code>`];
-  if (trade.unverifiedAtRequest) blocks.push(`${ICONS.unknown} ${L('在安全核验通过前买入。', 'Bought before the safety check verified it.')}`);
+  if (trade.unverifiedAtRequest) blocks.push(`${ICONS.unknown} ${L('请求时安全核验尚未完成。', 'Requested before the safety check verified it.')}`);
   const keyboard = [];
   if (trade.state === 'QUOTING') {
     blocks.push(L('正在获取报价…', 'Fetching a quote…'));

@@ -87,6 +87,6 @@ test('the unverified-buy question names the token and amount and offers Yes then
 test('the quote screen repeats the warning only for a buy requested before the token was verified', () => {
   const trade = unverifiedAtRequest => ({ id: 'e'.repeat(32), chain: 'bsc', token: TOKEN, side: 'buy', usdCents: 1000, percent: null, state: 'QUOTING', tokenMeta: null, createdAt: now, unverifiedAtRequest });
   const render = value => renderPanel(snapshot({ trades: [trade(value)] }), { panel: 'trade', viewChain: 'bsc', query: { tradeId: 'e'.repeat(32) }, version: 1 }, 'en').text;
-  assert.match(render(true), /⚠️ Bought before the safety check verified it\./);
-  assert.doesNotMatch(render(false), /Bought before/);
+  assert.match(render(true), /⚠️ Requested before the safety check verified it\./);
+  assert.doesNotMatch(render(false), /Requested before/);
 });
