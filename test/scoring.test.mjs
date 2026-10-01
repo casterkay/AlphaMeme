@@ -317,6 +317,24 @@ test('the AVE screen still demands more current activity from older tokens', asy
   assert.deepEqual(discoveryScreen(old, { ...config, chain: 'arc' }, Date.now() / 1000).reasons, ['老币当前成交活跃度不足']);
 });
 
+test('AVE signals use verified five-minute fields and never generic activity counters', async () => {
+  const [row] = await aveHotListRows([aveToken(1, 2)]);
+  const screen = discoveryScreen({ ...row, volume_5m: null, swaps: 90, buys: 80, sells: 10, volume: 50_000 }, { ...config, chain: 'arc' }, Date.now() / 1000);
+  assert.equal(screen.pass, false);
+  assert.deepEqual([screen.signals.swaps5m, screen.signals.buys5m, screen.signals.sells5m, screen.signals.volume5m], [null, null, null, null]);
+  assert.match(screen.reasons.join(' '), /近5分钟成交额不足或未知/);
+});
+
+test('AVE screen rejects a known zero five-minute trade side without inventing a missing side', async () => {
+  const [row] = await aveHotListRows([aveToken(1, 2)]);
+  for (const [field, label] of [['buys_5m', '近5分钟无买入成交'], ['sells_5m', '近5分钟无卖出成交']]) {
+    const rejected = discoveryScreen({ ...row, [field]: 0 }, { ...config, chain: 'arc' }, Date.now() / 1000);
+    assert.equal(rejected.pass, false);
+    assert.ok(rejected.reasons.includes(label));
+  }
+  assert.equal(discoveryScreen(row, { ...config, chain: 'arc' }, Date.now() / 1000).pass, true);
+});
+
 test('the AVE screen does not screen by pool: a Uniswap v4 hook pool is neither required nor rejected', async () => {
   for (const ageHours of [2, 30]) {
     const [row] = await aveHotListRows([aveToken(1, ageHours)]);

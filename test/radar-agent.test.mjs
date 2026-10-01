@@ -133,10 +133,11 @@ function radar({ chain = 'bsc', settings: overrides = {} } = {}) {
   fixture.seedCheckpoint = checkpoint => store.begin({
     keyEpoch: 0, controlEpoch: 0, deadlineAt: null, tokenIndex: 0, endpointIndex: 0, updatedAt: clock.now, ...checkpoint
   });
-  fixture.seedOutcome = ({ chain: outcomeChain = chain, token, baselineAt, baselinePrice = 1 }) => storage.sql.exec(
+  fixture.seedOutcome = ({ chain: outcomeChain = chain, token, baselineAt, baselinePrice = 1, baselineProvider = 'AVE' }) => storage.sql.exec(
     `INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json)
-     VALUES (?, ?, ?, 'LIVE_READY', 'LIVE_READY', ?, ?, ?, 'SEEDED', '[]', 'ALL_LEADS', 'ave-leads-v1', '{}', '{}', '{}')`,
-    TENANT, outcomeChain, token, baselineAt, baselinePrice, baselineAt
+     VALUES (?, ?, ?, 'LIVE_READY', 'LIVE_READY', ?, ?, ?, 'SEEDED', '[]', 'ALL_LEADS', 'ave-leads-v1', '{}', '{}', ?)`,
+    TENANT, outcomeChain, token, baselineAt, baselinePrice, baselineAt,
+    JSON.stringify(baselineProvider === null ? {} : { baselineProvider })
   );
   return fixture;
 }
@@ -339,6 +340,29 @@ test('later trending quotes sample an outcome horizon only within the five-minut
   const late = radarFixture.outcome(A);
   assert.deepEqual(Object.keys(late.samples), ['m5']);
   assert.deepEqual(late.samples.m5, sampled.samples.m5);
+});
+
+test('a retained legacy baseline cannot gain an AVE trending or candle sample', async () => {
+  const radarFixture = radar();
+  const baselineAt = NOW - 7 * MINUTE;
+  radarFixture.seedOutcome({ token: A, baselineAt, baselineProvider: null });
+  radarFixture.hotList = [radarFixture.quote(A, { price: 0.002 })];
+  await radarFixture.runCycle('cycle-legacy-trending');
+  assert.deepEqual(radarFixture.outcome(A).samples, {});
+
+  radarFixture.seedCheckpoint({ cycleId: 'cycle-legacy-candle', chain: 'bsc', phase: 'OUTCOMES_SAMPLE',
+    partial: { settings: radarFixture.settings } });
+  radarFixture.scanner.advanceLocal('cycle-legacy-candle');
+  assert.equal(radarFixture.scanner.nextRequest('cycle-legacy-candle'), null);
+  assert.equal(radarFixture.store.read('cycle-legacy-candle').phase, 'SUMMARIZE');
+
+  radarFixture.seedCheckpoint({ cycleId: 'cycle-legacy-pending', chain: 'bsc', phase: 'OUTCOMES_SAMPLE',
+    partial: { settings: radarFixture.settings, outcomes: { job: { chain: 'bsc', address: A, key: 'm5', targetAt: baselineAt + 300_000 } } } });
+  assert.equal(radarFixture.scanner.nextRequest('cycle-legacy-pending'), null);
+  assert.throws(() => radarFixture.scanner.recordOutcomeSample('cycle-legacy-pending', {
+    sample: { at: baselineAt + 300_000, price: 3 }, collectedAt: NOW
+  }), { code: 'OUTCOME_PROVIDER_MISMATCH' });
+  assert.deepEqual(radarFixture.outcome(A).samples, {});
 });
 
 test('secondary checks per cycle are bounded by maxSecondaryChecksPerCycle', async () => {

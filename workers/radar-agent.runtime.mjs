@@ -239,6 +239,10 @@ describe('recoverable Radar scanner', () => {
     await runInDurableObject(radar, async (_instance, state) => {
       const partial = { settings, rootCycleId: cycleId, outcomeDeadlineAt: Date.now() + 60_000,
         outcomes: { job: { chain: 'arc', address: LEAD, key: 'm5', targetAt: Date.now() - 60_000 } } };
+      state.storage.sql.exec(
+        'INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        tenantId, 'arc', LEAD, 'LIVE_READY', 'LIVE_READY', Date.now() - 360_000, 1, Date.now(), 'LEAD', '[]', 'ALL_LEADS', 'ave-leads-v1', '{}', '{}', '{"baselineProvider":"AVE"}'
+      );
       state.storage.sql.exec('UPDATE cycle_checkpoint SET phase = ?, partial_json = ? WHERE tenant_id = ? AND cycle_id = ?', 'OUTCOMES_SAMPLE', JSON.stringify(partial), tenantId, cycleId);
     });
     await evictDurableObject(radar);
@@ -429,7 +433,7 @@ describe('recoverable Radar scanner', () => {
     await runInDurableObject(radar, async (_instance, state) => {
       const insertOutcome = (row, at) => state.storage.sql.exec(
         'INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        tenantId, 'bsc', row, 'LIVE_READY', 'LIVE_READY', at, 1, at, 'BSC', '[]', 'ALL_LEADS', 'ave-leads-v1', '{}', '{}', '{}'
+        tenantId, 'bsc', row, 'LIVE_READY', 'LIVE_READY', at, 1, at, 'BSC', '[]', 'ALL_LEADS', 'ave-leads-v1', '{}', '{}', '{"baselineProvider":"AVE"}'
       );
       insertOutcome(address, baselineAt);
       insertOutcome(expiredAddress, now - settings.outcomeRetentionMs - 400_000);
@@ -609,7 +613,7 @@ describe('AVE onboarding and scanning through the Durable Object', () => {
         expect((await instance.getStatus(tenantId)).control.configured).toBe(false);
         const notices = state.storage.sql.exec('SELECT payload_json FROM outbox WHERE tenant_id = ?', tenantId).toArray()
           .map(row => JSON.parse(row.payload_json).params.text ?? '');
-        expect(notices.some(text => text.includes('AVE暂时不可用') && text.includes('/setkey'))).toBe(true);
+        expect(notices.some(text => text.includes('AVE服务暂时出错') && text.includes('/setkey'))).toBe(true);
       });
     } finally {
       fetchSpy.mockRestore();

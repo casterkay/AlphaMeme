@@ -4,7 +4,7 @@ import { describe,it,expect,vi } from 'vitest';
 import { TelegramRuntime } from '../src/bot/runtime.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { readAveApiKey } from '../src/auth/connection.mjs';
-import { AVE_CU } from '../src/providers/ave.mjs';
+import { AVE_CU, AveError } from '../src/providers/ave.mjs';
 import { readSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 
 const at=1_800_000_000_000;
@@ -418,7 +418,7 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it.each([[401,'AVE_AUTH'],[402,'AVE_QUOTA']])('ends verification on an AVE %s refusal, scrubs the candidate and tells the user',async(status)=>{
+  it.each([[401,'AVE密钥无效'],[402,'AVE额度已用尽']])('ends verification on an AVE %s refusal, scrubs the candidate and tells the user',async(status,notice)=>{
     await withRuntime(status===401?'22918':'22919',async({runtime,storage,tenantId,sent,receipt,drain})=>{
       const input=receipt('credential',{source:'message'});await runtime.receiveCredential(input,`/setkey ${apiKey}`);await runtime.runCommand(input.updateId);
       const ave=aveStub(()=>new Response('{}',{status}));
@@ -427,7 +427,7 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(runtime.inbox.get(input.updateId)).toMatchObject({status:'FAILED',payload_enc:null});
       expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
       expect(runtime.control.snapshot().configured).toBe(false);
-      expect(sent.some(row=>row.params.text?.includes('/onboard'))).toBe(true);
+      expect(sent.some(row=>row.params.text?.includes(notice)&&row.params.text.includes('/setkey'))).toBe(true);
     });
   });
 
@@ -451,7 +451,27 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(runtime.inbox.get(input.updateId)).toMatchObject({status:'FAILED',payload_enc:null});
       expect(storage.sql.exec('SELECT name FROM keys WHERE tenant_id=?',tenantId).toArray()).toEqual([]);
       expect(runtime.control.snapshot().configured).toBe(false);
-      expect(sent.some(row=>row.params.text?.includes('AVE暂时不可用')&&row.params.text.includes('/setkey'))).toBe(true);
+      expect(sent.some(row=>row.params.text?.includes('AVE请求受到限流')&&row.params.text.includes(new Date(at+30_000).toISOString())&&row.params.text.includes('/setkey'))).toBe(true);
+    });
+  });
+
+  it.each([
+    ['network', '23991', '无法连接AVE。', async () => { throw new TypeError('secret transport detail'); }],
+    ['upstream', '23992', 'AVE服务暂时出错。', async () => new Response('{}', { status: 502 })],
+    ['timeout', '23993', 'AVE验证超时。', async () => new Response('{}', { status: 200 })]
+  ])('reports a sanitized %s verification failure', async (kind, tenantId, notice, fetchImpl) => {
+    await withRuntime(tenantId, async ({ runtime, sent, receipt, drain }) => {
+      const input = receipt('credential', { source: 'message' });
+      await runtime.receiveCredential(input, `/setkey ${apiKey}`);
+      await runtime.runCommand(input.updateId);
+      const verificationRequest = kind === 'timeout' ? async () => { throw new AveError('TIMEOUT', 504); } : request;
+      await runtime.verifyCredential(runtime.inbox.get(input.updateId).generation,
+        { request: verificationRequest, fetchImpl, finalAttempt: true });
+      await drain();
+      const message = sent.find(row => row.params.text?.includes(notice))?.params.text;
+      expect(message).toContain('/setkey');
+      expect(message).not.toContain('secret transport detail');
+      expect(message).not.toContain(apiKey);
     });
   });
 
