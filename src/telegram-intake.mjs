@@ -65,11 +65,11 @@ function messageReceipt(updateId, message, dueAt, botUsername) {
   if (match?.[2] && (!botUsername || match[2].toLowerCase() !== botUsername.toLowerCase())) return null;
   const command = match?.[1].toLowerCase();
   const argumentsText = match?.[3] || '';
-  // Divert secrets before interpreting commands or prompt replies. AVE keys have
-  // no recognizable shape, so only /setkey carries one, and only a PEM block
-  // there is unmistakably something else. Any other message holding a private
-  // key is deleted unread: it never reaches storage, logs or a provider.
-  if (command === 'setkey' && argumentsText && !PEM_PRIVATE_KEY.test(text)) {
+  // Divert secrets before interpreting commands or prompt replies. An AVE key
+  // (64 mixed-case alphanumerics) matches neither private-key shape, so a key
+  // shape on /setkey is a wallet key that verification would send to AVE. Any
+  // message holding one is deleted unread: it never reaches storage, logs or a provider.
+  if (command === 'setkey' && argumentsText && !containsPrivateKey(text)) {
     return {
       kind: 'credential',
       receipt: { ...base, commandType: 'credential', payload: { source: 'message' } },
