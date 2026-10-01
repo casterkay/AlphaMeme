@@ -227,6 +227,61 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
+  it('sends a new-lead alert with each lead\'s recorded market facts and opens a lead from it',async()=>{
+    await withRuntime('22941',async({runtime,storage,tenantId,sent,sessions,link,click,drain})=>{
+      runtime.commands.setPreference('language','en');
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
+      const pepe='0x'+'e'.repeat(40),bare='0x'+'f'.repeat(40);
+      const lead=(address,symbol,marketCap,liquidity,createdAt,secondary)=>storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,liquidity,created_at,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,symbol,'LIVE_READY',marketCap,liquidity,createdAt,at,at+600_000,`lead-${symbol}`,secondary);
+      lead(pepe,'PEPE',120_400,30_100,(at-4*60_000)/1000,'null');
+      // An unreadable recorded fact is left out; it never holds back the alert.
+      lead(bare,'BARE',null,null,null,'{');
+      storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)',tenantId,'feed.snapshot:arc',JSON.stringify({rows:[{address:pepe.toUpperCase().replace('0X','0x'),priceChange5m:0.35}]}));
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
+      const alert=sent.find(row=>row.params.text?.includes('new lead'));
+      expect(alert.params.text).toBe(['<b>🆕 2 new leads · Arc</b>','1. PEPE — $120K MC · $30.1K liq · 4m old · 5m +35%','2. BARE','Safety check still running; not verified.'].join('\n'));
+      expect(alert.params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['1 PEPE','2 BARE'],['🎯 All leads','🔕 Mute alerts']]);
+      // Panels read every candidate's evidence strictly, so repair the row before opening one.
+      storage.sql.exec("UPDATE candidates SET secondary_json='null' WHERE tenant_id=? AND address=?",tenantId,bare);
+      const session=sessions().at(-1);
+      await click(link(session,'panel.open',(params,row)=>params.panel==='detail'&&row.address===pepe));
+      expect(runtime.commands.sessions.get(session.id)).toMatchObject({panel:'detail',query:{selectedToken:{chain:'arc',address:pepe}}});
+    });
+  });
+
+  it('sends a risk alert naming the token and its recorded veto findings',async()=>{
+    await withRuntime('22942',async({runtime,storage,tenantId,sent,sessions,link,click,drain})=>{
+      runtime.commands.setPreference('language','en');
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
+      const address='0x'+'9'.repeat(40);
+      const secondary={status:'DEGRADED',security:{verdict:'FATAL',fatal:[{field:'isHoneypot',reason:'GoPlus标记为貔貅'}],fields:{isHoneypot:true}}};
+      storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,'RUGME','HARD_REJECT',at,at+600_000,'veto-arc-1',JSON.stringify(secondary));
+      storage.sql.exec('INSERT INTO annotations (tenant_id,chain,address,favorite,note,updated_at) VALUES (?,?,?,?,?,?)',tenantId,'arc',address,1,'',at);
+      storage.sql.exec('INSERT INTO events (tenant_id,id,at,type,chain,address) VALUES (?,?,?,?,?,?)',tenantId,'risk-1',at+1,'RISK_WORSENED','arc',address);
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
+      const alert=sent.find(row=>row.params.text?.includes('RUGME'));
+      expect(alert.params.text).toBe(['<b>⛔ RUGME failed the safety check · Arc</b>','GoPlus flagged: Honeypot: Yes','Buying is blocked; selling still works.'].join('\n'));
+      expect(alert.params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['Open RUGME']]);
+      const session=sessions().at(-1);
+      await click(link(session,'panel.open',(params,row)=>params.panel==='detail'&&row.address===address));
+      expect(runtime.commands.sessions.get(session.id).panel).toBe('detail');
+    });
+  });
+
+  it('sends an unusable-key alert whose button opens the reconnect panel',async()=>{
+    await withRuntime('22943',async({runtime,storage,tenantId,sent,sessions,link,click,drain})=>{
+      runtime.commands.setPreference('language','en');
+      storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)',tenantId,'telegram.providerAuth',JSON.stringify({keyEpoch:runtime.control.snapshot().keyEpoch,unusable:true}));
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
+      const alert=sent.find(row=>row.params.text?.includes('AVE key'));
+      expect(alert.params.text).toBe('<b>🔑 Your AVE key stopped working</b>');
+      expect(alert.params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['🔑 Reconnect AVE']]);
+      const session=sessions().at(-1);
+      await click(link(session,'panel.open',params=>params.panel==='onboard'));
+      expect(runtime.commands.sessions.get(session.id).panel).toBe('onboard');
+    });
+  });
+
   it('schedules card correction only for an actual future review expiry',async()=>{
     await withRuntime('22916',async({runtime,storage,tenantId,command,sessions,link,click,seed})=>{
       seed();await command('leads');const audits=sessions()[0];
