@@ -1,24 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { alertCard, checkState } from '../src/bot/alerts.mjs';
+import { alertCard } from '../src/bot/alerts.mjs';
+import { safetyVerdict } from '../src/scoring/safety.mjs';
 
 const now = 1_800_000_000_000;
 const newLeads = { actionReason: 'CANDIDATE_NEW', members: [] };
-const lead = (symbol, overrides = {}) => ({ chain: 'arc', address: `0x${symbol.toLowerCase().padStart(40, '0')}`, symbol, marketCap: null, liquidity: null, createdAt: null, priceChange5m: null, check: 'CHECKING', fatal: [], ...overrides });
+const lead = (symbol, overrides = {}) => ({ chain: 'arc', address: `0x${symbol.toLowerCase().padStart(40, '0')}`, symbol, marketCap: null, liquidity: null, createdAt: null, priceChange5m: null, verdict: 'PENDING', fatal: [], ...overrides });
 const pepe = lead('PEPE', { marketCap: 120_400, liquidity: 30_100, createdAt: (now - 4 * 60_000) / 1000, priceChange5m: 0.35 });
 const doge = lead('DOGE2', { marketCap: 48_000, liquidity: 9_000, createdAt: (now - 61_000) / 1000, priceChange5m: -0.08 });
 const buttons = keyboard => keyboard.flat().map(({ text, action, params, token }) => ({ text, action, params, ...(token ? { token } : {}) }));
-
-test('checkState reads the recorded secondary check: none yet, complete without fatal flags, or anything else', () => {
-  for (const [secondary, expected] of [
-    [null, 'CHECKING'],
-    [{ status: 'COMPLETE', security: { verdict: 'NO_FATAL_FLAGS' } }, 'PASSED'],
-    [{ status: 'DEGRADED', security: { verdict: 'NO_FATAL_FLAGS' } }, 'INCOMPLETE'],
-    [{ status: 'COMPLETE', security: { verdict: 'UNKNOWN' } }, 'INCOMPLETE'],
-    [{ status: 'DEGRADED', security: { verdict: 'UNSUPPORTED' } }, 'INCOMPLETE'],
-    [{ status: 'COMPLETE', security: { verdict: 'FATAL' } }, 'INCOMPLETE']
-  ]) assert.equal(checkState(secondary), expected, JSON.stringify(secondary));
-});
 
 test('a new-lead batch shows market facts per row, the chain, and leads plus mute buttons without a Status button', () => {
   const { text, keyboard } = alertCard(newLeads, [pepe, doge], { locale: 'en', now });
@@ -48,18 +38,27 @@ test('a new-lead row leaves out each missing fact instead of printing a placehol
   assert.doesNotMatch(text, /Unknown|NaN|undefined|null/);
 });
 
-test('rows are marked with their check state once any check has finished', () => {
-  const { text } = alertCard(newLeads, [lead('WAIT'), lead('OK', { check: 'PASSED' }), lead('PART', { check: 'INCOMPLETE' })], { locale: 'en', now });
-  const lines = text.split('\n');
-  assert.equal(lines[0], '<b>🆕 3 new leads · Arc</b>');
-  assert.deepEqual(lines.slice(1, 4), ['1. ⏳ WAIT', '2. ✅ OK', '3. ⚠️ PART']);
-  assert.equal(lines[4], '⏳ check running · ✅ no failures found · ⚠️ incomplete. Not a safety guarantee.');
+test('rows carry the shared safety badge once any check has finished', () => {
+  const { text } = alertCard(newLeads, [lead('WAIT'), lead('OK', { verdict: 'PASSED' }), lead('PART', { verdict: 'INCOMPLETE' })], { locale: 'en', now });
+  assert.deepEqual(text.split('\n'), ['<b>🆕 3 new leads · Arc</b>', '1. WAIT · ⏳ Checking', '2. OK · ✅ No failures found', '3. PART · ⚠️ Needs review', 'Checks are not a safety guarantee.']);
   assert.doesNotMatch(text, /still running; not verified/, 'the blanket line would be false for checked rows');
 });
 
-test('a finished but incomplete check alone is enough to mark rows and replace the still-running line', () => {
-  const { text } = alertCard(newLeads, [lead('WAIT'), lead('PART', { check: 'INCOMPLETE' })], { locale: 'zh', now });
-  assert.deepEqual(text.split('\n'), ['<b>🆕 2 个新线索 · Arc</b>', '1. ⏳ WAIT', '2. ⚠️ PART', '⏳ 检查中 · ✅ 未发现问题 · ⚠️ 核验不完整。不构成安全保证。']);
+test('a finished check that needs review alone is enough to badge rows and replace the still-running line', () => {
+  const { text } = alertCard(newLeads, [lead('WAIT'), lead('PART', { verdict: 'INCOMPLETE' })], { locale: 'zh', now });
+  assert.deepEqual(text.split('\n'), ['<b>🆕 2 个新线索 · Arc</b>', '1. WAIT · ⏳ 检查中', '2. PART · ⚠️ 待复核', '检查结果不构成安全保证。']);
+});
+
+test('a complete clean check with a blocking source conflict or an open deep audit needs review, never passes', () => {
+  const clean = { status: 'COMPLETE', security: { verdict: 'NO_FATAL_FLAGS', fatal: [] }, conflicts: [] };
+  const rows = [
+    ['CLEAN', { status: 'LIVE_READY', secondary: clean }],
+    ['MARKET', { status: 'LIVE_READY', secondary: { ...clean, conflicts: [{ type: 'MARKET_MISMATCH', field: 'marketCap' }] } }],
+    ['SECURITY', { status: 'LIVE_READY', secondary: { ...clean, conflicts: [{ type: 'SECURITY_MISMATCH', field: 'honeypot' }] } }],
+    ['AUDIT', { status: 'X_REVIEW', secondary: clean, deep: { failed: [], blockingUnknownFields: ['lpBurned'] } }]
+  ].map(([symbol, recorded]) => lead(symbol, { verdict: safetyVerdict(recorded) }));
+  const { text } = alertCard(newLeads, rows, { locale: 'en', now });
+  assert.deepEqual(text.split('\n').slice(1, 5), ['1. CLEAN · ✅ No failures found', '2. MARKET · ⚠️ Needs review', '3. SECURITY · ⚠️ Needs review', '4. AUDIT · ⚠️ Needs review']);
 });
 
 test('a single new lead is singular and an odd batch keeps the last token button alone on its row', () => {
@@ -76,7 +75,7 @@ test('a new-lead batch renders in Chinese with the same facts', () => {
 });
 
 test('token symbols are escaped as user text in every alert', () => {
-  const hostile = lead('<b>X</b>&', { check: 'PASSED' });
+  const hostile = lead('<b>X</b>&', { verdict: 'PASSED' });
   for (const notification of [newLeads, { actionReason: 'RISK_WORSENED', members: [] }]) {
     const { text } = alertCard(notification, [hostile], { locale: 'en', now });
     assert.match(text, /&lt;b&gt;X&lt;\/b&gt;&amp;/);

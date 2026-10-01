@@ -244,9 +244,10 @@ Safety check still running; not verified.
   the token's row in the latest hot-list snapshot. A missing fact is omitted.
 - A lead's GoPlus/DexScreener check can finish before its batch is sent, so the
   closing line above is used only while every row's check is still pending.
-  Otherwise each row carries its recorded state — ⏳ no check recorded, ✅
-  `COMPLETE` with no fatal flags, ⚠️ anything else — and the closing line becomes
-  "⏳ check running · ✅ no failures found · ⚠️ incomplete. Not a safety guarantee."
+  Otherwise each row carries the shared verdict's badge (`safetyVerdict` →
+  `safetyBadge`, e.g. `1. PEPE · ⚠️ Needs review — $120K MC …`), so a source
+  conflict or an open deep audit reads ⚠️ exactly as in Leads and detail, and
+  the closing line becomes "Checks are not a safety guarantee."
 
 Risk worsened:
 
