@@ -286,6 +286,17 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
+  it('opens the Watchlist and Activity buttons on every chain, as their commands do',async()=>{
+    await withRuntime('22965',async({runtime,command,sessions,link,click})=>{
+      await command('radar');const radar=sessions()[0];
+      await click(link(radar,'panel.open',params=>params.panel==='saved'));
+      expect(runtime.commands.sessions.get(radar.id)).toMatchObject({panel:'saved',viewChain:'all'});
+      await command('status');const status=sessions()[1];
+      await click(link(status,'panel.open',params=>params.panel==='events'));
+      expect(runtime.commands.sessions.get(status.id)).toMatchObject({panel:'events',viewChain:'all'});
+    });
+  });
+
   it('restores list filter, sort, page and chain after detail and evidence navigation',async()=>{
     await withRuntime('22910',async({runtime,command,sessions,link,click,seed})=>{
       seed(8);await command('leads');const root=sessions()[0];

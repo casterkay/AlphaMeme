@@ -50,6 +50,14 @@ describe('durable Telegram inbox', () => {
     });
   });
 
+  it('never lets /chains supersede a delayed older /pause: opening the picker is not a control',async()=>{
+    await fixture('19206',(inbox,storage)=>{
+      const receive=r=>storage.transactionSync(()=>inbox.receiveInTransaction(r));
+      expect(receive(receipt('19206','5','chains',2_000_001)).status).toBe('RECEIVED');
+      expect(receive(receipt('19206','4','pause',2_000_000)).status).toBe('RECEIVED');
+    });
+  });
+
   it('stores only ciphertext for credentials and scrubs cancelled and completed payloads', async () => {
     await fixture('19204', (inbox, storage) => {
       const r = { ...receipt('19204', '8', 'setkey'), commandType: 'credential', payload: { source: 'message' } };

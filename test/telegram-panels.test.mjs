@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { renderPanel, selectPanelRows, PANEL_NAMES, HELP_COMMAND_NAMES, telegramCommandDescriptions } from '../src/bot/panels.mjs';
+import { renderPanel, selectPanelRows, PANEL_NAMES, HELP_COMMAND_NAMES, telegramCommandDescriptions, telegramCommandRegistrations } from '../src/bot/panels.mjs';
 import { projectTelegramCandidate, projectTelegramFeedRow, createTelegramExport, safeTelegramUrl } from '../src/bot/snapshot.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { money, officialXUrl } from '../src/render/telegram.mjs';
@@ -38,6 +38,15 @@ test('the command menu lists the eight frequent commands in order, localized, an
     for(const command of HELP_COMMAND_NAMES) assert.match(commands,new RegExp(`/${command} — `),`${locale} ${command}`);
     assert.ok(commands.indexOf('/help — ')<commands.indexOf('/start — '),'menu commands come before the rest');
     assert.ok(!/<(?!\/?b>)/.test(commands),'argument placeholders are escaped, not raw HTML');
+  }
+});
+
+test('command registration is English by default and Chinese only for zh clients',()=>{
+  const registrations=telegramCommandRegistrations();
+  assert.deepEqual(registrations.map(params=>params.language_code),[undefined,'zh','en']);
+  for(const params of registrations) {
+    assert.deepEqual(params.scope,{type:'all_private_chats'});
+    assert.deepEqual(params.commands,telegramCommandDescriptions(params.language_code==='zh'?'zh':'en'),String(params.language_code));
   }
 });
 
@@ -208,8 +217,9 @@ test('radar leads with the newest leads on the scan chain, vetoed last, and leav
   const snapshot=fixture();
   snapshot.metrics={scanCount:7,discoveredCount:40,prequalifiedCount:12};
   snapshot.candidates=[
-    candidate(0,{symbol:'PEPE',status:'LIVE_READY',auditedAt:now-60_000,marketCap:120_000,createdAt:(now-240_000)/1000}),
-    candidate(1,{symbol:'DOGE2',status:'LIVE_READY',auditedAt:now-30_000,marketCap:undefined}),
+    // PEPE first qualified 25 min ago and was rechecked just now; DOGE2 is the newer lead.
+    candidate(0,{symbol:'PEPE',status:'LIVE_READY',auditedAt:now-1000,metadata:{qualifiedAt:now-1_500_000},marketCap:120_000,createdAt:(now-240_000)/1000}),
+    candidate(1,{symbol:'DOGE2',status:'LIVE_READY',auditedAt:now-30_000,metadata:{qualifiedAt:now-60_000},marketCap:undefined}),
     candidate(2,{symbol:'RUGME',status:'HARD_REJECT',auditedAt:now-1000}),
     candidate(3,{symbol:'OLD',status:'LIVE_READY',auditedAt:now-1_800_001}),
     candidate(4,{symbol:'REVIEW',status:'X_REVIEW',auditedAt:now-1000}),
@@ -229,12 +239,24 @@ test('radar leads with the newest leads on the scan chain, vetoed last, and leav
   assert.deepEqual(panelRows(empty),[[],['audits','feed'],['saved','stats'],['wallet','settings']].filter(row=>row.length));
 });
 
+test('radar says why nothing arrives when scanning is paused or AVE is disconnected',()=>{
+  const paused=fixture();paused.candidates=[];paused.control.paused=true;
+  const pausedText=renderPanel(paused,session('radar'),'en').text;
+  assert.match(pausedText,/\n⏸️ Paused · 🔕 Alerts off\n\nNo leads in the last 30 min\. Scanning is paused\.\n/);assert.doesNotMatch(pausedText,/checks the hot list/);
+  // Disconnected with history: the radar still shows records but says it is not connected.
+  const disconnected=fixture();disconnected.control.configured=false;disconnected.candidates=[candidate(0,{status:'LIVE_READY',auditedAt:now-1_800_001})];
+  const disconnectedText=renderPanel(disconnected,session('radar'),'en').text;
+  assert.match(disconnectedText,/\n🔌 Not connected · 🔕 Alerts off\n\nNo leads in the last 30 min\. AVE is not connected\.\n/);
+  disconnected.candidates[0]={...disconnected.candidates[0],auditedAt:now-1000};
+  assert.match(renderPanel(disconnected,session('radar'),'zh').text,/\n🔌 未连接AVE · 🔕 提醒关闭\n\n近30分钟：1 条线索/);
+});
+
 test('settings groups state first and actions below, with disconnect alone and only when connected',()=>{
   const snapshot=fixture();snapshot.control.notifications=true;snapshot.trading={chains:['arc'],settings:{slippageBps:500,capUsd:100}};
   const connected=renderPanel(snapshot,session('settings'),'en');
   assert.equal(connected.text,'<b>⚙️ Settings</b>\nScanning: 🟢 Solana\nAlerts: 🔔 On\nTrading: slippage 5% · cap $100\nLanguage: English\nAVE: connected\n\nUpdated Jan 15 08:00 UTC');
   assert.deepEqual(panelRows(connected),[['chains','scan.pause'],['notifications.set'],['wallet','trade_settings'],['language','onboard'],['status','export.create'],['disconnect']]);
-  assert.equal(connected.keyboard[0][0].text,'🔗 Scan chain: Solana');assert.equal(connected.keyboard.at(-2)[0].text,'🔌 Disconnect AVE');
+  assert.equal(connected.keyboard[0][0].text,'🔗 Scan chain: Solana');assert.equal(connected.keyboard[3][1].text,'🔑 AVE key');assert.equal(connected.keyboard.at(-2)[0].text,'🔌 Disconnect AVE');
   Object.assign(snapshot.control,{configured:false});delete snapshot.trading;
   const disconnected=renderPanel(snapshot,session('settings'),'en');
   assert.match(disconnected.text,/Scanning: 🔌 Waiting for AVE · Solana\n.*\nTrading: not enabled on this deployment\n[\s\S]*AVE: not connected/);

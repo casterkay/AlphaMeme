@@ -63,6 +63,8 @@ export function projectTelegramCandidate(source) {
     evidence:Object.fromEntries(['smartWallets','renownedWallets','taggedSmartWallets','taggedRenownedWallets','sampledTaggedWallets','holderCount','holderSampleDistinct','swaps5m','buys5m','sells5m','volume5m','priceChange5m','swapsPerHolder5m','swapCountConsistent','holderSampleConsistent','sellBuyRatio','ageSec','creatorStatus','creatorLaunchCount','creatorCreatedCount','creatorGraduatedCount','creatorOpenRatio','creatorDeletedPosts','creatorPromotedTokens'].map(key => [key,typeof behavior.evidence?.[key] === 'number' || typeof behavior.evidence?.[key] === 'boolean' ? behavior.evidence[key] : key === 'creatorStatus' ? safeTelegramText(behavior.evidence?.[key],32) : null]))
   };
   row.reviewRevision = safeTelegramText(source.reviewRevision, 64);
+  // When a lead first qualified; rechecks keep it. Only the stored metadata carries it.
+  if (Number.isSafeInteger(source.metadata?.qualifiedAt)) row.qualifiedAt = source.metadata.qualifiedAt;
   row.auditError = source.auditError ? 'AUDIT_FAILED' : '';
   row.decisionReason = source.deep?.chartRisk?.version !== CHART_RISK_VERSION && ['X_REVIEW', 'QUALIFIED'].includes(source.status)
     ? 'STALE_RULES' : safeTelegramText(source.decisionReason, 120);

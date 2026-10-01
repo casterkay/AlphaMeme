@@ -159,21 +159,22 @@ export class TelegramCommands {
     if (/^connection\./.test(action) && binding.expectedConnectionGeneration !== control.connectionGeneration) throw new ReviewConflict('connection_changed');
     if (action === 'notifications.set' && params.expectedPreferenceVersion !== this.preference('notificationsVersion', 0)) throw new ReviewConflict('settings_changed');
     let changes = {};
+    const scanChain = CHAINS.includes(control.activeChain) ? control.activeChain : DEFAULT_SCAN_CHAIN;
+    // Radar is the root: Home starts navigation afresh, on the scan chain, instead of stacking a path back.
+    const home = { panel: 'radar', viewChain: scanChain, query: { schemaVersion: 1, page: 0 } };
     if (action === 'panel.open') {
       const panel = params.panel;
       if (typeof panel !== 'string') throw new ReviewConflict('invalid_panel');
       const returnTo = structuredClone({ panel: session.panel, viewChain: session.viewChain, query: { ...session.query, pendingInput: undefined } });
       let ancestor = returnTo;
       for (let depth = 1; ancestor?.query?.returnTo; depth++) { if (depth >= 4) { delete ancestor.query.returnTo; break; } ancestor = ancestor.query.returnTo; }
-      const viewChain = CONCRETE_CHAIN_PANELS.has(panel) && !CHAINS.includes(session.viewChain)
-        ? (CHAINS.includes(control.activeChain) ? control.activeChain : DEFAULT_SCAN_CHAIN)
-        : session.viewChain;
-      // Radar is the root: Home starts navigation afresh, on the scan chain, instead of stacking a path back.
-      changes = panel === 'radar' ? { panel, viewChain: CHAINS.includes(control.activeChain) ? control.activeChain : DEFAULT_SCAN_CHAIN, query: { schemaVersion: 1, page: 0 } }
+      // A button opens the same scope as its command: the Watchlist and Activity span every chain.
+      const viewChain = ALL_CHAIN_PANELS.has(panel) ? 'all' : CONCRETE_CHAIN_PANELS.has(panel) && !CHAINS.includes(session.viewChain) ? scanChain : session.viewChain;
+      changes = panel === 'radar' ? home
         : { panel, viewChain, query: { ...session.query, schemaVersion: 1, page: 0, pendingInput: undefined, ...(params.query ?? {}), returnTo, ...(token ? { selectedToken: token } : {}) } };
     } else if (action === 'panel.back') {
       const origin = session.query.returnTo;
-      changes = origin ? { panel: origin.panel, viewChain: origin.viewChain, query: origin.query } : { panel: 'radar', query: { schemaVersion: 1, page: 0 } };
+      changes = origin ? { panel: origin.panel, viewChain: origin.viewChain, query: origin.query } : home;
     } else if (action === 'panel.refresh') { /* Re-render current facts. */ }
     else if (action === 'page.set') changes = { query: { ...session.query, [session.panel === 'evidence' ? 'detailPage' : 'page']: params.page } };
     else if (action === 'view_chain.set') {

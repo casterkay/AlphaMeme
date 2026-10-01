@@ -24,7 +24,9 @@ const markFor = (snapshot, row) => (snapshot.marks || []).find(mark => id(mark) 
 const annotationFor = (snapshot, row) => (snapshot.annotations || []).find(mark => id(mark) === id(row));
 const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
 const searchMatches = (row, search) => !search || [row.symbol,row.name,row.address].join(' ').toLowerCase().includes(search.trim().toLowerCase());
-const heading = (panel, locale) => ICONS[panel] ? `${ICONS[panel]} ${name(panel, locale)}` : name(panel, locale);
+// A destination shares the icon of the state it fixes: one glyph per concept.
+const PANEL_ICONS = { onboard: ICONS.key, disconnect: ICONS.disconnected };
+const heading = (panel, locale) => { const icon = PANEL_ICONS[panel] ?? ICONS[panel]; return icon ? `${icon} ${name(panel, locale)}` : name(panel, locale); };
 const open = (panel, locale, params = {}) => button(heading(panel, locale), 'panel.open', { panel, ...params });
 const scanState = (control, locale) => !control.configured ? `${ICONS.disconnected} ${localize(locale,'未连接AVE','Not connected')}` : control.paused ? `${ICONS.paused} ${localize(locale,'已暂停','Paused')}` : `${ICONS.scanning} ${localize(locale,'扫描中','Scanning')}`;
 const alertState = (control, locale) => control.notifications ? `${ICONS.alertsOn} ${localize(locale,'提醒开启','Alerts on')}` : `${ICONS.alertsOff} ${localize(locale,'提醒关闭','Alerts off')}`;
@@ -218,6 +220,13 @@ const MORE_COMMANDS = [
 ];
 export const HELP_COMMAND_NAMES = Object.freeze([...MENU_COMMANDS,...MORE_COMMANDS].map(([command]) => command));
 export function telegramCommandDescriptions(locale='zh') { return MENU_COMMANDS.map(([command,zh,en]) => ({command,description:localize(locale,zh,en)})); }
+/**
+ * setMyCommands parameters: English by default, Chinese for zh clients. The en scope
+ * is rewritten too so an earlier registration cannot leave stale commands there.
+ */
+export function telegramCommandRegistrations() {
+  return [[null,'en'],['zh','zh'],['en','en']].map(([languageCode,locale]) => ({ commands:telegramCommandDescriptions(locale),scope:{type:'all_private_chats'},...(languageCode ? {language_code:languageCode} : {}) }));
+}
 export function keySafetyCopy(locale='zh') {
   return localize(locale,'API Key明文会经过Telegram并可能留在聊天记录中。我们会尝试删除含Key消息，但无法保证删除。请自行检查并删除。服务端只保存加密Key，从不回显。AVE Key只读，不能交易。','Your plaintext key passes through Telegram and may remain in chat history. We try to delete the message but cannot guarantee deletion; check and delete it yourself. The service stores the key encrypted and never displays it. The AVE key is read-only; it cannot trade.');
 }
@@ -286,8 +295,9 @@ export function renderPanel(snapshot,session,locale='zh') {
     } else {
       // Radar answers "is there anything for me?": the newest leads on the scan chain, vetoed last.
       const chain=control.scanChain,feed=snapshot.feedByChain?.[chain]?.rows || [];
-      const recent=snapshot.candidates.filter(row=>row.chain === chain && row.auditedAt>=snapshot.at-1_800_000).sort((a,b)=>number(b.auditedAt)-number(a.auditedAt));
-      const leads=recent.filter(row=>backendDisposition(row)==='lead'),vetoed=recent.filter(row=>row.status==='HARD_REJECT'),shown=[...leads,...vetoed].slice(0,3);
+      // Every recheck rewrites auditedAt, so a lead is as new as when it first qualified.
+      const recent=snapshot.candidates.filter(row=>row.chain === chain && row.auditedAt>=snapshot.at-1_800_000),newest=key=>(a,b)=>number(key(b))-number(key(a));
+      const leads=recent.filter(row=>backendDisposition(row)==='lead').sort(newest(row=>row.qualifiedAt ?? row.auditedAt)),vetoed=recent.filter(row=>row.status==='HARD_REJECT').sort(newest(row=>row.auditedAt)),shown=[...leads,...vetoed].slice(0,3);
       const leadLine=(row,index)=>{
         const symbol=userText(row.symbol || '?',30);
         if(row.status==='HARD_REJECT') return `${index+1}. ${ICONS.vetoed} ${symbol} · ${L('已否决','vetoed')}`;
@@ -298,7 +308,7 @@ export function renderPanel(snapshot,session,locale='zh') {
       title=`${heading('radar',locale)} · ${chainLabel(chain)}`;
       blocks=[`${scanState(control,locale)} · ${alertState(control,locale)}`,''];
       if(shown.length) blocks.push(L(`近30分钟：${leads.length} 条线索 · ${vetoed.length} 条已否决`,`Last 30 min: ${leads.length} ${leads.length === 1 ? 'lead' : 'leads'} · ${vetoed.length} vetoed`),...shown.map(leadLine));
-      else blocks.push(L(`近30分钟没有线索。雷达约每${duration(scannerSettings.scanIntervalMs,locale)}读取一次热榜。`,`No leads in the last 30 min. The radar checks the hot list every ~${duration(scannerSettings.scanIntervalMs,locale)}.`));
+      else blocks.push(`${L('近30分钟没有线索。','No leads in the last 30 min.')} ${!control.configured ? L('AVE未连接。','AVE is not connected.') : control.paused ? L('扫描已暂停。','Scanning is paused.') : L(`雷达约每${duration(scannerSettings.scanIntervalMs,locale)}读取一次热榜。`,`The radar checks the hot list every ~${duration(scannerSettings.scanIntervalMs,locale)}.`)}`);
       keyboard=[shown.map((row,index)=>detailButton(row,index,locale)),[open('audits',locale),open('feed',locale)],[open('saved',locale),open('stats',locale)],[open('wallet',locale),open('settings',locale)]];
     }
   } else if(session.panel === 'settings') {
