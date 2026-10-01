@@ -59,6 +59,17 @@ describe('Telegram first-contact intake', () => {
     });
   });
 
+  it('leaves the default language of a tenant created before seeding existed', async () => {
+    const radar = env.RADAR.get(env.RADAR.idFromName('radar:23625'));
+    await runInDurableObject(radar, async (_instance, state) => {
+      state.storage.sql.exec('INSERT INTO tenants (tenant_id, owner_user_id, created_at) VALUES (?, ?, ?)', '23625', '23625', Date.now());
+    });
+    await radar.receiveTelegramUpdate({ ...receipt({ tenantId: '23625', updateId: '1' }), locale: 'en' });
+    await runInDurableObject(radar, async (_instance, state) => {
+      expect(state.storage.sql.exec('SELECT key FROM preferences WHERE tenant_id = ? AND key = ?', '23625', 'telegram.language').toArray()).toEqual([]);
+    });
+  });
+
   it('rejects a durable owner mismatch without adding an inbox row', async () => {
     const tenantId = '18101';
     const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
