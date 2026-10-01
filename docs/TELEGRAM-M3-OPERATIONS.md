@@ -12,7 +12,9 @@ than GMGN deep-audit passes. Current interface changes are tracked in the
 ## Configuration
 
 Keep these secrets out of source control: `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_WEBHOOK_SECRET`, `MASTER_ENC_KEY`, and `OPERATOR_TOKEN`.
+`TELEGRAM_WEBHOOK_SECRET`, `MASTER_ENC_KEY`, and `OPERATOR_TOKEN`, and the optional
+`ALCHEMY_API_KEY`, which turns on new-pool discovery from chain logs on Arc and
+Robinhood. It is separate from the trading RPC URLs, so setting it does not enable trading.
 Set `TELEGRAM_BOT_USERNAME` to the username verified with Telegram for this bot
 (without `@`). Commands without a mention work without that setting; mentioned
 commands are rejected until the username is configured. The worker does not

@@ -13,6 +13,7 @@ import { scannerSettings } from '../scanner-settings.mjs';
 import { aveCreditsUsed, parseAveBudget } from '../ave-admission.mjs';
 import { DEFAULT_SCAN_CHAIN } from '../chains.mjs';
 import { AVE_CU, normalizeAveApiKey, verifyAveApiKey } from '../providers/ave.mjs';
+import { parseAlchemyApiKey } from '../providers/chain-logs.mjs';
 import { encryptSecret, decryptSecret } from '../util/crypto.mjs';
 import { CONNECTION_KEY_NAMES, prepareOnboardingVerification, verifyAndActivateOnboardingCredential, failOnboardingVerification, ConnectionError } from '../auth/connection.mjs';
 import { SqliteControlStateStore } from '../storage/control-state.mjs';
@@ -265,7 +266,7 @@ export class TelegramRuntime {
     const scanner = new RecoverableScanner({ store: new SqliteRecoverableScannerStore(this.storage, this.tenantId), settings: scannerSettings, now: this.now });
     const cycleId = `telegram:${chain}:${control.keyEpoch}:${this.now()}`;
     scanner.begin({ cycleId, chain, keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch, deadlineAt: this.now() + scannerSettings.auditCycleBudgetMs,
-      afterBegin: () => scheduleRecoverableScanTaskInTransaction(this.storage, this.tenantId, cycleId, this.now(), AVE_CU.trending) });
+      onchainDiscovery: parseAlchemyApiKey(this.env) !== null, afterBegin: () => scheduleRecoverableScanTaskInTransaction(this.storage, this.tenantId, cycleId, this.now(), AVE_CU.trending) });
   }
 
   resume() {

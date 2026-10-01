@@ -46,7 +46,7 @@ const request = operation => operation({ signal: new AbortController().signal })
 
 // A configured tenant scanning `chain`, backed by the real SQLite store, a real
 // AveClient over a hand-written fetch stub, and a hand-written secondary source.
-function radar({ chain = 'bsc', settings: overrides = {} } = {}) {
+function radar({ chain = 'bsc', settings: overrides = {}, onchain = false } = {}) {
   const storage = sqliteStorage();
   initializeRadarSchema(storage);
   const state = readSchedulerStateInTransaction(storage, TENANT);
@@ -65,9 +65,20 @@ function radar({ chain = 'bsc', settings: overrides = {} } = {}) {
     trendingRequests: 0,
     verdicts: new Map(),
     secondaryCalls: [],
-    priceAt: async () => null
+    priceAt: async () => null,
+    marketRows: new Map(),
+    marketRequests: [],
+    // The chain-log and DexScreener stubs a new-pool cycle reads; tests replace them.
+    chainLogs: { newPools: async () => assert.fail('no new-pool read expected') },
+    dexMarkets: async () => assert.fail('no DexScreener batch expected')
   };
   const fetchImpl = async url => {
+    // An AVE token read for a promoted new pool answers with the row the test set in fixture.marketRows.
+    const details = url.match(/^https:\/\/prod\.ave-api\.com\/v2\/tokens\/(0x[0-9a-f]{40})-/);
+    if (details) {
+      fixture.marketRequests.push(details[1]);
+      return Response.json({ status: 1, data: { token: fixture.marketRows.get(details[1]), pairs: [] } });
+    }
     assert.ok(url.startsWith('https://prod.ave-api.com/v2/tokens/trending?'), url);
     fixture.trendingRequests += 1;
     if (fixture.trendingStatus !== 200) return new Response('upstream unavailable', { status: fixture.trendingStatus });
@@ -76,6 +87,7 @@ function radar({ chain = 'bsc', settings: overrides = {} } = {}) {
   const client = new AveClient({ apiKey: API_KEY, fetchImpl, now: () => clock.now });
   fixture.ave = {
     trending: (name, options) => client.trending(name, options),
+    market: (name, address, options) => client.market(name, address, options),
     priceAt: (...args) => fixture.priceAt(...args)
   };
   fixture.secondary = {
@@ -99,11 +111,11 @@ function radar({ chain = 'bsc', settings: overrides = {} } = {}) {
   });
   fixture.control = () => new SqliteControlStateStore(storage, TENANT).snapshot();
   fixture.step = (cycleId, extra = {}) => executeRecoverableScanStep({
-    scanner, cycleId, ave: fixture.ave, secondary: fixture.secondary, request, now: () => clock.now, ...extra
+    scanner, cycleId, ave: fixture.ave, secondary: fixture.secondary, chainLogs: fixture.chainLogs, dexMarkets: (...args) => fixture.dexMarkets(...args), request, now: () => clock.now, ...extra
   });
   fixture.begin = (cycleId, deadlineAt = clock.now + settings.auditCycleBudgetMs) => {
     const control = fixture.control();
-    return scanner.begin({ cycleId, chain, keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch, deadlineAt });
+    return scanner.begin({ cycleId, chain, keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch, deadlineAt, onchainDiscovery: onchain });
   };
   fixture.runCycle = async (cycleId, { onFinalized } = {}) => {
     fixture.begin(cycleId);
@@ -269,6 +281,74 @@ test('a queued lead that leaves the hot list still gets its check, and a forgott
   assert.ok(!radarFixture.store.readAuditQueue(radarFixture.candidate(B).chain).some(item => item.address.toLowerCase() === A.toLowerCase()));
 });
 
+// A new pool for `token` in blocks after `cursor`, as the chain-log source reports it.
+const newPool = (token, { head = 1_000 } = {}) => async (_chain, { cursor }) => ({ head, fromBlock: (cursor ?? head - 120) + 1, toBlock: head, skippedBlocks: 0,
+  pools: [{ token, pool: `0x${'9'.repeat(64)}`, venue: 'Uniswap v4', block: head - 5 }] });
+const busyMarket = (address, overrides = {}) => ({ address, marketCap: 50_000, liquidity: 20_000, volume5m: 2_000, buys5m: 20, sells5m: 5,
+  pairCreatedAt: NOW - 30 * MINUTE, priceUsd: 0.001, ...overrides });
+
+test('a new pool that trades enough is read from AVE, screened with the hot list and becomes a lead, and its watchlist commits with the screen', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  const cursors = [];
+  radarFixture.chainLogs = { newPools: async (chain, options) => { cursors.push(options.cursor); return newPool(A)(chain, options); } };
+  radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [busyMarket(A)] : [] });
+  radarFixture.marketRows.set(A, radarFixture.quote(A));
+  await radarFixture.runCycle('cycle-pools-1');
+
+  assert.deepEqual(radarFixture.marketRequests, [A]);
+  assert.equal(radarFixture.candidate(A).status, 'LIVE_READY');
+  assert.deepEqual(radarFixture.events().map(event => [event.type, event.address]), [['CANDIDATE_NEW', A]]);
+  const watched = radarFixture.state('discovery.pools:arc');
+  assert.equal(watched.cursor, 1_000);
+  assert.deepEqual(watched.pools.map(pool => [pool.token, pool.promotedAt]), [[A, NOW]]);
+
+  radarFixture.clock.now = NOW + MINUTE;
+  await radarFixture.runCycle('cycle-pools-2');
+  assert.deepEqual(cursors, [null, 1_000], 'the next cycle reads on from the committed cursor');
+  assert.deepEqual(radarFixture.marketRequests, [A], 'a promoted token is not read from AVE again within five minutes');
+});
+
+test('a new pool too quiet, too young or already on the hot list costs no AVE read and stays watched', async () => {
+  for (const [scenario, market, hotList] of [
+    ['quiet', busyMarket(A, { volume5m: 100 }), []],
+    ['few buys', busyMarket(A, { buys5m: 2 }), []],
+    ['thin liquidity', busyMarket(A, { liquidity: 1_000 }), []],
+    ['too large', busyMarket(A, { marketCap: 500_000 }), []],
+    ['too young', busyMarket(A, { pairCreatedAt: NOW - MINUTE }), []],
+    ['on the hot list', busyMarket(A), [A]]
+  ]) {
+    const radarFixture = radar({ chain: 'arc', onchain: true });
+    radarFixture.chainLogs = { newPools: newPool(A) };
+    radarFixture.dexMarkets = async () => ({ capturedAt: NOW, markets: [market] });
+    radarFixture.hotList = hotList.map(token => radarFixture.quote(token));
+    await radarFixture.runCycle(`cycle-quiet-${scenario.replaceAll(" ", "-")}`);
+    assert.deepEqual(radarFixture.marketRequests, [], scenario);
+    assert.deepEqual(radarFixture.state('discovery.pools:arc').pools.map(pool => pool.token), [A], scenario);
+  }
+});
+
+test('the log cursor advances only when the screen commits, so an interrupted cycle replays its range', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  radarFixture.chainLogs = { newPools: newPool(A) };
+  radarFixture.dexMarkets = async () => ({ capturedAt: NOW, markets: [] });
+  radarFixture.begin('cycle-replay');
+  for (const endpoint of ['trending', 'newPools', 'watch']) {
+    assert.equal(radarFixture.scanner.nextRequest('cycle-replay').endpoint, endpoint);
+    await radarFixture.step('cycle-replay');
+  }
+  assert.equal(radarFixture.state('discovery.pools:arc'), null, 'nothing is committed before the screen');
+  await radarFixture.step('cycle-replay');
+  assert.equal(radarFixture.store.read('cycle-replay').phase, 'BUILD_QUEUE');
+  assert.equal(radarFixture.state('discovery.pools:arc').cursor, 1_000);
+});
+
+test('a cycle that began without the on-chain key reads only the hot list and reports the source as not configured', async () => {
+  const radarFixture = radar({ chain: 'arc' });
+  await radarFixture.runCycle('cycle-no-key');
+  assert.deepEqual(radarFixture.state('runtime.sourceHealth').discovery.newPools, { ok: false, code: 'ONCHAIN_NOT_CONFIGURED' });
+  assert.equal(radarFixture.state('discovery.pools:arc'), null);
+});
+
 test('a refreshed lead keeps its secondary result, review revision and qualification time', async () => {
   const radarFixture = radar();
   radarFixture.hotList = [radarFixture.quote(A, { price: 0.001 })];
@@ -424,8 +504,11 @@ test('secondary checks per cycle are bounded by maxSecondaryChecksPerCycle', asy
   assert.deepEqual(leads.filter(lead => lead.secondary).map(lead => lead.address).sort(), checked.sort());
 });
 
-test('recoverableRequestCost charges AVE credits only for trending and candle reads', () => {
-  assert.equal(recoverableRequestCost({ kind: 'DISCOVER' }), 5);
+test('recoverableRequestCost charges AVE credits only for trending, market and candle reads', () => {
+  assert.equal(recoverableRequestCost({ kind: 'DISCOVER', endpoint: 'trending' }), 5);
+  assert.equal(recoverableRequestCost({ kind: 'DISCOVER', endpoint: 'market:0' }), 5);
+  assert.equal(recoverableRequestCost({ kind: 'DISCOVER', endpoint: 'newPools' }), 0);
+  assert.equal(recoverableRequestCost({ kind: 'DISCOVER', endpoint: 'watch' }), 0);
   assert.equal(recoverableRequestCost({ kind: 'OUTCOMES_SAMPLE' }), 10);
   assert.equal(recoverableRequestCost({ kind: 'SECONDARY' }), 0);
   assert.equal(recoverableRequestCost({ kind: 'DEADLINE_EXPIRED' }), 0);

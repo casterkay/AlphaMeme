@@ -120,7 +120,7 @@ function projectSourceHealth(source) {
   return Object.fromEntries(['discovery','lastSecondary'].filter(key => source[key]).map(key => {
     const row=source[key];
     return [key,{ complete:typeof row.complete === 'boolean' ? row.complete : null,checkedAt:typeof row.checkedAt === 'number' ? row.checkedAt : null,
-      ...(row.trending ? { trending:endpoint(row.trending) } : {}),
+      ...Object.fromEntries(['trending','newPools','watch','promoted'].filter(field => row[field]).map(field => [field,endpoint(row[field])])),
       sources:Object.fromEntries(['dexScreener','goPlus'].filter(field => row.sources?.[field]).map(field => [field,endpoint(row.sources[field])])) }];
   }));
 }

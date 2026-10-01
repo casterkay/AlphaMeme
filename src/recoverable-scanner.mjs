@@ -4,14 +4,24 @@ import { discoveryScreen } from './scoring/index.mjs';
 import { blockingConflicts } from './scoring/safety.mjs';
 import { dueOutcomeJobs, hasAveOutcomeBaseline, horizons } from './scoring/outcomes.mjs';
 import { addressKey, buildQueue, nextAuditDelay, publicToken, selectAuditQueue, socialFrom } from './scanner-parity.mjs';
-import { RecoverableScannerError, SCAN_PHASES } from './storage/recoverable-scanner.mjs';
+import { RecoverableScannerError } from './storage/recoverable-scanner.mjs';
+import { POOL_SOURCES } from './providers/chain-logs.mjs';
+import { nextWatchState, promotions, watchTargets } from './onchain-watch.mjs';
 
 // One cycle reads the chain's AVE trending list, screens it with upstream's
 // AVE market screen, and turns every passing token into a lead immediately.
+// On a chain with pinned pool factories it also reads the new pools its logs
+// created, watches them on DexScreener, and reads AVE's market row for up to
+// two that trade enough, so they are screened alongside the hot list.
 // Leads then get the free GoPlus and DexScreener checks; a fatal security
 // finding vetoes the lead. No AVE token audit runs: AVE has no holder, trader
 // or contract-security data, so an AVE audit could never pass (upstream v0.1.10).
-const DISCOVERY_ENDPOINTS = Object.freeze(['trending']);
+// The discovery requests for a cycle; the AVE market reads follow from what the watch found.
+// A cycle reads new pools only when it began with the on-chain source configured.
+function discoveryEndpoints(chain, partial) {
+  if (!POOL_SOURCES[chain] || partial.onchainDiscovery !== true) return ['trending'];
+  return ['trending', 'newPools', 'watch', ...(partial.discovery?.promoted || []).map((_, index) => `market:${index}`)];
+}
 const SECONDARY_SOURCES = Object.freeze(['dexScreener', 'goPlus']);
 const OUTCOME_SAMPLE_GRACE_MS = 25_000;
 // Upstream samples an outcome horizon from a later hot-list quote within this lag.
@@ -90,6 +100,14 @@ function checkpointEvidenceIsFresh(value, now, maximumAgeMs) {
 function discoveryRows(discovery) {
   const rows = discovery?.responses?.trending?.value?.rows;
   return Array.isArray(rows) ? rows.filter(row => row && typeof row === 'object').slice(0, 100) : [];
+}
+
+// AVE market rows for promoted new pools, after the hot list's own rows.
+function promotedRows(discovery, trending) {
+  const listed = new Set(trending.map(row => addressKey(row.address)));
+  return Object.entries(discovery?.responses || {}).filter(([endpoint]) => endpoint.startsWith('market:'))
+    .map(([, record]) => record.value?.row).filter(row => row && typeof row === 'object' && !listed.has(addressKey(row.address)))
+    .map(row => ({ ...row, discoverySource: 'newPool' }));
 }
 
 function feedRow(row, screen) {
@@ -212,10 +230,10 @@ export class RecoverableScanner {
     this.now = now;
   }
 
-  begin({ cycleId, chain, keyEpoch, controlEpoch, deadlineAt, partial = {}, afterBegin }) {
+  begin({ cycleId, chain, keyEpoch, controlEpoch, deadlineAt, partial = {}, onchainDiscovery = false, afterBegin }) {
     const startedAt = this.now();
     return this.store.begin({ cycleId, chain, keyEpoch, controlEpoch, deadlineAt, phase: 'DISCOVER', tokenIndex: 0, endpointIndex: 0,
-      partial: { ...clone(partial), rootCycleId: partial.rootCycleId || cycleId, startedAt, settings: clone(this.settings) }, updatedAt: startedAt, afterBegin });
+      partial: { ...clone(partial), rootCycleId: partial.rootCycleId || cycleId, startedAt, settings: clone(this.settings), onchainDiscovery }, updatedAt: startedAt, afterBegin });
   }
 
   checkpoint(cycleId) {
@@ -243,8 +261,13 @@ export class RecoverableScanner {
       return Object.freeze({ kind: 'DEADLINE_EXPIRED', checkpoint });
     }
     if (checkpoint.phase === 'DISCOVER') {
-      const endpoint = DISCOVERY_ENDPOINTS[checkpoint.endpointIndex];
-      return endpoint ? Object.freeze({ kind: 'DISCOVER', endpoint, checkpoint }) : null;
+      const endpoint = discoveryEndpoints(checkpoint.chain, checkpoint.partial)[checkpoint.endpointIndex];
+      if (!endpoint) return null;
+      const responses = checkpoint.partial.discovery?.responses || {}, state = () => this.store.readWatchState(checkpoint.chain);
+      const params = endpoint === 'newPools' ? { cursor: state().cursor }
+        : endpoint === 'watch' ? { addresses: watchTargets(state(), responses.newPools?.value?.pools || [], checkpoint.updatedAt) }
+          : endpoint.startsWith('market:') ? { address: checkpoint.partial.discovery.promoted[Number(endpoint.slice(7))] } : {};
+      return Object.freeze({ kind: 'DISCOVER', endpoint, chain: checkpoint.chain, ...params, checkpoint });
     }
     if (checkpoint.phase === 'SECONDARY') {
       const item = checkpoint.partial.queue?.selected?.[checkpoint.tokenIndex];
@@ -273,13 +296,18 @@ export class RecoverableScanner {
     let endpointIndex = current.endpointIndex;
 
     if (current.phase === 'DISCOVER') {
-      const endpoint = DISCOVERY_ENDPOINTS[endpointIndex];
+      const endpoint = discoveryEndpoints(current.chain, current.partial)[endpointIndex];
       if (!endpoint) throw phaseError('discovery endpoint cursor is exhausted');
       partial.discovery ||= { responses: {} };
       partial.discovery.responses[endpoint] = record;
       partial.discovery.lastCollectedAt = collectedAt;
+      if (endpoint === 'watch') {
+        const hotList = new Set(discoveryRows(partial.discovery).map(row => addressKey(row.address)));
+        partial.discovery.promoted = promotions(this.store.readWatchState(current.chain), record.value?.markets || [],
+          { now: collectedAt, settings: partial.settings || this.settings, hotList });
+      }
       endpointIndex += 1;
-      if (endpointIndex === DISCOVERY_ENDPOINTS.length) {
+      if (endpointIndex === discoveryEndpoints(current.chain, partial).length) {
         nextPhase = 'SCREEN';
         endpointIndex = 0;
       }
@@ -382,14 +410,16 @@ export class RecoverableScanner {
   #screen(current, partial, settings, now, expected) {
     const chain = current.chain;
     const record = partial.discovery?.responses?.trending;
-    const rows = discoveryRows(partial.discovery);
+    const trending = discoveryRows(partial.discovery), rows = [...trending, ...promotedRows(partial.discovery, trending)];
     const observedAt = num(record?.value?.capturedAt, num(record?.collectedAt, now));
+    // A promoted row's clock is its own AVE read, not the hot list's.
+    const observedFor = row => row.discoverySource === 'newPool' ? num(row.capturedAt, observedAt) : observedAt;
     const screened = rows.map(row => ({ row, screen: discoveryScreen(row, { ...settings, chain }, now / 1000) }));
     const leads = [], eliminated = [], events = [];
     for (const { row, screen } of screened) {
       const previous = this.store.readCandidate(chain, row.address);
       if (screen.pass && previous?.status !== 'HARD_REJECT') {
-        const lead = leadCandidate(row, screen, chain, previous, observedAt, settings);
+        const lead = leadCandidate(row, screen, chain, previous, observedFor(row), settings);
         leads.push({ row, screen, candidate: lead });
         if (previous?.status !== 'LIVE_READY') {
           events.push({ address: lead.address, effectType: 'CANDIDATE_NEW', type: 'CANDIDATE_NEW',
@@ -425,7 +455,17 @@ export class RecoverableScanner {
         .sort((left, right) => Number(right.pass) - Number(left.pass) || num(right.volume5m) - num(left.volume5m)).slice(0, FEED_ROWS)
     };
     const sourceHealth = { discovery: { provider: 'AVE', complete: !discoveryError, checkedAt: now,
-      trending: discoveryError ? { ok: false, code: discoveryError.code } : { ok: true, count: rows.length } } };
+      trending: discoveryError ? { ok: false, code: discoveryError.code } : { ok: true, count: trending.length } } };
+    let watchState = null;
+    if (POOL_SOURCES[chain] && partial.onchainDiscovery !== true) sourceHealth.discovery.newPools = { ok: false, code: 'ONCHAIN_NOT_CONFIGURED' };
+    else if (POOL_SOURCES[chain]) {
+      const { newPools, watch } = partial.discovery?.responses || {};
+      watchState = nextWatchState(this.store.readWatchState(chain), { newPools: newPools?.value ?? null, checked: watch?.value?.addresses || [],
+        markets: watch?.value?.markets || [], promoted: partial.discovery?.promoted || [], now });
+      const endpoint = (response, count) => response?.error ? { ok: false, code: response.error.code } : { ok: true, count };
+      Object.assign(sourceHealth.discovery, { newPools: endpoint(newPools, newPools?.value?.pools?.length ?? 0),
+        watch: endpoint(watch, watchState.pools.length), promoted: { ok: true, count: (partial.discovery?.promoted || []).length } });
+    }
     partial.leads = leads.map(({ row, screen }) => ({ row, screen }));
     partial.prequalifiedCount = leads.length;
     partial.discoveredCount = rows.length;
@@ -438,6 +478,7 @@ export class RecoverableScanner {
       outcomes,
       feed,
       sourceHealth,
+      watchState,
       next: { ...current, phase: 'BUILD_QUEUE', tokenIndex: 0, endpointIndex: 0, partial, updatedAt: now }
     });
   }
@@ -545,11 +586,4 @@ export class RecoverableScanner {
     });
   }
 }
-
-export const recoverableScannerProtocol = Object.freeze({
-  phases: SCAN_PHASES,
-  discoveryEndpoints: DISCOVERY_ENDPOINTS,
-  secondarySources: SECONDARY_SOURCES,
-  outcomeHorizons: horizons
-});
 

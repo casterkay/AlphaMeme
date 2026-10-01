@@ -5,7 +5,8 @@ const DEX_CHAIN_IDS = Object.freeze({ bsc: 'bsc', base: 'base', eth: 'ethereum',
 // Fast overlays must use the same verified chain map as deep validation.
 // Robinhood Chain currently has no verified DexScreener chain id here; a
 // speculative request only wastes time and makes the UI overstate coverage.
-const DEX_BATCH_CHAIN_IDS = DEX_CHAIN_IDS;
+// The new-pool watch also reads DexScreener on Robinhood, where the secondary check stays unsupported.
+const DEX_BATCH_CHAIN_IDS = Object.freeze({ ...DEX_CHAIN_IDS, robinhood: 'robinhood' });
 // Arc ids as DexScreener (dexscreener.com/arc) and GoPlus (chain 5042) publish them.
 const GOPLUS_EVM_CHAIN_IDS = Object.freeze({ eth: '1', bsc: '56', base: '8453', arc: '5042' });
 
@@ -314,6 +315,17 @@ function overlayDexMarket(rows, chain, marketByToken, capturedAt, ttlMs) {
 // AVE remains the discovery source. This one bounded batch request only fills
 // the live card's main-pool market fields while AVE's slower per-pool checks
 // continue independently. Missing or malformed rows are never guessed.
+/** DexScreener's best-liquidity pool facts for up to 30 tokens on one chain, as plain rows. */
+export async function fetchDexMarkets(chain, tokenAddresses, { fetchImpl = globalThis.fetch, timeoutMs = 8_000, maxResponseBytes = DEFAULT_MAX_BYTES, signal, now = Date.now } = {}) {
+  const dexChainId = DEX_BATCH_CHAIN_IDS[chain];
+  const addresses = [...new Set(tokenAddresses.filter(validAddress).map(normalizedAddress))];
+  if (!dexChainId || !addresses.length || addresses.length > 30) throw Object.assign(new Error('DexScreener batch input is invalid'), { code: 'INVALID_INPUT' });
+  const url = `https://api.dexscreener.com/tokens/v1/${dexChainId}/${addresses.join(',')}`;
+  const capturedAt = now();
+  const payload = await requestJson(fetchImpl, url, { timeoutMs, maxResponseBytes, signal });
+  return { capturedAt, markets: [...parseDexBatch(payload, { dexChainId, tokenAddresses: addresses, capturedAt })].map(([address, market]) => ({ address, ...market })) };
+}
+
 export class DexBatchMarketOverlay {
   constructor({ fetchImpl = globalThis.fetch, timeoutMs = 8_000, maxResponseBytes = DEFAULT_MAX_BYTES,
     now = () => Date.now(), ttlMs = 20_000, staleTtlMs = 60_000 } = {}) {
