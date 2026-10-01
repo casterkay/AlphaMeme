@@ -1,11 +1,18 @@
+import { base58ByteLength, normalizeTokenAddress } from './address.mjs';
+
 const MAX_CALLBACK_DATA_BYTES = 64;
 const MAX_MESSAGE_LENGTH = 4096;
+const PEM_PRIVATE_KEY = /-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----/i;
+const HEX_PRIVATE_KEY = /^(?:0x)?[0-9a-f]{64}$/i;
 
-// Divert credentials before interpreting commands or prompt replies. AVE keys
-// have no recognizable prefix, so only /setkey carries one; a pasted private
-// key is diverted too, so it is deleted rather than stored.
-export function containsTelegramCredential(text) {
-  return typeof text === 'string' && /-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----/i.test(text);
+// A wallet private key: 32 bytes of hex (EVM) or base58 of 64 bytes (a Solana
+// secret key). A transaction hash has the hex shape too; refusing one is the
+// accepted cost of never storing a key.
+const privateKeyWord = word => HEX_PRIVATE_KEY.test(word) || (word.length >= 64 && word.length <= 100 && base58ByteLength(word) === 64);
+
+/** Whether text holds a private key anywhere: a PEM block or a key-shaped word. */
+export function containsPrivateKey(text) {
+  return typeof text === 'string' && (PEM_PRIVATE_KEY.test(text) || text.split(/[^0-9A-Za-z]+/).some(privateKeyWord));
 }
 
 function plainObject(value) {
@@ -56,27 +63,42 @@ function messageReceipt(updateId, message, dueAt, botUsername) {
     locale: senderLocale(message.from)
   };
   if (match?.[2] && (!botUsername || match[2].toLowerCase() !== botUsername.toLowerCase())) return null;
+  const command = match?.[1].toLowerCase();
   const argumentsText = match?.[3] || '';
-  if (containsTelegramCredential(text) || (match?.[1].toLowerCase() === 'setkey' && argumentsText)) {
+  // Divert secrets before interpreting commands or prompt replies. AVE keys have
+  // no recognizable shape, so only /setkey carries one, and only a PEM block
+  // there is unmistakably something else. Any other message holding a private
+  // key is deleted unread: it never reaches storage, logs or a provider.
+  if (command === 'setkey' && argumentsText && !PEM_PRIVATE_KEY.test(text)) {
     return {
       kind: 'credential',
       receipt: { ...base, commandType: 'credential', payload: { source: 'message' } },
       credentialText: text
     };
   }
+  if (containsPrivateKey(text)) return { kind: 'accepted', receipt: { ...base, commandType: 'secret_warning', payload: {} } };
   if (match) return {
     kind: 'accepted',
     receipt: {
       ...base,
-      commandType: `command:${match[1].toLowerCase()}`,
+      commandType: `command:${command}`,
       payload: { source: 'message', arguments: argumentsText, ...(replyToMessageId ? { replyToMessageId: String(replyToMessageId) } : {}) }
     }
   };
-  if (!text || !replyToMessageId) return null;
-  return {
+  if (!text) return null;
+  if (replyToMessageId) return {
     kind: 'accepted',
     receipt: { ...base, commandType: 'reply', payload: { source: 'reply', text, replyToMessageId: String(replyToMessageId) } }
   };
+  return { kind: 'accepted', receipt: { ...base, ...plainText(text) } };
+}
+
+// Plain text is a pasted contract address or something the bot does not act on;
+// the latter's text is dropped here, so it is never stored.
+function plainText(text) {
+  const evm = normalizeTokenAddress('eth', text), sol = evm ? null : normalizeTokenAddress('sol', text);
+  if (evm || sol) return { commandType: 'lookup', payload: { family: evm ? 'evm' : 'sol', address: evm ?? sol } };
+  return { commandType: 'text', payload: {} };
 }
 
 function callbackReceipt(updateId, callback, dueAt) {
@@ -117,7 +139,7 @@ export function parseTelegramUpdate(value, { now = Date.now, botUsername } = {})
 export function validateTelegramReceipt(value) {
   if (!plainObject(value) || !positiveTelegramIdentifier(value.tenantId) || value.tenantId !== value.actorUserId
     || typeof value.updateId !== 'string' || !/^(0|[1-9]\d*)$/.test(value.updateId) || BigInt(value.updateId).toString() !== value.updateId || typeof value.commandType !== 'string'
-    || !/^(command:[a-z][a-z0-9_]{0,31}|callback|reply|credential)$/.test(value.commandType)
+    || !/^(command:[a-z][a-z0-9_]{0,31}|callback|reply|credential|secret_warning|text|lookup)$/.test(value.commandType)
     || !plainObject(value.payload) || !Number.isSafeInteger(value.dueAt) || value.dueAt < 0
     || (value.messageDate !== null && !positiveInteger(value.messageDate))
     || !positiveTelegramIdentifier(value.sourceMessageId) || !['zh', 'en'].includes(value.locale)) {
@@ -133,15 +155,22 @@ export function validateTelegramReceipt(value) {
   } else if (value.commandType === 'credential') {
     if (Object.keys(input).length !== 1 || input.source !== 'message') throw new TypeError('Telegram credential receipt has an unsupported shape');
     payload = { source: 'message' };
+  } else if (value.commandType === 'secret_warning' || value.commandType === 'text') {
+    if (Object.keys(input).length !== 0) throw new TypeError('Telegram text receipt has an unsupported shape');
+    payload = {};
+  } else if (value.commandType === 'lookup') {
+    if (Object.keys(input).length !== 2 || !['evm', 'sol'].includes(input.family)
+      || normalizeTokenAddress(input.family === 'evm' ? 'eth' : 'sol', input.address) !== input.address) throw new TypeError('Telegram lookup receipt has an unsupported shape');
+    payload = { family: input.family, address: input.address };
   } else if (value.commandType === 'reply') {
     if (Object.keys(input).length !== 3 || input.source !== 'reply' || typeof input.text !== 'string'
-      || !input.text.trim() || input.text.length > MAX_MESSAGE_LENGTH || containsTelegramCredential(input.text)
+      || !input.text.trim() || input.text.length > MAX_MESSAGE_LENGTH || containsPrivateKey(input.text)
       || !positiveTelegramIdentifier(input.replyToMessageId)) throw new TypeError('Telegram reply receipt has an unsupported shape');
     payload = { source: 'reply', text: input.text, replyToMessageId: input.replyToMessageId };
   } else {
     if (Object.keys(input).some(key => !['source', 'arguments', 'replyToMessageId'].includes(key))
       || input.source !== 'message' || typeof input.arguments !== 'string' || input.arguments.length > MAX_MESSAGE_LENGTH
-      || containsTelegramCredential(input.arguments) || (value.commandType === 'command:setkey' && input.arguments)
+      || containsPrivateKey(input.arguments) || (value.commandType === 'command:setkey' && input.arguments)
       || (input.replyToMessageId !== undefined && !positiveTelegramIdentifier(input.replyToMessageId))) throw new TypeError('Telegram command receipt has an unsupported shape');
     payload = { source: 'message', arguments: input.arguments, ...(input.replyToMessageId ? { replyToMessageId: input.replyToMessageId } : {}) };
   }

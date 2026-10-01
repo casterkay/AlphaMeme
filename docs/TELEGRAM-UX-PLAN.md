@@ -379,6 +379,18 @@ A random AVE API key cannot pass as a Solana address unless it is valid base58
 of exactly 32 bytes; step 1 and the strict decode keep keys out of third-party
 requests. Fuzz tests cover the classifier (§6).
 
+Amended in slice 6 (#67): the secret check covers **every** inbound message, not
+only plain text. A private key sent as a prompt reply or a command argument would
+otherwise be stored as a note, a search or an argument. A key-shaped word anywhere
+in the message counts. `/setkey` is the one exemption: an AVE key has no fixed
+shape and might be 64 hex characters, so there only a PEM block is flagged. A
+transaction hash has the same shape as an EVM key and is deleted too; the warning
+says why, so the owner can tell. The receipt type is `secret_warning`, not
+`command:secret_warning`, so a typed `/secret_warning` cannot pose as one. Until
+slice 7, a `lookup` receipt gets the step 3 hint, and that hint reads "I only act on
+commands and replies to my prompts. Open 📡 Radar or ❓ Help." rather than the
+§3.10 copy, which promises the lookup.
+
 ### 4.2 Command handling (`src/bot/commands.mjs`)
 
 1. **Chain.** Solana → `sol`. EVM → the scan chain when it is EVM; otherwise a
