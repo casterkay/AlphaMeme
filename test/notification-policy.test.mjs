@@ -75,6 +75,19 @@ test('every new lead is alerted at once, and a lead that is not alert-eligible s
   assert.deepEqual(holds(log), ['late:audit_too_old']);
 });
 
+test('a burst of new leads alerts ten at a time and the rest follow as earlier alerts are delivered', t => {
+  const log = t.mock.method(console, 'log', () => {});
+  const f = fixture(); f.policy.baselineInTransaction(); f.advance(1);
+  for (let index = 0; index < 12; index++) f.candidate(`lead${index}`);
+  const first = f.policy.reconcileInTransaction().notifications;
+  assert.equal(first.length, 10);
+  assert.deepEqual(holds(log).filter(line => line.endsWith(':alert_burst')).length, 2);
+  for (const notice of first.slice(0, 2)) f.policy.acknowledgeInTransaction(notice);
+  const next = f.policy.reconcileInTransaction().notifications;
+  assert.equal(next.length, 10);
+  assert.equal(new Set([...first, ...next].map(item => item.members[0].address)).size, 12, 'every lead is alerted exactly once');
+});
+
 test('an alert dropped before delivery is logged with the reason it no longer qualifies', t => {
   const log = t.mock.method(console, 'log', () => {});
   const f = fixture(); f.candidate('old');

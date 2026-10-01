@@ -3,6 +3,8 @@ import { readReview, annotationVersion, ReviewConflict } from './review.mjs';
 const SESSION_TTL = 15 * 60_000;
 // An alert keeps its buttons as long as its token is kept after alerting.
 export const ALERT_SESSION_TTL = 7 * 24 * 60 * 60_000;
+// Sessions of sent notifications: a new-lead alert (edited in place) and a one-off notice.
+export const NOTIFICATION_PANELS = new Set(['alert', 'notice']);
 const id = () => crypto.randomUUID().replaceAll('-', '');
 
 /** Sessions contain navigation intent only; every render rereads domain facts. */
@@ -57,7 +59,8 @@ export class TelegramSessions {
     if (!session || session.ownerUserId !== receipt.actorUserId || session.chatId !== receipt.tenantId
       || !session.messageId || session.messageId !== receipt.sourceMessageId || link.origin_message_id !== receipt.sourceMessageId) throw new ReviewConflict('callback_owner_mismatch');
     if (session.expiresAt <= this.now() || link.expires_at <= this.now()) throw new ReviewConflict('callback_expired');
-    if (session.version !== link.expected_ui_version) throw new ReviewConflict('session_changed');
+    // A notification's buttons never depend on its rendered state (they open new messages), so an in-place edit must not void the ones on screen.
+    if (session.version !== link.expected_ui_version && !NOTIFICATION_PANELS.has(session.panel)) throw new ReviewConflict('session_changed');
     return { session, action: link.action, params: JSON.parse(link.params_json), token: link.chain && link.address ? { chain: link.chain, address: link.address } : null, reviewRevision: link.review_revision, expectedMarkVersion: link.expected_mark_version, expectedControlEpoch: link.expected_control_epoch, expectedConnectionGeneration: link.expected_connection_generation };
   }
 

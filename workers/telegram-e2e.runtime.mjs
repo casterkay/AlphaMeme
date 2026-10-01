@@ -28,17 +28,19 @@ async function withRuntime(tenantId,operation) {
   const radar=env.RADAR.get(env.RADAR.idFromName(`telegram-e2e:${tenantId}`));
   return runInDurableObject(radar,async(_instance,{storage})=>{
     let update=0,message=100;
-    const runtime=new TelegramRuntime({storage,tenantId,env:{MASTER_ENC_KEY:masterKey,AVE_MONTHLY_CU:env.AVE_MONTHLY_CU,AVE_CU_RESET_DAY:env.AVE_CU_RESET_DAY},now:()=>at});
+    // Tests that need time to pass move clock.now; everything else runs at `at`.
+    const clock={now:at};
+    const runtime=new TelegramRuntime({storage,tenantId,env:{MASTER_ENC_KEY:masterKey,AVE_MONTHLY_CU:env.AVE_MONTHLY_CU,AVE_CU_RESET_DAY:env.AVE_CU_RESET_DAY},now:()=>clock.now});
     const sent=[];
     runtime.outbox.transport=async input=>{
       sent.push(structuredClone({method:input.method,params:input.params}));
       return {ok:true,result:input.method==='sendMessage'?{message_id:++message}:input.method==='editMessageText'?{message_id:Number(input.params.message_id)}:true};
     };
-    const receipt=(commandType,payload,overrides={})=>({tenantId,actorUserId:tenantId,updateId:String(++update),commandType,payload,dueAt:at+60_000,messageDate:at/1000,sourceMessageId:String(1000+update),locale:'zh',...overrides});
+    const receipt=(commandType,payload,overrides={})=>({tenantId,actorUserId:tenantId,updateId:String(++update),commandType,payload,dueAt:clock.now+60_000,messageDate:clock.now/1000,sourceMessageId:String(1000+update),locale:'zh',...overrides});
     const drain=async()=>{
       for(let count=0;count<100;count++) {
         const tasks=storage.transactionSync(()=>runtime.outbox.reconcileInTransaction());
-        const task=tasks.find(task=>task.dueAt<=at);
+        const task=tasks.find(task=>task.dueAt<=clock.now);
         if(!task) return;
         await runtime.outbox.deliverOne(task.id.slice('outbox:'.length),{request});
       }
@@ -62,7 +64,7 @@ async function withRuntime(tenantId,operation) {
     const seed=(count=1)=>{
       for(let index=0;index<count;index++) storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?)',tenantId,'arc',`0x${index.toString(16).padStart(40,'a')}`,`TOKEN${index}`,'X_REVIEW',at-1000,`revision-${index}`,JSON.stringify({chainPass:true,chartRisk:{version:CHART_RISK_VERSION},checks:{openSource:true},failed:[],unknownFields:[]}));
     };
-    await operation({runtime,storage,tenantId,sent,receipt,drain,command,sessions,link,click,seed});
+    await operation({runtime,storage,tenantId,sent,receipt,drain,command,sessions,link,click,seed,clock});
   });
 }
 
@@ -293,20 +295,43 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it('keeps an alert\'s buttons working after ordinary panels would have expired',async()=>{
-    await withRuntime('22946',async({runtime,storage,tenantId,sent,sessions,link,click,drain})=>{
+  it('keeps an alert\'s buttons working through its edits and past the ordinary panel lifetime, until the alert expires',async()=>{
+    await withRuntime('22946',async({runtime,storage,tenantId,sent,sessions,link,click,drain,clock})=>{
       runtime.commands.setPreference('language','en');
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
       const address='0x'+'8'.repeat(40);
       storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,'LATER','LIVE_READY',50_000,at,at+600_000,'lead-1','null');
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
-      const alert=sessions().find(session=>session.panel==='alert'),binding=link(alert,'panel.open',params=>params.panel==='detail');
-      expect(alert.expiresAt-at).toBe(7*24*60*60_000);
-      expect(binding.expires_at).toBe(alert.expiresAt);
+      const alert=sessions().find(session=>session.panel==='alert'),open=link(alert,'panel.open',params=>params.panel==='detail');
+      // A finished check edits the alert; the buttons already on screen keep working.
+      storage.sql.exec("UPDATE candidates SET review_revision='lead-2',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify({status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]},conflicts:[]}),tenantId,address);
+      storage.transactionSync(()=>runtime.reconcileCardsInTransaction());
+      expect(runtime.commands.sessions.get(alert.id).version).toBe(alert.version+1);
+      clock.now=at+16*60_000;
       storage.transactionSync(()=>runtime.commands.sessions.pruneInTransaction());
-      const input=await click(binding);
-      expect(runtime.inbox.get(input.updateId).status).toBe('DONE');
-      expect(sent.at(-1).params.text).toMatch(/LATER/);
+      const opened=await click(open);
+      expect(runtime.inbox.get(opened.updateId).status).toBe('DONE');
+      expect(sessions().at(-1)).toMatchObject({panel:'detail',query:{selectedToken:{chain:'arc',address}}});
+      clock.now=at+7*24*60*60_000+1;
+      storage.transactionSync(()=>runtime.commands.sessions.pruneInTransaction());
+      expect(storage.sql.exec('SELECT COUNT(*) AS n FROM message_map WHERE tenant_id=? AND ui_session_id=?',tenantId,alert.id).one().n).toBe(0);
+      const expired=await click(open);
+      expect(runtime.inbox.get(expired.updateId)).toMatchObject({status:'FAILED'});
+    });
+  });
+
+  it('mutes from an alert even after the controls changed since it was sent',async()=>{
+    await withRuntime('22947',async({runtime,storage,tenantId,sessions,link,click,drain,command})=>{
+      runtime.commands.setPreference('language','en');
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
+      storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?)',tenantId,'arc','0x'+'9'.repeat(40),'MUTE','LIVE_READY',50_000,at,at+600_000,'lead-1','null');
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
+      const alert=sessions().find(session=>session.panel==='alert');
+      await command('mute');await command('mute');
+      expect(runtime.notifications.controls().enabled).toBe(true);
+      await click(link(alert,'notifications.set',params=>params.value===false));
+      expect(runtime.notifications.controls().enabled).toBe(false);
+      expect(sessions().at(-1).panel).toBe('settings');
     });
   });
 
@@ -320,7 +345,7 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(alert.params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['🔑 Reconnect AVE']]);
       const session=sessions().at(-1);
       await click(link(session,'panel.open',params=>params.panel==='onboard'));
-      expect(runtime.commands.sessions.get(session.id).panel).toBe('alert');
+      expect(runtime.commands.sessions.get(session.id).panel).toBe('notice');
       expect(sessions().at(-1).panel).toBe('onboard');
     });
   });
