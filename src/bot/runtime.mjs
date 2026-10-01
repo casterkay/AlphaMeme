@@ -1,11 +1,11 @@
 import { NotificationPolicy } from './notification-policy.mjs';
-import { userText, chainLabel } from '../render/telegram.mjs';
+import { alertCard, checkState } from './alerts.mjs';
 import { TelegramInbox } from './inbox.mjs';
 import { TelegramOutbox } from './outbox.mjs';
 import { createTelegramTransport } from './telegram-transport.mjs';
 import { TelegramCommands } from './commands.mjs';
 import { annotationVersion, nextReviewExpiry, reviewProjectionRevision } from './review.mjs';
-import { createTelegramExport, readTelegramSnapshot } from './snapshot.mjs';
+import { createTelegramExport, readTelegramSnapshot, tokenIdentity } from './snapshot.mjs';
 import { readTelegramStatistics } from './statistics.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
 import { aveCreditsUsed, parseAveBudget } from '../ave-admission.mjs';
@@ -287,28 +287,36 @@ export class TelegramRuntime {
     return this.notifications.ineligibleReason(row, payload, { issues: this.actionableIssues() });
   }
 
+  // Recorded facts for an alert row. They are optional: an unreadable one is left out, never allowed to drop the alert.
+  alertTokenInTransaction(member, feeds) {
+    const recorded = (value, what) => {
+      try { return value == null ? null : JSON.parse(value); } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        console.log(JSON.stringify({ event: 'alert_fact_unreadable', chain: member.chain, address: member.address, fact: what }));
+        return null;
+      }
+    };
+    const candidate = this.storage.sql.exec('SELECT symbol,market_cap,liquidity,created_at,secondary_json FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, member.chain, member.address).toArray()[0];
+    if (!feeds.has(member.chain)) feeds.set(member.chain, recorded(this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, `feed.snapshot:${member.chain}`).toArray()[0]?.value_json, 'feed'));
+    const key = tokenIdentity(member.chain, member.address), rows = feeds.get(member.chain)?.rows;
+    const feedRow = Array.isArray(rows) ? rows.find(row => typeof row?.address === 'string' && tokenIdentity(member.chain, row.address) === key) : undefined;
+    const secondary = recorded(candidate?.secondary_json, 'secondary');
+    const security = secondary?.security;
+    return { chain: member.chain, address: member.address, symbol: candidate?.symbol ?? '',
+      marketCap: candidate?.market_cap ?? null, liquidity: candidate?.liquidity ?? null, createdAt: candidate?.created_at ?? null, priceChange5m: feedRow?.priceChange5m ?? null,
+      check: checkState(secondary),
+      fatal: Array.isArray(security?.fatal) ? security.fatal.filter(item => typeof item?.field === 'string').map(item => ({ field: item.field, value: security.fields?.[item.field] ?? null })) : [] };
+  }
+
   reconcileNotificationsInTransaction() {
     const { notifications } = this.notifications.reconcileInTransaction({ issues: this.actionableIssues() });
     for (const notification of notifications) {
       if (this.outbox.has(notification.id)) continue;
       const session = this.commands.sessions.createInTransaction('audits', this.control.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN);
-      const en = this.commands.language === 'en';
-      const title = en ? 'Action required' : '需要人工查看';
-      const reason = notification.actionReason === 'CANDIDATE_NEW'
-        ? (en ? 'New market lead on AVE; security is not yet verified. Check it before any trade.' : 'AVE新市场线索，安全性尚未核验。交易前请自行核查。')
-        : notification.actionReason === 'RISK_WORSENED'
-          ? (en ? 'Risk or evidence worsened; review the updated evidence.' : '风险或证据恶化，请查看更新后的证据。')
-          : notification.issue.reason === 'KEY_UNUSABLE' ? (en ? 'AVE key is unusable; reconnect with /onboard.' : 'AVE密钥不可用，请使用 /onboard 重新连接。')
-            : (en ? 'Message delivery is unconfirmed; check /status.' : '消息投递结果不确定，请通过 /status 核对。');
-      const lines = [`<b>${title}</b>`, reason];
-      const keyboard = notification.members.map((token, index) => {
-        const candidate = this.storage.sql.exec('SELECT symbol FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, token.chain, token.address).toArray()[0];
-        const label = `${index + 1}. ${candidate?.symbol || token.address.slice(-8)} · ${chainLabel(token.chain)}`;
-        lines.push(userText(label));
-        return [{ text: `${index + 1}. ${(candidate?.symbol || token.address.slice(-8)).slice(0,30)}`, action: 'panel.open', params: { panel: 'detail' }, token: { chain: token.chain, address: token.address } }];
-      });
-      keyboard.push([{ text: en ? 'Status' : '运行状态', action: 'panel.open', params: { panel: 'status' } }, { text: en ? 'Mute alerts' : '关闭提醒', action: 'notifications.set', params: { value: false } }]);
-      this.outbox.enqueueInTransaction({ id: notification.id, chatId: this.tenantId, method: 'sendMessage', params: { text: lines.join('\n'), parse_mode: 'HTML', reply_markup: { inline_keyboard: this.commands.sessions.bindKeyboardInTransaction(session, keyboard, this.control.snapshot()) }, link_preview_options: { is_disabled: true } }, sessionId: session.id, sessionVersion: session.version, deliveryClass: notification.deliveryClass, actionReason: notification.actionReason, notification, expiresAt: notification.expiresAt });
+      const feeds = new Map();
+      const tokens = notification.members.map(member => this.alertTokenInTransaction(member, feeds));
+      const { text, keyboard } = alertCard(notification, tokens, { locale: this.commands.language, now: this.now() });
+      this.outbox.enqueueInTransaction({ id: notification.id, chatId: this.tenantId, method: 'sendMessage', params: { text, parse_mode: 'HTML', reply_markup: { inline_keyboard: this.commands.sessions.bindKeyboardInTransaction(session, keyboard, this.control.snapshot()) }, link_preview_options: { is_disabled: true } }, sessionId: session.id, sessionVersion: session.version, deliveryClass: notification.deliveryClass, actionReason: notification.actionReason, notification, expiresAt: notification.expiresAt });
     }
   }
 

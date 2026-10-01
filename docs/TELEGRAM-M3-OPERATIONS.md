@@ -75,11 +75,14 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   `/setkey`, `/disconnect`) work but stay out of the menu; `/help` lists them.
   The retired slugs `/audits`, `/candidates`, `/feed`, `/saved`, `/stats` and
   `/events` have no aliases: like any unknown command they open Help.
-- Every passing hot-list token becomes a lead and alerts at once. GoPlus and
-  DexScreener then check it; a fatal finding vetoes the lead, blocks buying it and
-  sends a "risk worsened" notice to anyone it alerted. Until the check completes
-  without fatal flags, a buy first asks Yes/No; the trading engine refuses an
-  unverified buy that lacks this acknowledgement.
+- Every passing hot-list token becomes a lead and alerts at once, up to ten per
+  message, each with its market cap, liquidity, age and 5-minute change. GoPlus
+  and DexScreener then check it; a fatal finding vetoes the lead, blocks buying it
+  (selling still works) and sends a risk alert naming the recorded GoPlus findings
+  to anyone it alerted. Until the check completes without fatal flags, a buy
+  first asks Yes/No; the trading engine refuses an unverified buy that lacks this
+  acknowledgement. An unusable AVE key or uncertain delivery alerts with the
+  button that resolves it.
 - Search and notes use a five-minute ForceReply prompt. Credentials are routed
   before note/search input and are never persisted as either.
 - An uncertain Telegram send gets at most one automatic uncertain retry over its
