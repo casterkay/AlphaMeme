@@ -227,64 +227,86 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it('sends a new-lead alert with each lead\'s recorded market facts and opens a lead from it',async()=>{
+  it('sends each new lead its own alert at once, and its button opens the lead in a new message without touching the alert',async()=>{
     await withRuntime('22941',async({runtime,storage,tenantId,sent,sessions,link,click,drain})=>{
       runtime.commands.setPreference('language','en');
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
       const pepe='0x'+'e'.repeat(40),bare='0x'+'f'.repeat(40);
-      const lead=(address,symbol,marketCap,liquidity,createdAt,secondary)=>storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,liquidity,created_at,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,symbol,'LIVE_READY',marketCap,liquidity,createdAt,at,at+600_000,`lead-${symbol}`,secondary);
-      lead(pepe,'PEPE',120_400,30_100,(at-4*60_000)/1000,'null');
-      // An unreadable recorded fact is left out; it never holds back the alert.
-      lead(bare,'BARE',null,null,null,'{');
+      const lead=(address,symbol,marketCap,liquidity,createdAt)=>storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,liquidity,created_at,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,symbol,'LIVE_READY',marketCap,liquidity,createdAt,at,at+600_000,`lead-${symbol}`,'null');
+      lead(pepe,'PEPE',120_400,30_100,(at-4*60_000)/1000);
+      lead(bare,'BARE',null,null,null);
       storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)',tenantId,'feed.snapshot:arc',JSON.stringify({rows:[{address:pepe.toUpperCase().replace('0X','0x'),priceChange5m:0.35}]}));
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
-      const alert=sent.find(row=>row.params.text?.includes('new lead'));
-      expect(alert.params.text).toBe(['<b>🆕 2 new leads · Arc</b>','1. PEPE — $120K MC · $30.1K liq · 4m old · 5m +35%','2. BARE','Safety check still running; not verified.'].join('\n'));
-      expect(alert.params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['1 PEPE','2 BARE'],['🎯 All leads','🔕 Mute alerts']]);
-      // Panels read every candidate's evidence strictly, so repair the row before opening one.
-      storage.sql.exec("UPDATE candidates SET secondary_json='null' WHERE tenant_id=? AND address=?",tenantId,bare);
-      const session=sessions().at(-1);
-      await click(link(session,'panel.open',(params,row)=>params.panel==='detail'&&row.address===pepe));
-      expect(runtime.commands.sessions.get(session.id)).toMatchObject({panel:'detail',query:{selectedToken:{chain:'arc',address:pepe}}});
+      const alerts=sent.filter(row=>row.params.text?.includes('New lead'));
+      expect(alerts.map(row=>row.params.text.split('\n').slice(0,2))).toEqual([['<b>🆕 New lead · PEPE · Arc</b>','$120K MC · $30.1K liq · 4m old · 5m +35%'],['<b>🆕 New lead · BARE · Arc</b>','⏳ Checking']]);
+      expect(alerts[0].params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['Open PEPE'],['🎯 All leads','🔕 Mute alerts']]);
+      const alert=sessions().find(session=>session.panel==='alert'&&session.query.selectedToken.address===pepe),before=sent.length;
+      await click(link(alert,'panel.open',(params,row)=>params.panel==='detail'&&row.address===pepe));
+      expect(sent.slice(before).map(row=>row.method).filter(method=>method!=='answerCallbackQuery')).toEqual(['sendMessage']);
+      expect(runtime.commands.sessions.get(alert.id)).toMatchObject({panel:'alert',version:alert.version});
+      const detail=sessions().at(-1);
+      expect(detail).toMatchObject({panel:'detail',query:{selectedToken:{chain:'arc',address:pepe}}});
+      expect(detail.query.returnTo).toBeUndefined();
     });
   });
 
-  it('marks each alerted lead with its recorded check and still alerts when the hot-list snapshot is unreadable',async()=>{
+  it('still alerts when recorded facts are unreadable, showing only the plain columns',async()=>{
     await withRuntime('22944',async({runtime,storage,tenantId,sent,drain})=>{
       runtime.commands.setPreference('language','en');
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
-      const lead=(address,symbol,secondary)=>storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,symbol,'LIVE_READY',50_000,at,at+600_000,`lead-${symbol}`,JSON.stringify(secondary));
-      const clean={status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]},conflicts:[]};
-      lead('0x'+'1'.repeat(40),'CLEAN',clean);
-      lead('0x'+'2'.repeat(40),'PART',{status:'DEGRADED',security:{verdict:'UNSUPPORTED',fatal:[]}});
-      lead('0x'+'3'.repeat(40),'WAIT',null);
-      lead('0x'+'4'.repeat(40),'MARKET',{...clean,conflicts:[{type:'MARKET_MISMATCH',field:'marketCap'}]});
-      lead('0x'+'5'.repeat(40),'SECURITY',{...clean,conflicts:[{type:'SECURITY_MISMATCH',field:'honeypot'}]});
-      lead('0x'+'6'.repeat(40),'AUDIT',clean);
-      storage.sql.exec('UPDATE candidates SET deep_json=? WHERE tenant_id=? AND symbol=?',JSON.stringify({failed:[],blockingUnknownFields:['lpBurned']}),tenantId,'AUDIT');
+      storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?)',tenantId,'arc','0x'+'1'.repeat(40),'ODD','LIVE_READY',50_000,at,at+600_000,'lead-odd','{');
       storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)',tenantId,'feed.snapshot:arc','{');
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
-      const alert=sent.find(row=>row.params.text?.includes('new lead'));
-      expect(alert.params.text).toBe(['<b>🆕 6 new leads · Arc</b>','1. CLEAN · ✅ No failures found — $50K MC','2. PART · ⚠️ Needs review — $50K MC','3. WAIT · ⏳ Checking — $50K MC','4. MARKET · ⚠️ Needs review — $50K MC','5. SECURITY · ⚠️ Needs review — $50K MC','6. AUDIT · ⚠️ Needs review — $50K MC','Checks are not a safety guarantee.'].join('\n'));
+      expect(sent.find(row=>row.params.text?.includes('New lead')).params.text.split('\n').slice(0,3)).toEqual(['<b>🆕 New lead · ODD · Arc</b>','$50K MC','⏳ Checking']);
     });
   });
 
-  it('sends a risk alert naming the token and its recorded veto findings',async()=>{
-    await withRuntime('22942',async({runtime,storage,tenantId,sent,sessions,link,click,drain})=>{
+  it('edits the alert in place when its checks finish, and a veto adds a short notice replying to it',async()=>{
+    await withRuntime('22945',async({runtime,storage,tenantId,sent,drain})=>{
+      runtime.commands.setPreference('language','en');
+      // The runtime's reconcile order: correct shown cards, then send new notifications.
+      const reconcile=()=>storage.transactionSync(()=>{runtime.reconcileCardsInTransaction();runtime.reconcileNotificationsInTransaction();});
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
+      const address='0x'+'7'.repeat(40);
+      storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,'WAGMI','LIVE_READY',50_000,at,at+600_000,'lead-1','null');
+      reconcile();await drain();
+      const alert=sent.find(row=>row.params.text?.includes('New lead · WAGMI')),messageId=sent.indexOf(alert)+101;
+      const clean={status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]},conflicts:[]};
+      storage.sql.exec("UPDATE candidates SET review_revision='lead-2',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify(clean),tenantId,address);
+      reconcile();await drain();
+      const passed=sent.at(-1);
+      expect(passed).toMatchObject({method:'editMessageText',params:{message_id:String(messageId)}});
+      expect(passed.params.text.split('\n')[2]).toBe('✅ No failures found');
+      const fatal={status:'COMPLETE',security:{verdict:'FATAL',fatal:[{field:'isHoneypot'}],fields:{isHoneypot:true}},conflicts:[]};
+      storage.sql.exec("UPDATE candidates SET status='HARD_REJECT',review_revision='veto-1',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify(fatal),tenantId,address);
+      storage.sql.exec('INSERT INTO events (tenant_id,id,at,type,chain,address) VALUES (?,?,?,?,?,?)',tenantId,'risk-1',at+1,'RISK_WORSENED','arc',address);
+      const before=sent.length;
+      reconcile();await drain();
+      const after=sent.slice(before);
+      expect(after.find(row=>row.method==='editMessageText').params.text.split('\n')[0]).toBe('<b>⛔ WAGMI failed the safety check · Arc</b>');
+      const notice=after.find(row=>row.method==='sendMessage');
+      expect(notice.params.text).toBe(['<b>⛔ WAGMI failed the safety check · Arc</b>','GoPlus flagged: Honeypot: Yes','Buying is blocked; selling still works.'].join('\n'));
+      expect(notice.params.reply_parameters).toEqual({message_id:messageId,allow_sending_without_reply:true});
+      storage.sql.exec('DELETE FROM candidates WHERE tenant_id=? AND address=?',tenantId,address);
+      const settled=sent.length;reconcile();await drain();
+      expect(sent.length).toBe(settled);
+    });
+  });
+
+  it('keeps an alert\'s buttons working after ordinary panels would have expired',async()=>{
+    await withRuntime('22946',async({runtime,storage,tenantId,sent,sessions,link,click,drain})=>{
       runtime.commands.setPreference('language','en');
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
-      const address='0x'+'9'.repeat(40);
-      const secondary={status:'DEGRADED',security:{verdict:'FATAL',fatal:[{field:'isHoneypot',reason:'GoPlus标记为貔貅'}],fields:{isHoneypot:true}}};
-      storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,'RUGME','HARD_REJECT',at,at+600_000,'veto-arc-1',JSON.stringify(secondary));
-      storage.sql.exec('INSERT INTO annotations (tenant_id,chain,address,favorite,note,updated_at) VALUES (?,?,?,?,?,?)',tenantId,'arc',address,1,'',at);
-      storage.sql.exec('INSERT INTO events (tenant_id,id,at,type,chain,address) VALUES (?,?,?,?,?,?)',tenantId,'risk-1',at+1,'RISK_WORSENED','arc',address);
+      const address='0x'+'8'.repeat(40);
+      storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,'LATER','LIVE_READY',50_000,at,at+600_000,'lead-1','null');
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
-      const alert=sent.find(row=>row.params.text?.includes('RUGME'));
-      expect(alert.params.text).toBe(['<b>⛔ RUGME failed the safety check · Arc</b>','GoPlus flagged: Honeypot: Yes','Buying is blocked; selling still works.'].join('\n'));
-      expect(alert.params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['Open RUGME']]);
-      const session=sessions().at(-1);
-      await click(link(session,'panel.open',(params,row)=>params.panel==='detail'&&row.address===address));
-      expect(runtime.commands.sessions.get(session.id).panel).toBe('detail');
+      const alert=sessions().find(session=>session.panel==='alert'),binding=link(alert,'panel.open',params=>params.panel==='detail');
+      expect(alert.expiresAt-at).toBe(7*24*60*60_000);
+      expect(binding.expires_at).toBe(alert.expiresAt);
+      storage.transactionSync(()=>runtime.commands.sessions.pruneInTransaction());
+      const input=await click(binding);
+      expect(runtime.inbox.get(input.updateId).status).toBe('DONE');
+      expect(sent.at(-1).params.text).toMatch(/LATER/);
     });
   });
 
@@ -298,7 +320,8 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(alert.params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['🔑 Reconnect AVE']]);
       const session=sessions().at(-1);
       await click(link(session,'panel.open',params=>params.panel==='onboard'));
-      expect(runtime.commands.sessions.get(session.id).panel).toBe('onboard');
+      expect(runtime.commands.sessions.get(session.id).panel).toBe('alert');
+      expect(sessions().at(-1).panel).toBe('onboard');
     });
   });
 

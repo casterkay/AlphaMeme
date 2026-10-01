@@ -206,16 +206,18 @@ export class TelegramCommands {
     const scanChain = CHAINS.includes(control.activeChain) ? control.activeChain : DEFAULT_SCAN_CHAIN;
     // Radar is the root: Home starts navigation afresh, on the scan chain, instead of stacking a path back.
     const home = { panel: 'radar', viewChain: scanChain, query: { schemaVersion: 1, page: 0 } };
+    // An alert stays as sent, keeping its buttons; whatever they open arrives as a new message with no way back to the alert.
+    const fromAlert = session.panel === 'alert';
     if (action === 'panel.open') {
       const panel = params.panel;
-      if (typeof panel !== 'string') throw new ReviewConflict('invalid_panel');
+      if (typeof panel !== 'string' || panel === 'alert') throw new ReviewConflict('invalid_panel');
       const returnTo = structuredClone({ panel: session.panel, viewChain: session.viewChain, query: { ...session.query, pendingInput: undefined } });
       let ancestor = returnTo;
       for (let depth = 1; ancestor?.query?.returnTo; depth++) { if (depth >= 4) { delete ancestor.query.returnTo; break; } ancestor = ancestor.query.returnTo; }
       // A button opens the same scope as its command: the Watchlist and Activity span every chain.
       const viewChain = ALL_CHAIN_PANELS.has(panel) ? 'all' : CONCRETE_CHAIN_PANELS.has(panel) && !CHAINS.includes(session.viewChain) ? scanChain : session.viewChain;
       changes = panel === 'radar' ? home
-        : { panel, viewChain, query: { ...session.query, schemaVersion: 1, page: 0, pendingInput: undefined, ...(params.query ?? {}), returnTo, ...(token ? { selectedToken: token } : {}) } };
+        : { panel, viewChain, query: { ...(fromAlert ? {} : session.query), schemaVersion: 1, page: 0, pendingInput: undefined, ...(params.query ?? {}), ...(fromAlert ? {} : { returnTo }), ...(token ? { selectedToken: token } : {}) } };
     } else if (action === 'panel.back') {
       const origin = session.query.returnTo;
       changes = origin ? { panel: origin.panel, viewChain: origin.viewChain, query: origin.query } : home;
@@ -252,6 +254,10 @@ export class TelegramCommands {
       if (changes === null) return;
     }
     else throw new ReviewConflict('unsupported_action');
+    if (fromAlert) {
+      const target = changes.panel ? changes : { panel: 'settings', viewChain: scanChain, query: {} };
+      return this.renderInTransaction(this.sessions.createInTransaction(target.panel, target.viewChain ?? session.viewChain, target.query));
+    }
     session = this.sessions.advanceInTransaction(session, changes);
     this.renderInTransaction(session);
   }

@@ -1,6 +1,8 @@
 import { readReview, annotationVersion, ReviewConflict } from './review.mjs';
 
 const SESSION_TTL = 15 * 60_000;
+// An alert keeps its buttons as long as its token is kept after alerting.
+export const ALERT_SESSION_TTL = 7 * 24 * 60 * 60_000;
 const id = () => crypto.randomUUID().replaceAll('-', '');
 
 /** Sessions contain navigation intent only; every render rereads domain facts. */
@@ -12,8 +14,8 @@ export class TelegramSessions {
     return row ? { id: row.id, ownerUserId: row.owner_user_id, chatId: row.chat_id, messageId: row.message_id, panel: row.panel, viewChain: row.view_chain, query: JSON.parse(row.query_json), snapshotAt: row.snapshot_at, version: row.version, expiresAt: row.expires_at } : null;
   }
 
-  createInTransaction(panel, viewChain, query = {}) {
-    const session = { id: id(), ownerUserId: this.tenantId, chatId: this.tenantId, messageId: null, panel, viewChain, query: { schemaVersion: 1, page: 0, ...query }, snapshotAt: this.now(), version: 0, expiresAt: this.now() + SESSION_TTL };
+  createInTransaction(panel, viewChain, query = {}, { ttl = SESSION_TTL } = {}) {
+    const session = { id: id(), ownerUserId: this.tenantId, chatId: this.tenantId, messageId: null, panel, viewChain, query: { schemaVersion: 1, page: 0, ...query }, snapshotAt: this.now(), version: 0, expiresAt: this.now() + ttl };
     this.saveInTransaction(session);
     return session;
   }
@@ -26,7 +28,7 @@ export class TelegramSessions {
   advanceInTransaction(session, changes = {}) {
     const current = this.get(session.id);
     if (!current || current.version !== session.version) throw new ReviewConflict('session_changed');
-    const next = { ...current, ...changes, query: changes.query ?? current.query, version: current.version + 1, snapshotAt: this.now(), expiresAt: this.now() + SESSION_TTL };
+    const next = { ...current, ...changes, query: changes.query ?? current.query, version: current.version + 1, snapshotAt: this.now(), expiresAt: Math.max(current.expiresAt, this.now() + SESSION_TTL) };
     this.saveInTransaction(next);
     return next;
   }
@@ -73,6 +75,11 @@ export class TelegramSessions {
 
   pruneInTransaction() {
     this.storage.sql.exec('DELETE FROM shortlinks WHERE tenant_id = ? AND expires_at <= ?', this.tenantId, this.now());
+    // An expired alert is no longer corrected in place.
+    for (const row of this.storage.sql.exec("SELECT m.message_id FROM message_map m JOIN ui_sessions s ON s.tenant_id = m.tenant_id AND s.id = m.ui_session_id WHERE m.tenant_id = ? AND s.panel = 'alert' AND s.expires_at <= ?", this.tenantId, this.now()).toArray()) {
+      this.storage.sql.exec('DELETE FROM message_map WHERE tenant_id = ? AND message_id = ?', this.tenantId, row.message_id);
+      this.storage.sql.exec('DELETE FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, `telegram.rendered:${row.message_id}`);
+    }
     // A shown token still needs safety correction after navigation expires.
     this.storage.sql.exec('DELETE FROM ui_sessions WHERE tenant_id = ? AND expires_at <= ? AND id NOT IN (SELECT ui_session_id FROM message_map WHERE tenant_id = ?)', this.tenantId, this.now() - SESSION_TTL, this.tenantId);
   }
