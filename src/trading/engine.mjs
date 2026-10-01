@@ -30,16 +30,28 @@ const transient = error => error?.transient === true || error?.code === 'SCHEDUL
 const asTransient = error => new TradingError(error.code, error.message, { transient: true });
 const printable = value => String(value).replace(/[^\x20-\x7e]/g, '').slice(0, 30) || '?';
 
-/** A user action the current state does not allow; the caller explains it. */
+/**
+ * A user action the current state does not allow; the caller explains it. An
+ * UNVERIFIED refusal carries the refused buy, so the caller can ask about exactly it.
+ */
 export class TradeRefusal extends Error {
-  constructor(code) { super(code); this.name = 'TradeRefusal'; this.code = code; }
+  constructor(code, request = null) { super(code); this.name = 'TradeRefusal'; this.code = code; this.request = request; }
 }
 
-export function tradeVetoed(storage, tenantId, chain, token) {
-  const status = storage.sql.exec('SELECT status FROM candidates WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray()[0]?.status;
-  if (status === 'HARD_REJECT') return true;
-  return storage.sql.exec('SELECT 1 AS held FROM risk_exclusions WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray().length > 0;
+/**
+ * The one safety rule for buying. VETOED blocks a buy; UNVERIFIED (no recorded
+ * check, or one that is degraded or unknown) needs the owner's acknowledgement;
+ * VERIFIED is a complete GoPlus/DexScreener check without fatal flags.
+ */
+export function safetyState(storage, tenantId, chain, token) {
+  const candidate = storage.sql.exec('SELECT status, secondary_json FROM candidates WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray()[0];
+  const secondary = candidate?.secondary_json ? JSON.parse(candidate.secondary_json) : null;
+  if (candidate?.status === 'HARD_REJECT' || secondary?.security?.verdict === 'FATAL') return 'VETOED';
+  if (storage.sql.exec('SELECT 1 AS held FROM risk_exclusions WHERE tenant_id=? AND chain=? AND lower(address)=lower(?)', tenantId, chain, token).toArray().length) return 'VETOED';
+  return secondary?.status === 'COMPLETE' && secondary.security?.verdict === 'NO_FATAL_FLAGS' ? 'VERIFIED' : 'UNVERIFIED';
 }
+
+export const tradeVetoed = (storage, tenantId, chain, token) => safetyState(storage, tenantId, chain, token) === 'VETOED';
 
 export class TradingEngine {
   constructor({ storage, tenantId, masterKey, config, now = Date.now, onTradeInTransaction = () => {}, onBalancesInTransaction = () => {} }) {
@@ -56,20 +68,28 @@ export class TradingEngine {
 
   // ---- user actions (inside the caller's transaction) ----
 
-  requestTradeInTransaction({ chain, token, side, usdCents = null, percent = null, sessionId = null, slippageBps, capUsd }) {
+  /**
+   * Open a quote. A buy of an unverified token is refused as UNVERIFIED unless the
+   * owner acknowledged it for this request; a vetoed token is refused regardless.
+   */
+  requestTradeInTransaction({ chain, token, side, usdCents = null, percent = null, sessionId = null, slippageBps, capUsd, unverifiedAcknowledged = false }) {
     const facts = this.chain(chain);
     if (!facts) throw new TradeRefusal('NOT_TRADABLE');
     const wallet = this.wallet();
     if (!wallet) throw new TradeRefusal('NO_WALLET');
     if (typeof token !== 'string' || !isAddress(token, { strict: false }) || same(token, facts.quoteToken) || same(token, KYBER_NATIVE_TOKEN)) throw new TradeRefusal('INVALID_TOKEN');
     const address = getAddress(token.toLowerCase());
+    let unverifiedAtRequest = false;
     if (side === 'buy') {
-      if (tradeVetoed(this.storage, this.tenantId, chain, address)) throw new TradeRefusal('VETOED');
+      const safety = safetyState(this.storage, this.tenantId, chain, address);
+      if (safety === 'VETOED') throw new TradeRefusal('VETOED');
       if (!withinBuyCap(usdCents, capUsd)) throw new TradeRefusal('OVER_CAP');
+      if (safety === 'UNVERIFIED' && unverifiedAcknowledged !== true) throw new TradeRefusal('UNVERIFIED', { chain, token: address, usdCents });
+      unverifiedAtRequest = safety === 'UNVERIFIED';
     } else if (side !== 'sell' || !Number.isSafeInteger(percent) || percent < 1 || percent > 100) throw new TradeRefusal('INVALID_AMOUNT');
     const now = this.now();
     const trade = { version: 1, id: crypto.randomUUID().replaceAll('-', ''), revision: 0, chain, token: address, side, wallet: wallet.address,
-      usdCents: side === 'buy' ? usdCents : null, percent: side === 'sell' ? percent : null, slippageBps, capUsd,
+      usdCents: side === 'buy' ? usdCents : null, percent: side === 'sell' ? percent : null, slippageBps, capUsd, unverifiedAtRequest,
       state: 'QUOTING', step: 'token', sessionId, createdAt: now, updatedAt: now, nextAt: now, errors: 0, tokenMeta: null,
       tokenIn: side === 'buy' ? facts.quoteToken : address, tokenOut: side === 'buy' ? address : facts.quoteToken,
       amountIn: null, priceMicroUsd: null, route: null, quote: null, confirmedAt: null, confirmedMinAmountOut: null, approval: null, swap: null, result: null, recheckAt: null };
@@ -124,9 +144,10 @@ export class TradingEngine {
     return trade;
   }
 
+  // A requote repeats the same request, so an acknowledged unverified buy stays acknowledged.
   #again(trade, { slippageBps, capUsd }) {
     return this.requestTradeInTransaction({ chain: trade.chain, token: trade.token, side: trade.side, usdCents: trade.usdCents, percent: trade.percent,
-      sessionId: trade.sessionId, slippageBps, capUsd });
+      sessionId: trade.sessionId, slippageBps, capUsd, unverifiedAcknowledged: trade.unverifiedAtRequest });
   }
 
   #write(trade, changes) {

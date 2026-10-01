@@ -77,7 +77,9 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   `/events` have no aliases: like any unknown command they open Help.
 - Every passing hot-list token becomes a lead and alerts at once. GoPlus and
   DexScreener then check it; a fatal finding vetoes the lead, blocks buying it and
-  sends a "risk worsened" notice to anyone it alerted.
+  sends a "risk worsened" notice to anyone it alerted. Until the check completes
+  without fatal flags, a buy first asks Yes/No; the trading engine refuses an
+  unverified buy that lacks this acknowledgement.
 - Search and notes use a five-minute ForceReply prompt. Credentials are routed
   before note/search input and are never persisted as either.
 - An uncertain Telegram send gets at most one automatic uncertain retry over its

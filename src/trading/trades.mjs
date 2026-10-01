@@ -43,6 +43,7 @@ export function validateTrade(trade) {
   check(['buy', 'sell'].includes(trade.side), 'side');
   check(trade.side === 'buy' ? Number.isSafeInteger(trade.usdCents) && trade.usdCents > 0 && trade.percent === null
     : Number.isSafeInteger(trade.percent) && trade.percent >= 1 && trade.percent <= 100 && trade.usdCents === null, 'amount request');
+  check(typeof trade.unverifiedAtRequest === 'boolean' && (trade.side === 'buy' || !trade.unverifiedAtRequest), 'unverified acknowledgement');
   check(Number.isSafeInteger(trade.slippageBps) && trade.slippageBps > 0 && trade.slippageBps <= 5000 && Number.isSafeInteger(trade.capUsd) && trade.capUsd > 0, 'settings');
   check(TRADE_STATES.includes(trade.state), 'state');
   check(trade.state === 'QUOTING' ? QUOTE_STEPS.has(trade.step) : trade.step === null, 'quote step');
