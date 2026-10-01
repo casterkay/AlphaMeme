@@ -592,4 +592,12 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
+  it('names the token in the note prompt',async()=>{
+    await withRuntime('23604',async({runtime,sent,command,sessions,link,click,seed})=>{
+      seed();await command('leads');const audits=sessions()[0];
+      await click(link(audits,'panel.open',params=>params.panel==='detail'));
+      await click(link(runtime.commands.sessions.get(audits.id),'note.begin'));
+      expect(sent.findLast(row=>row.params.reply_markup?.force_reply).params.text).toBe('请回复 TOKEN0 (Arc) 的备注，最多500字符。/cancel 取消。');
+    });
+  });
 });

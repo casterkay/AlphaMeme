@@ -269,7 +269,12 @@ describe('one-tap trading', () => {
       const buy = link(detail, 'trade.buy', params => params.usd === 10);
       seed('arc', 'HARD_REJECT');
       await click(buy);
-      expect(trades()).toEqual([]);expect(sent.at(-2).params.text).toMatch(/buy was refused/);
+      // The refusal is a banner on the detail it came from, and the next render drops it.
+      expect(trades()).toEqual([]);expect(sent.at(-1)).toMatchObject({ method: 'editMessageText', params: { message_id: detail.messageId } });
+      expect(sent.at(-1).params.text).toMatch(/^⚠️ Safety check failed; the buy was refused\. Selling is not affected\.\n\n<b>MEME/);
+      expect(runtime().commands.sessions.get(detail.id).query.notice).toBeUndefined();
+      await click(link(runtime().commands.sessions.get(detail.id), 'panel.refresh'));
+      expect(sent.at(-1).params.text).toMatch(/^<b>MEME/);
 
       seed('arc', 'LIVE_READY');
       const fresh = await openDetail();
@@ -408,19 +413,32 @@ describe('one-tap trading', () => {
     });
   });
 
-  it('refuses a custom buy above the cap and accepts one within it through a ForceReply', async () => {
+  it('names the token in the custom-buy prompt, shows a refused or invalid reply as a banner and keeps the prompt usable', async () => {
     await withTrading('custom', async ({ runtime, click, link, seed, createWallet, openDetail, trades, sent, drain }) => {
       seed();await createWallet();
       const detail = await openDetail();
-      const reply = async text => {
+      let updateId = 900;
+      const prompt = async () => {
         await click(link(runtime().commands.sessions.get(detail.id), 'trade.input', params => params.side === 'buy'));
-        const pending = runtime().commands.sessions.get(detail.id).query.pendingInput;
-        const input = { tenantId: runtime().tenantId, actorUserId: runtime().tenantId, updateId: String(900 + text.length), commandType: 'reply', payload: { source: 'reply', text, replyToMessageId: pending.promptMessageId }, dueAt: start + 60_000, messageDate: start / 1000, sourceMessageId: '9000', locale: 'zh' };
+        return runtime().commands.sessions.get(detail.id).query.pendingInput;
+      };
+      const answer = async (pending, text) => {
+        const input = { tenantId: runtime().tenantId, actorUserId: runtime().tenantId, updateId: String(++updateId), commandType: 'reply', payload: { source: 'reply', text, replyToMessageId: pending.promptMessageId }, dueAt: start + 60_000, messageDate: start / 1000, sourceMessageId: '9000', locale: 'zh' };
         runtime().receive(input);await runtime().runCommand(input.updateId);await drain();
       };
-      await reply('150');
-      expect(trades()).toEqual([]);expect(sent.some(row => row.params.text?.includes('Above your per-trade buy cap of $100'))).toBe(true);
-      await reply('12.5');
+      const panelEdit = () => sent.filter(row => row.method === 'editMessageText' && row.params.message_id === detail.messageId).at(-1).params.text;
+      let pending = await prompt();
+      expect(sent.findLast(row => row.params.reply_markup?.force_reply).params.text).toBe('Reply with the USD amount of MEME (Arc) to buy, up to 2 decimals, cap $100. /cancel to stop.');
+      await answer(pending, '150');
+      expect(trades()).toEqual([]);
+      expect(panelEdit()).toMatch(/^⚠️ Above your per-trade buy cap of \$100; refused\. Adjust it in Trade limits\.\n\n<b>MEME/);
+      expect(sent.some(row => row.method === 'sendMessage' && row.params.text?.includes('Above your'))).toBe(false);
+      pending = await prompt();
+      expect(panelEdit()).toMatch(/^<b>MEME/);
+      await answer(pending, 'ten dollars');
+      expect(panelEdit()).toMatch(/^⚠️ Invalid amount: reply like 25 or 12\.5\.\n\n<b>MEME/);
+      expect(runtime().commands.sessions.get(detail.id).query).toMatchObject({ pendingInput: { promptMessageId: pending.promptMessageId } });
+      await answer(pending, '12.5');
       expect(trades()[0]).toMatchObject({ state: 'QUOTING', usdCents: 1250 });
     });
   });
