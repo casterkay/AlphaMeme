@@ -1,0 +1,39 @@
+test/secondary.test.mjs
+  s_1310eef1feaa44::t_720a18439b53a2 75-76,95,111,114-115,123-125
+workers/telegram-e2e.runtime.mjs
+  s_1310eef1feaa44::t_c999fbe9b3bd6f 459-461
+  s_1310eef1feaa44::t_f74556fc1d1c84 462-463
+  s_1310eef1feaa44::t_2f7cd8e069d601 7,421,430,454-458,464-474
+workers/radar-agent.runtime.mjs
+  s_1310eef1feaa44::t_e0bfb92e96c65d 612
+src/scoring/index.mjs
+  s_1310eef1feaa44::t_4030811ee393da 111-116,180-181
+test/outcomes.test.mjs
+  s_1310eef1feaa44::t_720a18439b53a2 3,10,25-41,71
+test/scoring.test.mjs
+  s_1310eef1feaa44::t_720a18439b53a2 320-337
+src/scoring/outcomes.mjs
+  s_1310eef1feaa44::t_4030811ee393da 8,17,33-34,38,43-44,46-48,51
+src/providers/secondary.mjs
+  s_1310eef1feaa44::t_4030811ee393da 256,262-263,271-274,298-299,306-308
+  s_1310eef1feaa44::t_84d09ce41211bd 29-33
+src/bot/runtime.mjs
+  s_1310eef1feaa44::t_84d09ce41211bd 26-36,39-45,253
+  s_1310eef1feaa44::t_d154914a102146 37-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7ee813a8463d454a5e300e7a97e656b14d4123e6",
+  "prompts": {},
+  "sessions": {
+    "s_1310eef1feaa44": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f54e-1251-7370-ae45-86db73ba10a2",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
