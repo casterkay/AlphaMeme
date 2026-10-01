@@ -1,0 +1,19 @@
+workers/telegram-intake.runtime.mjs
+  s_6295713717bc33::t_dfeca7a1749c3d 290,315,331,340
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c5384d68230c4d4a07ea6fd9c069211e54a2d6bd",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
