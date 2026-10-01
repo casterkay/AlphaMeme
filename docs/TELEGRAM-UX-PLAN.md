@@ -225,33 +225,47 @@ MC $120K · Liq $30K · 2,431 holders
 
 ### 3.7 Alerts (`reconcileNotificationsInTransaction`)
 
+Rendering lives in the pure module `src/bot/alerts.mjs` (`alertCard`); the
+runtime only reads each member's recorded facts and enqueues the card.
+
 New leads (one batched message, up to 10 as today):
 
 ```
 🆕 2 new leads · Arc
-1. PEPE — $120K MC · $30K liq · 4m old · +35%
-2. DOGE2 — $48K MC · $9K liq · 1m old · +12%
+1. PEPE — $120K MC · $30K liq · 4m old · 5m +35%
+2. DOGE2 — $48K MC · $9K liq · 1m old · 5m +12%
 Safety check still running; not verified.
 [1 PEPE] [2 DOGE2]
 [🎯 All leads] [🔕 Mute alerts]
 ```
 
+- Market cap, liquidity and age come from the candidate row; the 5m change from
+  the token's row in the latest hot-list snapshot. A missing fact is omitted.
+- A lead's GoPlus/DexScreener check can finish before its batch is sent, so the
+  closing line above is used only while every row's check is still pending.
+  Otherwise each row carries its recorded state — ⏳ no check recorded, ✅
+  `COMPLETE` with no fatal flags, ⚠️ anything else — and the closing line becomes
+  "⏳ check running · ✅ no failures found · ⚠️ incomplete. Not a safety guarantee."
+
 Risk worsened:
 
 ```
 ⛔ PEPE failed the safety check · Arc
-Honeypot risk reported by GoPlus.
+GoPlus flagged: Honeypot: Yes · Open source: No
 Buying is blocked; selling still works.
 [Open PEPE]
 ```
+
+The reason lists the candidate's recorded fatal fields with their recorded values,
+through the existing `reasonText` labels, never upstream prose. (A bare label
+such as "Open source" would misstate the risk; the value says which way it failed.)
 
 Account issues: "🔑 Your AVE key stopped working" `[🔑 Reconnect AVE]`;
 "📭 Some messages may not have arrived" `[📊 Status]`.
 
 The "Action required" title and the Status button are removed. Eligibility,
-batching, deduplication and expiry are unchanged; only rendering changes. The
-risk reason comes from the candidate's recorded veto reason through the existing
-`reasonText` labels, never from upstream prose.
+batching, deduplication and expiry are unchanged; only rendering changes. An
+unreadable optional fact is logged and omitted; it never drops the alert.
 
 ### 3.8 First run and onboarding
 
