@@ -3,10 +3,10 @@
 // snapshot's `trading` projection; they never see a private key or raw transaction.
 import { TRADING_SETTINGS, KYBER_NATIVE_TOKEN } from '../trading/config.mjs';
 import { displayUnits, centsText, microUsdText } from '../trading/amounts.mjs';
-import { localize, userText, chainLabel, button, escapeHtml, clockTime, relativeTime, finishPanel } from '../render/telegram.mjs';
+import { localize, userText, chainLabel, button, escapeHtml, clockTime, relativeTime, finishPanel, ICONS } from '../render/telegram.mjs';
 
 export const TRADING_PANELS = Object.freeze(['trade', 'wallet', 'wallet_export', 'wallet_remove', 'trade_settings']);
-export const TRADING_PANEL_NAMES = Object.freeze({ trade: ['交易', 'Trade'], wallet: ['交易钱包', 'Trading wallet'], wallet_export: ['导出私钥', 'Export private key'], wallet_remove: ['移除交易钱包', 'Remove trading wallet'], trade_settings: ['交易设置', 'Trade settings'] });
+export const TRADING_PANEL_NAMES = Object.freeze({ trade: ['交易', 'Trade'], wallet: ['钱包', 'Wallet'], wallet_export: ['导出私钥', 'Export private key'], wallet_remove: ['移除交易钱包', 'Remove trading wallet'], trade_settings: ['交易限额', 'Trade limits'] });
 
 const REASONS = {
   VETOED: ['安全核验未通过，已拒绝买入。', 'Safety check failed; the buy was refused.'],
@@ -125,10 +125,10 @@ function tradePanel(snapshot, session, locale) {
 
 function walletPanel(snapshot, session, locale) {
   const L = L_(locale), trading = snapshot.trading;
-  if (!trading?.chains.length) return finishPanel(L('交易钱包', 'Trading wallet'), [L('本部署未启用交易。', 'Trading is not enabled on this deployment.')], [], snapshot, session, locale, { refresh: false });
+  if (!trading?.chains.length) return finishPanel(L(...TRADING_PANEL_NAMES.wallet), [L('本部署未启用交易。', 'Trading is not enabled on this deployment.')], [], snapshot, session, locale, { refresh: false });
   const hot = L('这是热钱包：私钥由机器人加密保存并用于签名。只存入你愿意承担风险的小额资金。机器人不收取交易费，只有DEX费用和Gas。', 'This is a hot wallet: the bot stores its key encrypted and signs with it. Keep only small amounts you can afford to lose. The bot charges no fee; you pay DEX fees and gas.');
   if (!trading.wallet) {
-    return finishPanel(L('交易钱包', 'Trading wallet'), [L('尚未创建交易钱包。机器人会为你生成一个专用钱包（不会导入你的私钥）。', 'No trading wallet yet. The bot generates a dedicated wallet for you (it never imports your key).'), hot],
+    return finishPanel(L(...TRADING_PANEL_NAMES.wallet), [L('尚未创建交易钱包。机器人会为你生成一个专用钱包（不会导入你的私钥）。', 'No trading wallet yet. The bot generates a dedicated wallet for you (it never imports your key).'), hot],
       [[button(L('创建交易钱包', 'Create trading wallet'), 'wallet.create')]], snapshot, session, locale, { refresh: false });
   }
   const blocks = [`${L('地址', 'Address')}: <code>${userText(trading.wallet.address, 42)}</code>`, hot, '', `<b>${L('余额', 'Balances')}</b>`];
@@ -147,10 +147,10 @@ function walletPanel(snapshot, session, locale) {
     const amount = trade.side === 'buy' ? centsText(trade.usdCents) : `${trade.percent}%`;
     blocks.push(`${relativeTime(trade.createdAt, snapshot.at, locale)} · ${trade.side === 'buy' ? L('买', 'Buy') : L('卖', 'Sell')} ${userText(trade.tokenMeta?.symbol ?? '?', 30)} ${amount} · ${chainLabel(trade.chain)} · ${L(...STATUS[trade.state])}${hash ? explorer ? ` · <a href="${escapeHtml(`${explorer}/tx/${hash}`)}">tx</a>` : ` · <code>${hash.slice(0, 18)}…</code>` : ''}`);
   }
-  const keyboard = [[button(L('刷新余额', 'Refresh balances'), 'wallet.refresh'), button(L('交易设置', 'Trade settings'), 'panel.open', { panel: 'trade_settings' })],
+  const keyboard = [[button(L('刷新余额', 'Refresh balances'), 'wallet.refresh'), button(`${ICONS.trade_settings} ${L(...TRADING_PANEL_NAMES.trade_settings)}`, 'panel.open', { panel: 'trade_settings' })],
     [button(L('导出私钥', 'Export private key'), 'panel.open', { panel: 'wallet_export' }), button(L('移除钱包', 'Remove wallet'), 'panel.open', { panel: 'wallet_remove' })]];
   // "Refresh balances" re-reads the chain; a plain re-render would add nothing.
-  return finishPanel(L('交易钱包', 'Trading wallet'), blocks, keyboard, snapshot, session, locale, { refresh: false });
+  return finishPanel(L(...TRADING_PANEL_NAMES.wallet), blocks, keyboard, snapshot, session, locale, { refresh: false });
 }
 
 function settingsPanel(snapshot, session, locale) {
@@ -159,7 +159,7 @@ function settingsPanel(snapshot, session, locale) {
     TRADING_SETTINGS.slippageChoicesBps.map(value => button(`${settings.slippageBps === value ? '✓ ' : ''}${value / 100}%`, 'trading.slippage.set', { value })),
     TRADING_SETTINGS.buyCapChoicesUsd.map(value => button(`${settings.capUsd === value ? '✓ ' : ''}$${value}`, 'trading.cap.set', { value }))
   ];
-  return finishPanel(L('交易设置', 'Trade settings'), [`${L('滑点（第一行）', 'Slippage (first row)')}: ${settings.slippageBps / 100}%`, `${L('单笔买入上限（第二行）', 'Per-trade buy cap (second row)')}: $${settings.capUsd}`,
+  return finishPanel(L(...TRADING_PANEL_NAMES.trade_settings), [`${L('滑点（第一行）', 'Slippage (first row)')}: ${settings.slippageBps / 100}%`, `${L('单笔买入上限（第二行）', 'Per-trade buy cap (second row)')}: $${settings.capUsd}`,
     L('超过上限的买入按钮不显示，自定义金额超过上限会被拒绝。', 'Buy buttons above the cap are hidden; custom amounts above it are refused.')], keyboard, snapshot, session, locale, { refresh: false });
 }
 

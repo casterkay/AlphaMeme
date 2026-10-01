@@ -174,7 +174,7 @@ async function withTrading(name, operation) {
       return { panel, address };
     };
     const openDetail = async (chain = 'arc') => {
-      await command('audits');
+      await command('leads');
       const list = sessions().at(-1);
       if (chain !== 'arc') {
         await click(link(list, 'panel.open', params => params.panel === 'view_chain'));

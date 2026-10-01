@@ -36,7 +36,9 @@ through the environment:
 node scripts/telegram-register.mjs
 ```
 
-This uses `setMyCommands` for default Chinese, Chinese and English. No token is
+This registers the eight-command menu (`/radar`, `/leads`, `/hot`, `/watchlist`,
+`/wallet`, `/performance`, `/settings`, `/help`) with `setMyCommands`: English for
+the default and `en` scopes, Chinese for `zh`. No token is
 accepted as a command-line argument or printed. Configure Telegram's webhook to
 `/webhook/telegram` with the matching webhook secret after the isolated deployment
 has been approved and verified. Registering a webhook or commands changes the
@@ -64,7 +66,12 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   stale owner/message/session/domain versions cannot mutate current state.
 - `/pause` and `/mute` control scanning and alerts independently. `/chains`
   switches the single scan chain; the old chain's research records stay.
-  `/feed` shows the scanner's latest AVE hot list; it makes no extra requests.
+  `/hot` shows the scanner's latest AVE hot list; it makes no extra requests.
+- Rarer commands (`/start`, `/activity`, `/status`, `/chains`, `/pause`,
+  `/resume`, `/mute`, `/lang`, `/note`, `/cancel`, `/export`, `/onboard`,
+  `/setkey`, `/disconnect`) work but stay out of the menu; `/help` lists them.
+  The retired slugs `/audits`, `/candidates`, `/feed`, `/saved`, `/stats` and
+  `/events` have no aliases: like any unknown command they open Help.
 - Every passing hot-list token becomes a lead and alerts at once. GoPlus and
   DexScreener then check it; a fatal finding vetoes the lead, blocks buying it and
   sends a "risk worsened" notice to anyone it alerted.

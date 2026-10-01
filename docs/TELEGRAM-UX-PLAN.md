@@ -46,6 +46,8 @@ persist them; only user-facing labels and command slugs change.
 | `settings` | Settings | 设置 | `/settings` | ⚙️ |
 | `wallet` | Wallet | 钱包 | `/wallet` | 👛 |
 | `help` | Help | 帮助 | `/help` | ❓ |
+| `sources` | Sources | 来源 | — (from Status) | 🛜 |
+| `delivery` | Delivery | 投递 | — (from Status) | 📭 |
 
 Status icons (one table in `src/render/telegram.mjs`, the only source of icons):
 
@@ -204,7 +206,8 @@ MC $120K · Liq $30K · 2,431 holders
   selector (only the chain selector needs one: "Viewing a chain does not change
   what is scanned.").
 - Status keeps operator detail with relative times and icons, gains the counters
-  removed from Radar, and links `[🗂 Activity] [📡 Sources] [📭 Delivery]`.
+  removed from Radar, and links `[🗂 Activity] [🛜 Sources] [📭 Delivery]`. Sources
+  uses 🛜, not Radar's 📡: no two destinations share an icon.
 - Activity rows: `4m ago · 🆕 PEPE — new lead`; token buttons as today.
 - Performance leads with plain language — "Tokens that passed the screen, 30 min
   later: median +4.2% (37 tokens)" — and moves the 50-sample and calibration gates

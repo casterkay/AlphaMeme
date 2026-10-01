@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { renderPanel, selectPanelRows, PANEL_NAMES, telegramCommandDescriptions } from '../src/bot/panels.mjs';
+import { renderPanel, selectPanelRows, PANEL_NAMES, HELP_COMMAND_NAMES, telegramCommandDescriptions, telegramCommandRegistrations } from '../src/bot/panels.mjs';
 import { projectTelegramCandidate, projectTelegramFeedRow, createTelegramExport, safeTelegramUrl } from '../src/bot/snapshot.mjs';
 import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { money, officialXUrl } from '../src/render/telegram.mjs';
@@ -20,9 +20,42 @@ test('all native panels render both locales with bounded text and typed action d
     for(const item of result.keyboard.flat()) assert.ok(item.url || typeof item.action==='string');
     assert.equal(result.version,2);
   }
-  const commands=telegramCommandDescriptions('en').map(item=>item.command);
-  assert.equal(commands.length,23);
-  assert.ok(commands.includes('mute')&&commands.includes('wallet')&&!commands.includes('unmute'));
+});
+
+test('the command menu lists the eight frequent commands in order, localized, and Help lists every command',()=>{
+  const menu=['radar','leads','hot','watchlist','wallet','performance','settings','help'];
+  for(const locale of ['zh','en']) {
+    const commands=telegramCommandDescriptions(locale);
+    assert.deepEqual(commands.map(item=>item.command),menu,locale);
+    for(const {description} of commands) assert.ok(description.length>0&&description.length<=256,description);
+  }
+  assert.notDeepEqual(telegramCommandDescriptions('zh'),telegramCommandDescriptions('en'));
+  assert.deepEqual(HELP_COMMAND_NAMES.slice(0,8),menu);
+  for(const retired of ['audits','candidates','feed','saved','stats','events']) assert.ok(!HELP_COMMAND_NAMES.includes(retired),retired);
+  for(const unlisted of ['start','activity','status','chains','pause','resume','mute','lang','note','cancel','export','onboard','setkey','disconnect']) assert.ok(HELP_COMMAND_NAMES.includes(unlisted),unlisted);
+  for(const locale of ['zh','en']) {
+    const commands=renderPanel(fixture(),session('help',{page:1}),locale).text;
+    for(const command of HELP_COMMAND_NAMES) assert.match(commands,new RegExp(`/${command} — `),`${locale} ${command}`);
+    assert.ok(commands.indexOf('/help — ')<commands.indexOf('/start — '),'menu commands come before the rest');
+    assert.ok(!/<(?!\/?b>)/.test(commands),'argument placeholders are escaped, not raw HTML');
+  }
+});
+
+test('command registration is English by default and Chinese only for zh clients',()=>{
+  const registrations=telegramCommandRegistrations();
+  assert.deepEqual(registrations.map(params=>params.language_code),[undefined,'zh','en']);
+  for(const params of registrations) {
+    assert.deepEqual(params.scope,{type:'all_private_chats'});
+    assert.deepEqual(params.commands,telegramCommandDescriptions(params.language_code==='zh'?'zh':'en'),String(params.language_code));
+  }
+});
+
+test('help is three pages: what the radar does, commands, then safety',()=>{
+  const page=index=>renderPanel(fixture(),session('help',{page:index}),'en');
+  assert.match(page(0).text,/^<b>❓ Help<\/b>\nThe radar reads the AVE hot list/);
+  assert.match(page(1).text,/Menu commands[\s\S]*More commands/);
+  assert.match(page(2).text,/cannot guarantee deletion[\s\S]*hot wallet[\s\S]*Manual approval does not change screening[\s\S]*Not investment advice/);
+  assert.ok(!page(2).keyboard.flat().some(item=>item.action==='page.set'&&item.params.page===3));
 });
 
 // Panels whose content cannot change by re-reading: choices, confirmations, help, evidence
@@ -45,12 +78,26 @@ test('every panel ends with the standard footer and keeps navigation out of its 
   }
 });
 
+// A destination's icon must name one place: a title or a panel.open button never
+// reuses another panel's icon (Radar's 📡 once marked Sources too).
+test('no icon leads to two different panels',()=>{
+  const owners=new Map(),claim=(icon,panel,label)=>{ if(!owners.has(icon)) owners.set(icon,new Set());owners.get(icon).add(panel);assert.equal(owners.get(icon).size,1,`${icon} marks ${[...owners.get(icon)].join(' and ')} (${label})`); };
+  const icon=text=>text.match(/^(\p{Extended_Pictographic}\S*) /u)?.[1];
+  for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) {
+    const snapshot=fixture(),result=renderPanel(snapshot,session(panel,{selectedToken:{chain:'sol',address:snapshot.candidates[0].address}}),locale);
+    const title=icon(result.text.match(/^<b>(.*?)<\/b>/)[1]);
+    if(title) claim(title,panel,`${panel} title`);
+    for(const item of result.keyboard.flat()) if(item.action==='panel.open'&&icon(item.text)) claim(icon(item.text),item.params.panel,`${panel} button ${item.text}`);
+  }
+  assert.ok(owners.get('🛜')?.has('sources')&&owners.get('📡')?.has('radar'));
+});
+
 test('audit filters use effective marks while overview keeps original on-chain candidate count',()=>{
   const snapshot=fixture();snapshot.marks=[{chain:'sol',address:snapshot.candidates[0].address,decision:'passed',at:now-1,reviewRevision:'revision'}];
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'chain'})).length,12);
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'passed'})).length,1);
   snapshot.candidates[1]={...snapshot.candidates[1],status:'LIVE_READY'};snapshot.candidates[2]={...snapshot.candidates[2],status:'HARD_REJECT'};
-  assert.match(renderPanel(snapshot,session('radar'),'en').text,/leads\/vetoed: 1\/1/);
+  assert.match(renderPanel(snapshot,session('radar'),'en').text,/Last 30 min: 1 lead · 1 vetoed/);
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'lead'})).length,1);
 });
 
@@ -176,4 +223,69 @@ test('evidence pages keep the exact audit time while the detail summary shows it
   const snapshot=fixture(),query={selectedToken:{chain:'sol',address:snapshot.candidates[0].address}};
   assert.match(renderPanel(snapshot,session('evidence',query),'en').text,/Audit: 2027-01-15 07:59:00 UTC · 1m ago/);
   assert.match(renderPanel(snapshot,session('detail',query),'en').text,/Audit: 1m ago\n/);
+});
+
+const panelRows=result=>result.keyboard.slice(0,-1).map(row=>row.map(item=>item.action==='panel.open'?item.params.panel:item.action));
+
+test('radar leads with the newest leads on the scan chain, vetoed last, and leaves operator counters to Status',()=>{
+  const snapshot=fixture();
+  snapshot.metrics={scanCount:7,discoveredCount:40,prequalifiedCount:12};
+  snapshot.candidates=[
+    // PEPE first qualified 25 min ago and was rechecked just now; DOGE2 is the newer lead.
+    candidate(0,{symbol:'PEPE',status:'LIVE_READY',auditedAt:now-1000,metadata:{qualifiedAt:now-1_500_000},marketCap:120_000,createdAt:(now-240_000)/1000}),
+    candidate(1,{symbol:'DOGE2',status:'LIVE_READY',auditedAt:now-30_000,metadata:{qualifiedAt:now-60_000},marketCap:undefined}),
+    candidate(2,{symbol:'RUGME',status:'HARD_REJECT',auditedAt:now-1000}),
+    candidate(3,{symbol:'OLD',status:'LIVE_READY',auditedAt:now-1_800_001}),
+    candidate(4,{symbol:'REVIEW',status:'X_REVIEW',auditedAt:now-1000}),
+    {...candidate(5,{symbol:'ELSEWHERE',status:'LIVE_READY',auditedAt:now-1000}),chain:'base'}
+  ];
+  snapshot.feedByChain={sol:{rows:[projectTelegramFeedRow({address:snapshot.candidates[0].address,symbol:'PEPE',priceChange5m:.35},'sol')]}};
+  // The radar shows the scan chain even when the session last viewed another one.
+  const result=renderPanel(snapshot,{...session('radar'),viewChain:'base'},'en');
+  assert.equal(result.text,'<b>📡 Radar · Solana</b>\n🟢 Scanning · 🔕 Alerts off\n\nLast 30 min: 2 leads · 1 vetoed\n1. <b>DOGE2</b>\n2. <b>PEPE</b> · $120K · 4m old · +35%\n3. ⛔ RUGME · vetoed\n\nUpdated Jan 15 08:00 UTC');
+  assert.deepEqual(result.keyboard[0].map(item=>item.token.address),[1,0,2].map(index=>snapshot.candidates[index].address));
+  assert.deepEqual(panelRows(result).slice(1),[['audits','feed'],['saved','stats'],['wallet','settings']]);
+  const status=renderPanel(snapshot,session('status'),'en').text;
+  assert.match(status,/Successful scans: 7\n/);assert.match(status,/Last cycle discovered\/prefilter passed: 40\/12\n/);
+  snapshot.candidates=[];
+  const empty=renderPanel(snapshot,session('radar'),'en');
+  assert.match(empty.text,/\n\nNo leads in the last 30 min\. The radar checks the hot list every ~15s\.\n/);
+  assert.deepEqual(panelRows(empty),[[],['audits','feed'],['saved','stats'],['wallet','settings']].filter(row=>row.length));
+});
+
+test('radar says why nothing arrives when scanning is paused or AVE is disconnected',()=>{
+  const paused=fixture();paused.candidates=[];paused.control.paused=true;
+  const pausedText=renderPanel(paused,session('radar'),'en').text;
+  assert.match(pausedText,/\n⏸️ Paused · 🔕 Alerts off\n\nNo leads in the last 30 min\. Scanning is paused\.\n/);assert.doesNotMatch(pausedText,/checks the hot list/);
+  // Disconnected with history: the radar still shows records but says it is not connected.
+  const disconnected=fixture();disconnected.control.configured=false;disconnected.candidates=[candidate(0,{status:'LIVE_READY',auditedAt:now-1_800_001})];
+  const disconnectedText=renderPanel(disconnected,session('radar'),'en').text;
+  assert.match(disconnectedText,/\n🔌 Not connected · 🔕 Alerts off\n\nNo leads in the last 30 min\. AVE is not connected\.\n/);
+  disconnected.candidates[0]={...disconnected.candidates[0],auditedAt:now-1000};
+  assert.match(renderPanel(disconnected,session('radar'),'zh').text,/\n🔌 未连接AVE · 🔕 提醒关闭\n\n近30分钟：1 条线索/);
+});
+
+test('settings groups state first and actions below, with disconnect alone and only when connected',()=>{
+  const snapshot=fixture();snapshot.control.notifications=true;snapshot.trading={chains:['arc'],settings:{slippageBps:500,capUsd:100}};
+  const connected=renderPanel(snapshot,session('settings'),'en');
+  assert.equal(connected.text,'<b>⚙️ Settings</b>\nScanning: 🟢 Solana\nAlerts: 🔔 On\nTrading: slippage 5% · cap $100\nLanguage: English\nAVE: connected\n\nUpdated Jan 15 08:00 UTC');
+  assert.deepEqual(panelRows(connected),[['chains','scan.pause'],['notifications.set'],['wallet','trade_settings'],['language','onboard'],['status','export.create'],['disconnect']]);
+  assert.equal(connected.keyboard[0][0].text,'🔗 Scan chain: Solana');assert.equal(connected.keyboard[3][1].text,'🔑 AVE key');assert.equal(connected.keyboard.at(-2)[0].text,'🔌 Disconnect AVE');
+  Object.assign(snapshot.control,{configured:false});delete snapshot.trading;
+  const disconnected=renderPanel(snapshot,session('settings'),'en');
+  assert.match(disconnected.text,/Scanning: 🔌 Waiting for AVE · Solana\n.*\nTrading: not enabled on this deployment\n[\s\S]*AVE: not connected/);
+  assert.ok(!panelRows(disconnected).flat().includes('disconnect'));
+  Object.assign(snapshot.control,{configured:true,paused:true});
+  const paused=renderPanel(snapshot,session('settings'),'zh');
+  assert.match(paused.text,/扫描: ⏸️ 已暂停 · Solana/);assert.deepEqual(panelRows(paused)[0],['chains','scan.resume']);
+});
+
+test('status links Activity, Sources and Delivery and flags delivery issues',()=>{
+  const snapshot=fixture();
+  const result=renderPanel(snapshot,session('status'),'en');
+  assert.match(result.text,/^<b>📊 Status<\/b>\n🟢 Scanning · Solana\n/);
+  assert.deepEqual(panelRows(result),[['events','sources','delivery']]);
+  assert.match(result.text,/\nDelivery issues: 0/);
+  snapshot.delivery=[{status:'FAILED',purpose:'USER_RESPONSE'}];
+  assert.match(renderPanel(snapshot,session('status'),'en').text,/\n⚠️ Delivery issues: 1/);
 });

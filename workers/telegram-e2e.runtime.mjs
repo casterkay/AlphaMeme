@@ -99,7 +99,7 @@ describe('Telegram complete command and delivery flows',()=>{
 
   it('binds independent root messages, edits the originating panel, and rejects stale and cross-owner callbacks',async()=>{
     await withRuntime('22901',async({runtime,storage,tenantId,sent,command,sessions,link,click,seed,receipt})=>{
-      seed(7);await command('radar');await command('audits');
+      seed(7);await command('radar');await command('leads');
       const [overview,audits]=sessions();
       expect(overview.messageId).not.toBe(audits.messageId);expect(overview.panel).toBe('radar');expect(audits.panel).toBe('audits');
       const next=link(audits,'page.set',params=>params.page===1),oldDetail=link(audits,'panel.open',params=>params.panel==='detail');
@@ -118,7 +118,7 @@ describe('Telegram complete command and delivery flows',()=>{
 
   it('approves, clears and annotates through a delivered ForceReply without changing panel identity or losing favorites',async()=>{
     await withRuntime('22902',async({runtime,storage,tenantId,sent,command,sessions,link,click,seed,receipt,drain})=>{
-      seed();await command('audits');const audits=sessions()[0];
+      seed();await command('leads');const audits=sessions()[0];
       await click(link(audits,'panel.open',params=>params.panel==='detail'));
       let detail=runtime.commands.sessions.get(audits.id);expect(detail.messageId).toBe(audits.messageId);
       const pass=link(detail,'mark.set_passed');await click(pass);
@@ -208,7 +208,7 @@ describe('Telegram complete command and delivery flows',()=>{
     await withRuntime('22915',async({runtime,storage,tenantId,sent,command,sessions,link,click,seed,drain})=>{
       seed();
       storage.sql.exec('INSERT INTO annotations (tenant_id,chain,address,favorite,note,updated_at) VALUES (?,?,?,?,?,?)',tenantId,'robinhood','0x'+'c'.repeat(40),1,'saved',at);
-      await command('saved');
+      await command('watchlist');
       const saved=sessions()[0];expect(saved.viewChain).toBe('all');
       await click(link(saved,'panel.open',params=>params.panel==='radar'));
       const home=runtime.commands.sessions.get(saved.id);expect(home.viewChain).toBe('arc');
@@ -221,7 +221,7 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(runtime.notifications.candidates().find(row=>row.symbol==='ALERT')?.qualified).toBe(true);
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
       expect(runtime.outbox.rows().some(row=>row.delivery_class==='ACTION_REQUIRED'&&row.status==='PENDING')).toBe(true);
-      await command('feed');await drain();
+      await command('hot');await drain();
       expect(runtime.outbox.rows().some(row=>row.delivery_class==='ACTION_REQUIRED'&&row.status==='CANCELLED')).toBe(false);
       expect(sent.some(row=>row.params.text?.includes('ALERT'))).toBe(true);
     });
@@ -229,7 +229,7 @@ describe('Telegram complete command and delivery flows',()=>{
 
   it('schedules card correction only for an actual future review expiry',async()=>{
     await withRuntime('22916',async({runtime,storage,tenantId,command,sessions,link,click,seed})=>{
-      seed();await command('audits');const audits=sessions()[0];
+      seed();await command('leads');const audits=sessions()[0];
       await click(link(audits,'panel.open',params=>params.panel==='detail'));
       expect(storage.transactionSync(()=>runtime.reconcileCardsInTransaction())).toBeNull();
       const detail=runtime.commands.sessions.get(audits.id);
@@ -253,7 +253,7 @@ describe('Telegram complete command and delivery flows',()=>{
 
   it('Home returns to the Radar root without a stale path back',async()=>{
     await withRuntime('22931',async({runtime,command,sessions,link,click,seed})=>{
-      seed(3);await command('audits');const root=sessions()[0];
+      seed(3);await command('leads');const root=sessions()[0];
       await click(link(root,'panel.open',params=>params.panel==='detail'));
       await click(link(runtime.commands.sessions.get(root.id),'panel.open',params=>params.panel==='radar'));
       const home=runtime.commands.sessions.get(root.id);expect(home.panel).toBe('radar');expect(home.query.returnTo).toBeUndefined();
@@ -261,9 +261,45 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
+  it('opens a panel for every menu and unlisted command and answers retired slugs with Help',async()=>{
+    await withRuntime('22963',async({command,sessions})=>{
+      const panels={radar:'radar',start:'radar',leads:'audits',hot:'feed',watchlist:'saved',wallet:'wallet',performance:'stats',settings:'settings',help:'help',activity:'events',status:'status',chains:'chains',onboard:'onboard'};
+      for(const [slug,panel] of Object.entries(panels)) {
+        const before=sessions().length;await command(slug);
+        expect(sessions().length,slug).toBe(before+1);expect(sessions().at(-1).panel,slug).toBe(panel);
+        expect(sessions().at(-1).viewChain,slug).toBe(['saved','events'].includes(panel)?'all':'arc');
+      }
+      for(const slug of ['audits','candidates','feed','saved','stats','events','constructor']) {
+        await command(slug);expect(sessions().at(-1).panel,slug).toBe('help');
+      }
+    });
+  });
+
+  it('Home returns to the scan chain after a list viewed another chain',async()=>{
+    await withRuntime('22964',async({runtime,command,sessions,link,click})=>{
+      await command('leads');const root=sessions()[0];
+      await click(link(root,'panel.open',params=>params.panel==='view_chain'));
+      await click(link(runtime.commands.sessions.get(root.id),'view_chain.set',params=>params.value==='bsc'));
+      expect(runtime.commands.sessions.get(root.id)).toMatchObject({panel:'audits',viewChain:'bsc'});
+      await click(link(runtime.commands.sessions.get(root.id),'panel.open',params=>params.panel==='radar'));
+      expect(runtime.commands.sessions.get(root.id)).toMatchObject({panel:'radar',viewChain:'arc'});
+    });
+  });
+
+  it('opens the Watchlist and Activity buttons on every chain, as their commands do',async()=>{
+    await withRuntime('22965',async({runtime,command,sessions,link,click})=>{
+      await command('radar');const radar=sessions()[0];
+      await click(link(radar,'panel.open',params=>params.panel==='saved'));
+      expect(runtime.commands.sessions.get(radar.id)).toMatchObject({panel:'saved',viewChain:'all'});
+      await command('status');const status=sessions()[1];
+      await click(link(status,'panel.open',params=>params.panel==='events'));
+      expect(runtime.commands.sessions.get(status.id)).toMatchObject({panel:'events',viewChain:'all'});
+    });
+  });
+
   it('restores list filter, sort, page and chain after detail and evidence navigation',async()=>{
     await withRuntime('22910',async({runtime,command,sessions,link,click,seed})=>{
-      seed(8);await command('audits');const root=sessions()[0];
+      seed(8);await command('leads');const root=sessions()[0];
       await click(link(root,'panel.open',params=>params.panel==='filter'));
       await click(link(runtime.commands.sessions.get(root.id),'filter.set',params=>params.value==='fresh'));
       await click(link(runtime.commands.sessions.get(root.id),'panel.open',params=>params.panel==='sort'));
@@ -374,7 +410,7 @@ describe('Telegram complete command and delivery flows',()=>{
 
   it('rebuilds a requested detail from current evidence when an audit changes before its first edit is sent',async()=>{
     await withRuntime('22912',async({runtime,storage,tenantId,sent,command,sessions,link,seed,receipt,drain})=>{
-      seed();await command('audits');
+      seed();await command('leads');
       const audits=sessions()[0],binding=link(audits,'panel.open',params=>params.panel==='detail');
       const input=receipt('callback',{callbackId:binding.id,callbackQueryId:'detail-race'},{sourceMessageId:audits.messageId});
       runtime.receive(input);await runtime.runCommand(input.updateId);
@@ -391,8 +427,8 @@ describe('Telegram complete command and delivery flows',()=>{
 
   it('corrects all mapped cards while muted and never resets a permanently failed correction retry budget',async()=>{
     await withRuntime('22913',async({runtime,storage,tenantId,command,sessions,link,click,seed,drain})=>{
-      seed();await command('audits');await click(link(sessions()[0],'panel.open',params=>params.panel==='detail'));
-      await command('audits');await click(link(sessions()[1],'panel.open',params=>params.panel==='detail'));
+      seed();await command('leads');await click(link(sessions()[0],'panel.open',params=>params.panel==='detail'));
+      await command('leads');await click(link(sessions()[1],'panel.open',params=>params.panel==='detail'));
       await command('mute');expect(runtime.notifications.controls().enabled).toBe(false);
       storage.sql.exec('UPDATE candidates SET review_revision=? WHERE tenant_id=?','risk-revision',tenantId);
       storage.transactionSync(()=>runtime.reconcileCardsInTransaction());
