@@ -376,6 +376,31 @@ describe('pasted contract-address lookup', () => {
     });
   });
 
+  it('skips an unreadable lookup row everywhere but safetyState, which refuses to guess about it', async () => {
+    await withLookups('26821', async ({ runtime, storage, tenantId, connect, paste, step, tasks, lookups, lastText, clock }) => {
+      await connect();
+      const OLD = '0x' + 'a1'.repeat(20), BROKEN = '0x' + 'a2'.repeat(20);
+      storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?),(?,?,?)', tenantId, `lookup:arc:${OLD}`, JSON.stringify({ version: 2, chain: 'arc', address: OLD }),
+        tenantId, `lookup:arc:${BROKEN}`, 'not json');
+      const logs = vi.spyOn(console, 'log');
+      try {
+        expect(lookups()).toEqual([]);
+        await paste(TOKEN);
+        for (let index = 0; index < 3; index++) await step();
+        expect(lookups()).toEqual([expect.objectContaining({ address: TOKEN, state: 'DONE' })]);
+        expect(runtime().commands.snapshot(storage, tenantId, clock.now()).lookups).toHaveLength(1);
+        expect(tasks()).toEqual([]);
+        const unreadable = logs.mock.calls.map(([line]) => String(line)).filter(line => line.includes('lookup_record_unreadable'));
+        expect(unreadable.map(line => JSON.parse(line).key).sort()).toEqual([`lookup:arc:${OLD}`, `lookup:arc:${BROKEN}`]);
+      } finally { logs.mockRestore(); }
+      for (const address of [OLD, BROKEN]) expect(() => safetyState(storage, tenantId, 'arc', address, clock.now())).toThrow(expect.objectContaining({ code: 'LOOKUP_RECORD_CORRUPT' }));
+      expect(safetyState(storage, tenantId, 'arc', TOKEN, clock.now())).toBe('VERIFIED');
+      await paste(OLD);
+      expect(lastText()).toMatch(/^⚠️ The earlier lookup of this token cannot be read, so it was left as it is and not rerun\./);
+      expect(storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', tenantId, `lookup:arc:${OLD}`).one().value_json).toContain('"version":2');
+    });
+  });
+
   it('never makes a looked-up token a lead: no candidate, audit, outcome, notification, statistic or export entry', async () => {
     await withLookups('26802', async ({ runtime, storage, connect, paste, step, lookups, count, clock }) => {
       await connect();await paste(TOKEN);
