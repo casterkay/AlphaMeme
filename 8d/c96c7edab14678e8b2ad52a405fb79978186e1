@@ -1,0 +1,21 @@
+test/telegram-statistics.test.mjs
+  s_6295713717bc33::t_ca040335d8c6d6 28,30-31,57,60
+workers/statistics.runtime.mjs
+  s_6295713717bc33::t_a45e0b6351c9ee 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8dc96c7edab14678e8b2ad52a405fb79978186e1",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
