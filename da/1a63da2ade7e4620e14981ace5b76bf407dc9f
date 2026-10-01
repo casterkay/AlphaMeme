@@ -1,0 +1,63 @@
+src/bot/panels.mjs
+  s_6295713717bc33::t_1d8d69048a652f 84-85,87,182-183,188,191-203,205-222,224-225,230,263
+  s_6295713717bc33::t_5a4c8353fcbf16 204,223
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_6295713717bc33::t_65ebadff0f2f0d 94-102
+  s_6295713717bc33::t_1d8d69048a652f 103
+src/bot/runtime.mjs
+  s_6295713717bc33::t_1d8d69048a652f 24,40,56,136-144,389-390
+workers/telegram-e2e.runtime.mjs
+  s_6295713717bc33::t_1d8d69048a652f 578-580,584
+src/bot/commands.mjs
+  s_6295713717bc33::t_1d8d69048a652f 2,7,44-45,144,151-169,178,275-278
+  s_6295713717bc33::t_5a4c8353fcbf16 143,145-148
+  s_6295713717bc33::t_9c6c8b71de61e4 149-150
+src/radar-agent.mjs
+  s_6295713717bc33::t_1d8d69048a652f 273,314-324
+  s_6295713717bc33::t_394d53be2cb231 325-328
+workers/telegram-intake.runtime.mjs
+  s_6295713717bc33::t_1d8d69048a652f 341
+workers/trading.runtime.mjs
+  s_6295713717bc33::t_1d8d69048a652f 7,214-224,226,507-525
+  s_6295713717bc33::t_60fe16cb3a81f2 526-528
+docs/TELEGRAM-UX-PLAN.md
+  s_6295713717bc33::t_65ebadff0f2f0d 432,463-466
+  s_6295713717bc33::t_6af73393c2a95c 524
+  s_6295713717bc33::t_1d8d69048a652f 3-4,399,428-431,433-443
+src/scheduler.mjs
+  s_6295713717bc33::t_1d8d69048a652f 3,9
+README.md
+  s_6295713717bc33::t_1d8d69048a652f 115-117
+src/bot/trading-panels.mjs
+  s_6295713717bc33::t_1d8d69048a652f 54-55,60
+src/lookup.mjs
+  s_6295713717bc33::t_61f3248986b2d6 8-9,42,127
+  s_6295713717bc33::t_1d8d69048a652f 1-7,10-41,43-126,128-214
+src/trading/engine.mjs
+  s_6295713717bc33::t_1d8d69048a652f 21,44-49,51,56-57,60,73,90
+  s_6295713717bc33::t_5a4c8353fcbf16 55
+workers/lookup.runtime.mjs
+  s_6295713717bc33::t_1d8d69048a652f 1-90,92-344
+  s_6295713717bc33::t_da749527550be1 91
+test/telegram-panels.test.mjs
+  s_6295713717bc33::t_1d8d69048a652f 485-503,505-521
+  s_6295713717bc33::t_7f7731236899e5 504
+src/bot/snapshot.mjs
+  s_6295713717bc33::t_1d8d69048a652f 6,78,82-100,157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "da1a63da2ade7e4620e14981ace5b76bf407dc9f",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
