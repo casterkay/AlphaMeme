@@ -254,13 +254,18 @@ describe('Telegram complete command and delivery flows',()=>{
       runtime.commands.setPreference('language','en');
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
       const lead=(address,symbol,secondary)=>storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,symbol,'LIVE_READY',50_000,at,at+600_000,`lead-${symbol}`,JSON.stringify(secondary));
-      lead('0x'+'1'.repeat(40),'CLEAN',{status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]}});
+      const clean={status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]},conflicts:[]};
+      lead('0x'+'1'.repeat(40),'CLEAN',clean);
       lead('0x'+'2'.repeat(40),'PART',{status:'DEGRADED',security:{verdict:'UNSUPPORTED',fatal:[]}});
       lead('0x'+'3'.repeat(40),'WAIT',null);
+      lead('0x'+'4'.repeat(40),'MARKET',{...clean,conflicts:[{type:'MARKET_MISMATCH',field:'marketCap'}]});
+      lead('0x'+'5'.repeat(40),'SECURITY',{...clean,conflicts:[{type:'SECURITY_MISMATCH',field:'honeypot'}]});
+      lead('0x'+'6'.repeat(40),'AUDIT',clean);
+      storage.sql.exec('UPDATE candidates SET deep_json=? WHERE tenant_id=? AND symbol=?',JSON.stringify({failed:[],blockingUnknownFields:['lpBurned']}),tenantId,'AUDIT');
       storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)',tenantId,'feed.snapshot:arc','{');
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
       const alert=sent.find(row=>row.params.text?.includes('new lead'));
-      expect(alert.params.text).toBe(['<b>🆕 3 new leads · Arc</b>','1. ✅ CLEAN — $50K MC','2. ⚠️ PART — $50K MC','3. ⏳ WAIT — $50K MC','⏳ check running · ✅ no failures found · ⚠️ incomplete. Not a safety guarantee.'].join('\n'));
+      expect(alert.params.text).toBe(['<b>🆕 6 new leads · Arc</b>','1. CLEAN · ✅ No failures found — $50K MC','2. PART · ⚠️ Needs review — $50K MC','3. WAIT · ⏳ Checking — $50K MC','4. MARKET · ⚠️ Needs review — $50K MC','5. SECURITY · ⚠️ Needs review — $50K MC','6. AUDIT · ⚠️ Needs review — $50K MC','Checks are not a safety guarantee.'].join('\n'));
     });
   });
 

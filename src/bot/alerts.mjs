@@ -1,13 +1,6 @@
-import { ICONS, button, chainLabel, duration, localize, money, percent, truth, userText } from '../render/telegram.mjs';
+import { ICONS, button, chainLabel, duration, localize, money, percent, safetyBadge, truth, userText } from '../render/telegram.mjs';
 import { reasonText } from './panels.mjs';
 
-/** A lead's recorded safety check, from its secondary evidence; absent evidence means it has not run yet. */
-export function checkState(secondary) {
-  if (!secondary) return 'CHECKING';
-  return secondary.status === 'COMPLETE' && secondary.security?.verdict === 'NO_FATAL_FLAGS' ? 'PASSED' : 'INCOMPLETE';
-}
-
-const CHECK_ICONS = Object.freeze({ CHECKING: ICONS.checking, PASSED: ICONS.passed, INCOMPLETE: ICONS.unknown });
 const label = token => token.symbol || token.address.slice(-8);
 const tokenButton = (text, token) => button(text, 'panel.open', { panel: 'detail' }, { chain: token.chain, address: token.address });
 
@@ -24,16 +17,14 @@ function marketFacts(token, now, L, locale) {
 
 function newLeadsCard(tokens, now, L, locale) {
   const chains = [...new Set(tokens.map(token => chainLabel(token.chain)))].join(', ');
-  // Markers only distinguish rows once some check has finished; otherwise the closing line covers them all.
-  const marked = tokens.some(token => token.check !== 'CHECKING');
+  // Badges only distinguish rows once some check has finished; otherwise the closing line covers them all.
+  const marked = tokens.some(token => token.verdict !== 'PENDING');
   const lines = [`<b>${ICONS.newLead} ${L(`${tokens.length} 个新线索`, `${tokens.length} new lead${tokens.length === 1 ? '' : 's'}`)} · ${userText(chains)}</b>`];
   tokens.forEach((token, index) => {
     const facts = marketFacts(token, now, L, locale);
-    lines.push(`${index + 1}. ${marked ? `${CHECK_ICONS[token.check]} ` : ''}${userText(label(token), 30)}${facts ? ` — ${userText(facts)}` : ''}`);
+    lines.push(`${index + 1}. ${userText(label(token), 30)}${marked ? ` · ${safetyBadge(token.verdict, locale)}` : ''}${facts ? ` — ${userText(facts)}` : ''}`);
   });
-  lines.push(marked
-    ? L(`${ICONS.checking} 检查中 · ${ICONS.passed} 未发现问题 · ${ICONS.unknown} 核验不完整。不构成安全保证。`, `${ICONS.checking} check running · ${ICONS.passed} no failures found · ${ICONS.unknown} incomplete. Not a safety guarantee.`)
-    : L('安全检查仍在进行，尚未核验。', 'Safety check still running; not verified.'));
+  lines.push(marked ? L('检查结果不构成安全保证。', 'Checks are not a safety guarantee.') : L('安全检查仍在进行，尚未核验。', 'Safety check still running; not verified.'));
   const keyboard = [];
   const buttons = tokens.map((token, index) => tokenButton(`${index + 1} ${label(token).slice(0, 30)}`, token));
   for (let index = 0; index < buttons.length; index += 2) keyboard.push(buttons.slice(index, index + 2));

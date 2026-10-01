@@ -1,5 +1,6 @@
 import { NotificationPolicy } from './notification-policy.mjs';
-import { alertCard, checkState } from './alerts.mjs';
+import { alertCard } from './alerts.mjs';
+import { safetyVerdict } from '../scoring/safety.mjs';
 import { TelegramInbox } from './inbox.mjs';
 import { TelegramOutbox } from './outbox.mjs';
 import { createTelegramTransport } from './telegram-transport.mjs';
@@ -296,7 +297,7 @@ export class TelegramRuntime {
         return null;
       }
     };
-    const candidate = this.storage.sql.exec('SELECT symbol,market_cap,liquidity,created_at,secondary_json FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, member.chain, member.address).toArray()[0];
+    const candidate = this.storage.sql.exec('SELECT symbol,status,market_cap,liquidity,created_at,secondary_json,deep_json FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, member.chain, member.address).toArray()[0];
     if (!feeds.has(member.chain)) feeds.set(member.chain, recorded(this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, `feed.snapshot:${member.chain}`).toArray()[0]?.value_json, 'feed'));
     const key = tokenIdentity(member.chain, member.address), rows = feeds.get(member.chain)?.rows;
     const feedRow = Array.isArray(rows) ? rows.find(row => typeof row?.address === 'string' && tokenIdentity(member.chain, row.address) === key) : undefined;
@@ -304,7 +305,7 @@ export class TelegramRuntime {
     const security = secondary?.security;
     return { chain: member.chain, address: member.address, symbol: candidate?.symbol ?? '',
       marketCap: candidate?.market_cap ?? null, liquidity: candidate?.liquidity ?? null, createdAt: candidate?.created_at ?? null, priceChange5m: feedRow?.priceChange5m ?? null,
-      check: checkState(secondary),
+      verdict: safetyVerdict({ status: candidate?.status ?? null, secondary, deep: recorded(candidate?.deep_json, 'deep') }),
       fatal: Array.isArray(security?.fatal) ? security.fatal.filter(item => typeof item?.field === 'string').map(item => ({ field: item.field, value: security.fields?.[item.field] ?? null })) : [] };
   }
 
