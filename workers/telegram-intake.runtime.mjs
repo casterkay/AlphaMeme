@@ -287,7 +287,7 @@ describe('Telegram text that is not a command', () => {
         for (const { update_id: updateId } of storage.sql.exec("SELECT update_id FROM inbox WHERE status IN ('RECEIVED', 'RUNNING')").toArray()) await runtime.runCommand(updateId);
         const requests = storage.sql.exec('SELECT payload_json FROM outbox ORDER BY rowid').toArray()
           .map(row => JSON.parse(row.payload_json)).map(payload => ({ method: payload.method, params: payload.params }));
-        const inbox = storage.sql.exec('SELECT command_type, payload_json, status FROM inbox').one();
+        const inbox = storage.sql.exec('SELECT command_type, payload_json, payload_enc, status FROM inbox').one();
         const verifications = readSchedulerStateInTransaction(storage, tenantId).tasks.filter(task => task.kind === 'credential');
         const keys = storage.sql.exec('SELECT name FROM keys').toArray().map(row => row.name);
         return { inbox, requests, verifications, keys, fetched: JSON.stringify(fetched), stored: storedAtIntake + await everythingStored(storage), logged: JSON.stringify(logged) };
@@ -312,7 +312,7 @@ describe('Telegram text that is not a command', () => {
   ])('deletes a private key sent as %s and keeps it out of storage, logs, AVE and every request', async (_path, tenantId, secret, message, field = 'message') => {
     const value = secret();
     const { inbox, requests, verifications, keys, fetched, stored, logged } = await deliver(tenantId, message(value), field);
-    expect(inbox).toEqual({ command_type: 'secret_warning', payload_json: '{}', status: 'DONE' });
+    expect(inbox).toEqual({ command_type: 'secret_warning', payload_json: '{}', payload_enc: null, status: 'DONE' });
     // No verification is scheduled and no key kept, so nothing can reach AVE.
     expect([verifications, keys]).toEqual([[], []]);
     expect(requests.map(request => request.method)).toEqual(expect.arrayContaining(['deleteMessage', 'sendMessage']));
@@ -328,7 +328,7 @@ describe('Telegram text that is not a command', () => {
     // Synthetic: 64 mixed-case alphanumerics like a real AVE key, never a real one.
     const key = [...random(64)].map(byte => ALPHANUMERIC[byte % ALPHANUMERIC.length]).join('');
     const { inbox, verifications, keys, stored, logged } = await deliver('23621', { text: `/setkey ${key}` });
-    expect(inbox).toMatchObject({ command_type: 'credential', payload_json: '{"source":"message"}' });
+    expect(inbox).toMatchObject({ command_type: 'credential', payload_json: '{"source":"message"}', payload_enc: expect.any(String) });
     expect(verifications).toHaveLength(1);
     expect(keys).toEqual(['ave-pending-api-key']);
     for (const text of [stored, logged]) expect(text.includes(key)).toBe(false);
@@ -337,7 +337,7 @@ describe('Telegram text that is not a command', () => {
   it('answers unrecognized text with the hint in the sender\'s language and stores none of it', async () => {
     const words = `what does ${base58(random(12))} mean`;
     const { inbox, requests, stored, logged } = await deliver('23616', { text: words });
-    expect(inbox).toEqual({ command_type: 'text', payload_json: '{}', status: 'DONE' });
+    expect(inbox).toEqual({ command_type: 'text', payload_json: '{}', payload_enc: null, status: 'DONE' });
     expect(requests.map(request => [request.method, request.params.text])).toEqual([['sendMessage', 'I only act on commands and replies to my prompts. Open 📡 Radar or ❓ Help.']]);
     for (const text of [stored, logged, JSON.stringify(requests)]) expect(text.includes(words.split(' ')[2])).toBe(false);
     expect(stored).toContain('"telegram.language","value_json":"\\"en\\""');
