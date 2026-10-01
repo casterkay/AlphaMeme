@@ -460,11 +460,15 @@ describe('buying before the safety check verified a token', () => {
       try { request({}); } catch (error) { refusal = error; }
       expect(refusal).toBeInstanceOf(TradeRefusal);
       expect(refusal).toMatchObject({ code: 'UNVERIFIED', request: { chain: 'arc', token: TOKEN, usdCents: 1000 } });
+      // Only a literal true acknowledges, and a buy over the cap is refused before anyone is asked.
+      for (const unverifiedAcknowledged of ['yes', 1, {}]) expect(() => request({ unverifiedAcknowledged })).toThrow(expect.objectContaining({ code: 'UNVERIFIED' }));
+      expect(() => request({ usdCents: 20_000 })).toThrow(expect.objectContaining({ code: 'OVER_CAP' }));
       expect(trades()).toEqual([]);
       expect(request({ unverifiedAcknowledged: true })).toMatchObject({ side: 'buy', usdCents: 1000, unverifiedAtRequest: true });
       expect(request({ side: 'sell', usdCents: null, percent: 50 })).toMatchObject({ side: 'sell', unverifiedAtRequest: false });
       seed('arc', 'LIVE_READY', FATAL);
       expect(() => request({ unverifiedAcknowledged: true })).toThrow(expect.objectContaining({ code: 'VETOED' }));
+      expect(() => request({ unverifiedAcknowledged: true, usdCents: 20_000 })).toThrow(expect.objectContaining({ code: 'VETOED' }));
       seed('arc', 'LIVE_READY', VERIFIED);
       expect(request({})).toMatchObject({ unverifiedAtRequest: false });
       expect(trades()).toHaveLength(3);
@@ -491,6 +495,21 @@ describe('buying before the safety check verified a token', () => {
       await run(() => tradeOf(detail).state === 'QUOTED');
       expect(lastText()).toContain('Requested before the safety check verified it.');expect(lastText()).toContain('Confirm');
       expect(session().query.returnTo.panel).toBe('detail');
+    });
+  });
+
+  it('honors Yes only from the question panel, even when another panel carries a pending buy', async () => {
+    await withTrading('unverified-guard', async ({ runtime, storage, click, seed, createWallet, openDetail, trades, sent }) => {
+      seed('arc', 'LIVE_READY', null);await createWallet();
+      const detail = await openDetail();
+      const sessions = runtime().commands.sessions;
+      const [[yes]] = storage.transactionSync(() => {
+        const current = sessions.get(detail.id);
+        sessions.saveInTransaction({ ...current, query: { ...current.query, unverifiedBuy: { chain: 'arc', token: TOKEN, usdCents: 1000 } } });
+        return sessions.bindKeyboardInTransaction(sessions.get(detail.id), [[{ text: 'Yes', action: 'trade.acknowledge_unverified', params: {} }]], runtime().commands.controls.snapshot());
+      });
+      await click({ id: yes.callback_data.slice('cb:'.length), origin_message_id: sessions.get(detail.id).messageId });
+      expect(trades()).toEqual([]);expect(sent.at(-1).params.text).toMatch(/old action was not applied/);
     });
   });
 

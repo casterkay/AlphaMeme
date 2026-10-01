@@ -33,6 +33,7 @@ for (const [name, input, expected] of [
   ['a complete check with a market conflict', { status: 'LIVE_READY', secondary: MARKET_CONFLICT }, 'INCOMPLETE'],
   ['a complete check with only a website conflict', { status: 'LIVE_READY', secondary: { ...PASSED, conflicts: [{ type: 'WEBSITE_MISMATCH' }] } }, 'PASSED'],
   ['a complete check without fatal flags or conflicts', { status: 'LIVE_READY', secondary: PASSED }, 'PASSED'],
+  ['a lead, whose deep audit is empty, with a complete clean check', { status: 'LIVE_READY', secondary: PASSED, deep: {} }, 'PASSED'],
   ['a fatal verdict', { status: 'LIVE_READY', secondary: check({ security: { ...SECURITY, verdict: 'FATAL', fatal: [{ field: 'honeypot', reason: 'honeypot' }] } }) }, 'VETOED'],
   ['a hard reject with a clean check', { status: 'HARD_REJECT', secondary: PASSED }, 'VETOED'],
   ['a hard reject with no check', { status: 'HARD_REJECT', secondary: null }, 'VETOED'],

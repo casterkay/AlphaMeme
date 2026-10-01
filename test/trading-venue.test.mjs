@@ -5,6 +5,7 @@ import { swapCalldata } from './fixtures/kyber-calldata.mjs';
 import { EvmRpc, rpc, feeFields, transferredAmount, approveCalldata, DEFINITE_REFUSALS } from '../src/trading/evm.mjs';
 import { parseTradingConfig, TRADE_CHAINS, KYBER_NATIVE_TOKEN, ARC_USDC_ERC20 } from '../src/trading/config.mjs';
 import { TradingError } from '../src/trading/http.mjs';
+import { validateTrade } from '../src/trading/trades.mjs';
 import { parseUsdCents, parsePercent, withinBuyCap, usdCentsToStableUnits, nativePriceMicroUsd, usdCentsToNativeUnits, percentOf, minimumOut, displayUnits } from '../src/trading/amounts.mjs';
 
 const TOKEN = '0x' + 'ab'.repeat(20);
@@ -169,4 +170,17 @@ test('only allowlisted node refusals are definite; unknown answers stay ambiguou
     assert.equal(await answer(message), kind);assert.ok(DEFINITE_REFUSALS.has(kind));
   }
   for (const message of ['internal error', 'request timed out', 'header not found', '']) assert.equal(DEFINITE_REFUSALS.has(await answer(message)), false, message);
+});
+
+test('a trade record states as a boolean whether it was requested unverified, and a sell never was', () => {
+  const token = '0x' + 'ab'.repeat(20);
+  const trade = changes => ({ version: 1, id: 'a'.repeat(32), revision: 1, chain: 'bsc', token, side: 'buy', wallet: '0x' + '12'.repeat(20), usdCents: 1000, percent: null,
+    slippageBps: 500, capUsd: 100, unverifiedAtRequest: false, state: 'QUOTING', step: 'token', sessionId: null, createdAt: 1, updatedAt: 1, nextAt: 1, errors: 0, tokenMeta: null,
+    tokenIn: KYBER_NATIVE_TOKEN, tokenOut: token, amountIn: null, priceMicroUsd: null, route: null, quote: null, confirmedAt: null, confirmedMinAmountOut: null,
+    approval: null, swap: null, result: null, recheckAt: null, ...changes });
+  const sell = { side: 'sell', usdCents: null, percent: 50, tokenIn: token, tokenOut: KYBER_NATIVE_TOKEN };
+  for (const changes of [{}, { unverifiedAtRequest: true }, sell]) assert.doesNotThrow(() => validateTrade(trade(changes)));
+  for (const changes of [{ unverifiedAtRequest: undefined }, { unverifiedAtRequest: 'true' }, { ...sell, unverifiedAtRequest: true }]) {
+    assert.throws(() => validateTrade(trade(changes)), error => error.code === 'TRADE_RECORD_CORRUPT', JSON.stringify(changes));
+  }
 });
