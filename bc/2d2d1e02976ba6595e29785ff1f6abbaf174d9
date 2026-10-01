@@ -1,0 +1,32 @@
+src/bot/panels.mjs
+  s_6295713717bc33::t_548fcf6f7e057d 214-216,222,224,230,238,276-278
+test/telegram-panels.test.mjs
+  s_6295713717bc33::t_26196e659bcb4c 535-543
+  s_6295713717bc33::t_d8eacbd999751d 500
+workers/lookup.runtime.mjs
+  s_6295713717bc33::t_d731189c040c1b 291,293-309,311-338
+  s_6295713717bc33::t_f0f7bcbe362ccc 310
+src/lookup.mjs
+  s_6295713717bc33::t_989d5b6136f348 10-13,63,93,96,98-106,141,196,219,222
+  s_6295713717bc33::t_767eec14dff162 195,197
+src/bot/snapshot.mjs
+  s_6295713717bc33::t_548fcf6f7e057d 101-102,164
+docs/TELEGRAM-UX-PLAN.md
+  s_6295713717bc33::t_6cffdbb0f6a7a2 472-480
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "bc2d2d1e02976ba6595e29785ff1f6abbaf174d9",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}

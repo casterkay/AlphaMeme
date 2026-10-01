@@ -1,0 +1,21 @@
+src/providers/ave.mjs
+  s_6295713717bc33::t_d9ed987139e7a3 28,168-169
+test/ave-provider.test.mjs
+  s_6295713717bc33::t_d9ed987139e7a3 241-263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "13f249bd34dae71621121382ce6d394594c81b17",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}

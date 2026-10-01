@@ -1,0 +1,27 @@
+workers/lookup.runtime.mjs
+  s_6295713717bc33::t_7c8fe4d9b25d18 283-287
+docs/TELEGRAM-UX-PLAN.md
+  s_6295713717bc33::t_88960807d9985d 333-334,482-485
+src/trading/engine.mjs
+  s_6295713717bc33::t_b65b7d6576be3a 21,47,55-57
+  s_6295713717bc33::t_7c8fe4d9b25d18 48-49
+src/lookup.mjs
+  s_6295713717bc33::t_b65b7d6576be3a 26-27,102-104
+  s_6295713717bc33::t_bd7fc404a1d9e7 105-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8601e0ebc8a6d8e17bb507a9f5bc5130b5b40416",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
