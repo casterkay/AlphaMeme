@@ -57,6 +57,11 @@ test('rows are marked with their check state once any check has finished', () =>
   assert.doesNotMatch(text, /still running; not verified/, 'the blanket line would be false for checked rows');
 });
 
+test('a finished but incomplete check alone is enough to mark rows and replace the still-running line', () => {
+  const { text } = alertCard(newLeads, [lead('WAIT'), lead('PART', { check: 'INCOMPLETE' })], { locale: 'zh', now });
+  assert.deepEqual(text.split('\n'), ['<b>🆕 2 个新线索 · Arc</b>', '1. ⏳ WAIT', '2. ⚠️ PART', '⏳ 检查中 · ✅ 未发现问题 · ⚠️ 核验不完整。不构成安全保证。']);
+});
+
 test('a single new lead is singular and an odd batch keeps the last token button alone on its row', () => {
   const { text, keyboard } = alertCard(newLeads, [pepe, doge, lead('ODD')], { locale: 'en', now });
   assert.match(text, /^<b>🆕 3 new leads · Arc<\/b>/);
@@ -85,7 +90,7 @@ test('a risk alert names the token, the recorded fatal findings and that only bu
   assert.equal(text, ['<b>⛔ PEPE failed the safety check · Arc</b>', 'GoPlus flagged: Honeypot: Yes · Open source: No', 'Buying is blocked; selling still works.'].join('\n'));
   assert.deepEqual(buttons(keyboard), [{ text: 'Open PEPE', action: 'panel.open', params: { panel: 'detail' }, token: { chain: 'arc', address: vetoed.address } }]);
   const zh = alertCard({ actionReason: 'RISK_WORSENED', members: [] }, [vetoed], { locale: 'zh', now }).text;
-  assert.equal(zh, ['<b>⛔ PEPE 未通过安全检查 · Arc</b>', 'GoPlus 标记：貔貅风险: 是 · 开源: 否', '已禁止买入；仍可卖出。'].join('\n'));
+  assert.equal(zh, ['<b>⛔ PEPE 未通过安全检查 · Arc</b>', 'GoPlus 标记：貔貅风险：是 · 开源：否', '已禁止买入；仍可卖出。'].join('\n'));
 });
 
 test('a risk alert without readable findings still names the token and the blocked buy', () => {

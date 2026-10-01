@@ -58,6 +58,7 @@ Status icons (one table in `src/render/telegram.mjs`, the only source of icons):
 | No failures found | ✅ | Needs review | ⚠️ |
 | Vetoed | ⛔ | Checking | ⏳ |
 | New lead | 🆕 | Key / account issue | 🔑 |
+| Delivery issue | 📭 | | |
 
 Safety verdicts have one wording everywhere: `safetyBadge(verdict, locale)` in
 `src/render/telegram.mjs` renders `safetyVerdict` from `src/scoring/safety.mjs` (§3.9).
