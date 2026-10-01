@@ -66,6 +66,10 @@ export function projectTelegramCandidate(source) {
   row.reviewRevision = safeTelegramText(source.reviewRevision, 64);
   // When a lead first qualified; rechecks keep it. Only the stored metadata carries it.
   if (Number.isSafeInteger(source.metadata?.qualifiedAt)) row.qualifiedAt = source.metadata.qualifiedAt;
+  // When a lead last failed the screen, and why; it stays stored, no longer live.
+  if (Number.isSafeInteger(source.metadata?.screenFailedAt)) row.screenFailedAt = source.metadata.screenFailedAt;
+  if (Array.isArray(source.metadata?.screenReasons)) row.screenReasons = source.metadata.screenReasons.slice(0, 3).map(value => safeTelegramText(value, 120));
+  if (Number.isSafeInteger(source.alertedAt)) row.alertedAt = source.alertedAt;
   row.auditError = source.auditError ? 'AUDIT_FAILED' : '';
   row.decisionReason = source.deep?.chartRisk?.version !== CHART_RISK_VERSION && ['X_REVIEW', 'QUALIFIED'].includes(source.status)
     ? 'STALE_RULES' : safeTelegramText(source.decisionReason, 120);
@@ -126,7 +130,9 @@ export function readTelegramSnapshot(storage, tenant, now = Date.now()) {
     const state = Object.fromEntries(read('scheduler_state').map(row => [row.key, json(row.value_json)]));
     const preferences = Object.fromEntries(read('preferences').map(row => [row.key, json(row.value_json)]));
     const exclusions = Object.fromEntries(read('risk_exclusions').map(row => [tokenIdentity(row.chain, row.address), { version: row.version, codes: json(row.codes_json, []), reasons: json(row.reasons_json, []), at: row.at }]));
-    const candidates = read('candidates').map(candidateFromSql).map(row => projectTelegramCandidate(applyRiskExclusion(row, exclusions, row.chain)));
+    // When each token was last alerted; its alert keeps it findable.
+    const notified = state['notification.baseline']?.notified || {};
+    const candidates = read('candidates').map(candidateFromSql).map(row => projectTelegramCandidate({ ...applyRiskExclusion(row, exclusions, row.chain), alertedAt: notified[tokenIdentity(row.chain, row.address)] }));
     const annotations = read('annotations').map(row => ({ chain: row.chain, address: row.address, favorite: row.favorite === 1, note: safeTelegramText(row.note, 500), updatedAt: row.updated_at }));
     const marks = read('manual_marks').map(row => ({ chain: row.chain, address: row.address, decision: row.decision, at: row.marked_at, reviewRevision: row.review_revision, version: row.mark_version }));
     const events = read('events').map(row => ({ at: row.at, chain: row.chain, address: row.address, type: safeTelegramText(row.type, 32), message: safeTelegramText(row.message, 500) }));

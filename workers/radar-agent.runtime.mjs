@@ -336,7 +336,7 @@ describe('recoverable Radar scanner', () => {
     });
   });
 
-  it('eliminates a lead that now fails the AVE screen and keeps a lead missing from one hot list', async () => {
+  it('ends the live state of a lead that now fails the AVE screen, keeping it with the reasons, and keeps a lead missing from one hot list', async () => {
     const tenantId = '19006';
     const radar = await configuredRadar(tenantId);
     await beginCycle(radar, tenantId, 'cycle-leads');
@@ -351,8 +351,14 @@ describe('recoverable Radar scanner', () => {
     const screened = await radar.advanceRecoverableScan({ tenantId, cycleId: 'cycle-followup' });
     expect(screened.partial.leads).toEqual([]);
     await runInDurableObject(radar, async (_instance, state) => {
-      expect(state.storage.sql.exec('SELECT address, status, review_revision FROM candidates WHERE tenant_id = ?', tenantId).toArray())
-        .toEqual([{ address: SECOND, status: 'LIVE_READY', review_revision: revisions.get(SECOND) }]);
+      const rows = new Map(state.storage.sql.exec('SELECT address, status, review_revision, stale_at, metadata_json FROM candidates WHERE tenant_id = ?', tenantId).toArray().map(row => [row.address, row]));
+      expect(rows.get(SECOND)).toMatchObject({ status: 'LIVE_READY', review_revision: revisions.get(SECOND) });
+      expect(rows.get(SECOND).stale_at).toBeGreaterThan(Date.now());
+      expect(rows.get(LEAD)).toMatchObject({ status: 'LIVE_READY', review_revision: revisions.get(LEAD) });
+      expect(rows.get(LEAD).stale_at).toBeLessThanOrEqual(Date.now());
+      const metadata = JSON.parse(rows.get(LEAD).metadata_json);
+      expect(metadata.screenFailedAt).toBe(rows.get(LEAD).stale_at);
+      expect(metadata.screenReasons.length).toBeGreaterThan(0);
       expect(state.storage.sql.exec('SELECT COUNT(*) AS count FROM events WHERE tenant_id = ? AND type = ?', tenantId, 'CANDIDATE_NEW').one().count).toBe(2);
     });
   });
@@ -448,7 +454,7 @@ describe('recoverable Radar scanner', () => {
     });
   });
 
-  it('prunes stale candidates and expired leads and caps the per-chain candidate projection at finalization', async () => {
+  it('prunes unchecked candidates and caps the per-chain projection at finalization, keeping favorites, alerted tokens and leads past their live window', async () => {
     const tenantId = '19010';
     const cycleId = 'cycle-candidate-retention';
     const now = Date.now();
@@ -466,6 +472,11 @@ describe('recoverable Radar scanner', () => {
       insert('stale-candidate', 'X_REVIEW', now - settings.candidateRetentionMs - 1, 1, 100);
       insert('favorite-candidate', 'X_REVIEW', now - settings.candidateRetentionMs - 1, 1, 1_000);
       insert('expired-lead', 'LIVE_READY', now, 1, 1_000, now - 1);
+      // Alerted a day ago, unchecked past retention and ranked below the cap: kept for the no-repeat window.
+      insert('alerted-candidate', 'HARD_REJECT', now - settings.candidateRetentionMs - 1, 0, 0);
+      insert('long-ago-alerted', 'HARD_REJECT', now - settings.candidateRetentionMs - 1, 0, 0);
+      state.storage.sql.exec('INSERT INTO scheduler_state (tenant_id, key, value_json) VALUES (?, ?, ?)', tenantId, 'notification.baseline',
+        JSON.stringify({ version: 1, notified: { 'arc:alerted-candidate': now - 86_400_000, 'arc:long-ago-alerted': now - 8 * 86_400_000 } }));
       state.storage.sql.exec('INSERT INTO annotations (tenant_id, chain, address, favorite, note, updated_at) VALUES (?, ?, ?, ?, ?, ?)', tenantId, 'arc', 'favorite-candidate', 1, '', now);
       for (let index = 0; index < 201; index += 1) insert(`active-${String(index).padStart(3, '0')}`, 'WAIT_RECHECK', now, 0, index);
       const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
@@ -479,10 +490,12 @@ describe('recoverable Radar scanner', () => {
         outcomeRetentionMs: settings.outcomeRetentionMs
       });
       const rows = state.storage.sql.exec('SELECT address FROM candidates WHERE tenant_id = ? AND chain = ?', tenantId, 'arc').toArray().map(row => row.address);
-      expect(rows).toHaveLength(200);
+      expect(rows).toHaveLength(201);
       expect(rows).not.toContain('stale-candidate');
-      expect(rows).not.toContain('expired-lead');
+      expect(rows).not.toContain('long-ago-alerted');
+      expect(rows).toContain('expired-lead');
       expect(rows).toContain('favorite-candidate');
+      expect(rows).toContain('alerted-candidate');
     });
   });
 

@@ -127,6 +127,7 @@ class MemoryScanStore {
   }
 
   readCandidate() { return null; }
+  readCandidateAddresses() { return []; }
   readAuditQueue() { return []; }
   readOutcomes() { return []; }
 }

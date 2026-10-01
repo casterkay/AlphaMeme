@@ -167,9 +167,15 @@ confirmation panel.
 
 - Header shows only the chain plus non-default state, e.g. `Arc · Filter: Favorites
   · Search: "pepe"`.
-- Lead row: `1. PEPE · ⏳ Checking` / `✅` / `⚠️` / `⛔`, then
-  `$120K MC · $30K liq · 4m ago`. The "failed/unknown 0/3" counter moves to the detail
-  screen as a verdict.
+- Leads lists every token the radar keeps, not only the last 30 min (amended):
+  a token is kept until it goes unchecked for the candidate retention window (2 h);
+  a favorite, or a token alerted within the 7-day no-repeat window, is kept
+  regardless. A lead that fails a later screen or leaves the hot list stays, no
+  longer live.
+- Lead row: `1. PEPE · ⏳ Checking` / `✅` / `⚠️` / `⛔` (plus `🔔` once alerted), then
+  `$120K MC · $30K liq · 4m ago` (plus `off the hot list` or `no longer passes the
+  screen` for a lead past its live window; the detail adds the screen's reason).
+  The "failed/unknown 0/3" counter moves to the detail screen as a verdict.
 - Hot-list row: a token that became a candidate shows its safety badge
   (`1. PEPE · ⛔ Vetoed` / `⏳` / `⚠️` / `✅`); a screen-only token shows plain
   `passed screen` (no icon) or the first reason; then
@@ -181,7 +187,7 @@ confirmation panel.
 - Keyboard: token buttons in pairs; `[👁️ Chain] [🔽 Filter] [↕️ Sort]` on one row;
   `[🔍 Search]` (plus `[✖ Clear]` when active); pagination `[◀] [▶]`; standard footer.
   Viewing a chain gets 👁️, not the scan chain's 🔗: one icon never opens two panels.
-- Filter labels shorten: Leads, Needs X review, Rechecking, Approved, Ignored,
+- Filter labels shorten: Alerted, Leads, Needs X review, Rechecking, Approved, Ignored,
   Vetoed, Last 5 min, Favorites.
 
 ### 3.5 Token detail (`detailPanel`)

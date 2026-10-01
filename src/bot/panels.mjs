@@ -7,13 +7,13 @@ import { TRADING_PANELS, TRADING_PANEL_NAMES, tokenTradeControls, renderTradingP
 import { localize, escapeHtml, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, safetyBadge, ICONS } from '../render/telegram.mjs';
 
 export const PANEL_NAMES = Object.freeze(['alert','radar','feed','audits','saved','events','status','sources','delivery','settings','chains','onboard','help','detail','evidence','view_chain','filter','sort','language','disconnect','stats','horizon','cohort','connection',...TRADING_PANELS]);
-export const AUDIT_FILTERS = Object.freeze(['all','lead','chain','waiting','passed','ignored','rejected','fresh','favorite']);
+export const AUDIT_FILTERS = Object.freeze(['all','alerted','lead','chain','waiting','passed','ignored','rejected','fresh','favorite']);
 export const AUDIT_SORTS = Object.freeze(['audit_desc','score_desc','market_desc','market_asc','liquidity_desc']);
 export const FEED_SORTS = Object.freeze(['priority','volume']);
 const AVE_KEY_URL = 'https://cloud.ave.ai/login';
 const names = {
   radar:['雷达','Radar'], feed:['热榜','Hot list'], audits:['线索','Leads'], saved:['自选','Watchlist'], events:['动态','Activity'], status:['状态','Status'], sources:['来源','Sources'], delivery:['投递','Delivery'], settings:['设置','Settings'], chains:['扫描链','Scan chain'], onboard:['AVE密钥','AVE key'], help:['帮助','Help'], detail:['代币详情','Token detail'], evidence:['检查证据','Evidence'], view_chain:['查看链','View chain'], filter:['筛选','Filter'], sort:['排序','Order'], language:['语言','Language'], disconnect:['断开AVE','Disconnect AVE'], stats:['表现','Performance'], horizon:['观察窗口','Window'], cohort:['样本组别','Cohort'], connection:['AVE连接','AVE connection'],
-  all:['全部','All'], lead:['线索','Leads'], chain:['待看X','Needs X review'], waiting:['复查中','Rechecking'], passed:['人工通过','Approved'], ignored:['已忽略','Ignored'], rejected:['已否决','Vetoed'], fresh:['近5分钟','Last 5 min'], favorite:['收藏','Favorites'], notes:['有备注','With notes'],
+  all:['全部','All'], alerted:['已提醒','Alerted'], lead:['线索','Leads'], chain:['待看X','Needs X review'], waiting:['复查中','Rechecking'], passed:['人工通过','Approved'], ignored:['已忽略','Ignored'], rejected:['已否决','Vetoed'], fresh:['近5分钟','Last 5 min'], favorite:['收藏','Favorites'], notes:['有备注','With notes'],
   audit_desc:['最新审计','Newest audit'], score_desc:['发现评分','Discovery score'], market_desc:['市值↓','Market cap ↓'], market_asc:['市值↑','Market cap ↑'], liquidity_desc:['流动性↓','Liquidity ↓'], priority:['通过筛选优先','Screen passes first'], volume:['5分钟成交额','5-minute volume'],
   candidates:['候选事件','Candidates'], risk:['风险变化','Risk changes'], service:['服务事件','Service'], unknown:['未知','Unknown'],
   ...TRADING_PANEL_NAMES
@@ -49,11 +49,13 @@ export function selectPanelRows(snapshot, session) {
       .map(row => ({ ...snapshot.candidates.find(candidate => id(candidate) === id(row)), ...row }))
       .filter(row => searchMatches(row, query.search)).sort((a,b) => number(b.updatedAt) - number(a.updatedAt));
   }
-  rows = snapshot.candidates.filter(row => (!chain || row.chain === chain) && row.auditedAt >= snapshot.at - 1_800_000 && searchMatches(row,query.search));
+  // Leads lists every token the radar still keeps; retention, not a time window, decides what that is.
+  rows = snapshot.candidates.filter(row => (!chain || row.chain === chain) && searchMatches(row,query.search));
   rows = rows.filter(row => {
     const filter = query.filter || 'all';
     if (['lead','chain','waiting','passed','ignored','rejected'].includes(filter)) return effectiveStatus(row,markFor(snapshot,row),snapshot.at) === filter;
     if (filter === 'fresh') return snapshot.at - row.auditedAt <= 300_000;
+    if (filter === 'alerted') return Number.isFinite(row.alertedAt);
     if (filter === 'favorite') return annotationFor(snapshot,row)?.favorite === true;
     return true;
   });
@@ -97,6 +99,15 @@ function tokenSafety(row) {
   };
 }
 const safetyMark = (safety,locale) => safety.verdict ? safetyBadge(safety.verdict,locale) : `${ICONS.unknown} ${localize(locale,'未核验','Not checked')}`;
+// A market lead stays stored after it stops being live; say so, and why when the screen failed it.
+function liveState(row,snapshot,locale,{ reason = false } = {}) {
+  if (row.status !== 'LIVE_READY' || !Number.isFinite(row.staleAt) || row.staleAt > snapshot.at) return '';
+  const L = (zh,en) => localize(locale,zh,en);
+  if (!Number.isFinite(row.screenFailedAt)) return L('已离开热榜','off the hot list');
+  const why = reason && row.screenReasons?.length ? `${L('：',': ')}${userText(row.screenReasons[0],80)}` : '';
+  return `${L('不再通过筛选','no longer passes the screen')}${why}`;
+}
+
 function safetyLine(safety,snapshot,locale) {
   const L = (zh,en) => localize(locale,zh,en);
   if (!safety.verdict) return `${ICONS.unknown} ${L('未经安全核验','Not safety-checked')}`;
@@ -145,9 +156,9 @@ function listPanel(snapshot,session,locale) {
     } else {
       const mark = markFor(snapshot,row), status = row.status && mark ? effectiveStatus(row,mark,snapshot.at) : null;
       const marked = status === 'passed' ? ` · ${ICONS.approve} ${name('passed',locale)}` : mark?.decision === 'ignored' ? ` · ${ICONS.ignore} ${name('ignored',locale)}` : '';
-      blocks.push(`${title} · ${safetyMark(tokenSafety(row),locale)}${marked}`);
+      blocks.push(`${title} · ${safetyMark(tokenSafety(row),locale)}${marked}${Number.isFinite(row.alertedAt) && !saved ? ` · ${ICONS.alertsOn}` : ''}`);
       if (saved) blocks.push([chainLabel(row.chain),row.symbol ? '' : `<code>${userText(row.address?.slice(-12),12)}</code>`,row.favorite ? ICONS.saved : '',row.note?.trim() ? `${ICONS.note} ${userText(row.note,60)}` : ''].filter(Boolean).join(' · '));
-      else blocks.push([present(row.marketCap) ? L(`市值 ${money(row.marketCap,locale)}`,`${money(row.marketCap,locale)} MC`) : '',present(row.liquidity) ? L(`流动性 ${money(row.liquidity,locale)}`,`${money(row.liquidity,locale)} liq`) : '',relativeTime(row.auditedAt,snapshot.at,locale)].filter(Boolean).join(' · '));
+      else blocks.push([present(row.marketCap) ? L(`市值 ${money(row.marketCap,locale)}`,`${money(row.marketCap,locale)} MC`) : '',present(row.liquidity) ? L(`流动性 ${money(row.liquidity,locale)}`,`${money(row.liquidity,locale)} liq`) : '',relativeTime(row.auditedAt,snapshot.at,locale),liveState(row,snapshot,locale)].filter(Boolean).join(' · '));
     }
     blocks.push('');
   });
@@ -212,7 +223,7 @@ function detailPanel(snapshot,session,locale) {
     return finishPanel(page.title,[...header,counts,'',...page.items.map(value => userText(value,2400)),`${paging.page+1}/${pages.length}`], [paging.keyboard,[button(L('摘要','Summary'),'panel.open',{panel:'detail'},identity)]],snapshot,session,locale,{token:identity,refresh:false});
   }
   const fact = key => row[key] ?? listed?.[key] ?? null, liquidity = deep.security?.liquidity ?? fact('liquidity'), createdAt = fact('createdAt');
-  const blocks = [safetyLine(safety,snapshot,locale),
+  const blocks = [safetyLine(safety,snapshot,locale),liveState(row,snapshot,locale,{ reason:true }) || null,
     [present(fact('marketCap')) ? L(`市值 ${money(fact('marketCap'),locale)}`,`MC ${money(fact('marketCap'),locale)}`) : '',present(liquidity) ? L(`流动性 ${money(liquidity,locale)}`,`Liq ${money(liquidity,locale)}`) : '',present(fact('holders')) ? L(`持有人 ${numberText(fact('holders'),locale)}`,`${numberText(fact('holders'),locale)} holders`) : ''].filter(Boolean).join(' · '),
     [createdAt > 0 ? L(`币龄${duration(snapshot.at-createdAt*1000,locale)}`,`${duration(snapshot.at-createdAt*1000,locale)} old`) : '',present(listed?.priceChange5m) ? `5m ${percent(listed.priceChange5m,locale,true)}` : '',present(listed?.volume5m) ? L(`5分钟成交 ${money(listed.volume5m,locale)}`,`5m vol ${money(listed.volume5m,locale)}`) : ''].filter(Boolean).join(' · '),
     `<code>${userText(row.address,80)}</code>`];
@@ -275,7 +286,7 @@ function eventsPanel(snapshot,session,locale) {
 // The registered command menu, in order of use. Rarer commands work but stay out of
 // the menu; Help lists both.
 const MENU_COMMANDS = [
-  ['radar','雷达：首页与最新线索','Radar: home and newest leads'],['leads','线索：近30分钟的线索与安全核验','Leads: the last 30 min and their safety checks'],['hot','热榜：雷达读取的AVE热榜','Hot list: the AVE hot list the radar reads'],['watchlist','自选：收藏与备注','Watchlist: favorites and notes'],
+  ['radar','雷达：首页与最新线索','Radar: home and newest leads'],['leads','线索：雷达保留的代币与安全核验','Leads: tokens the radar keeps and their safety checks'],['hot','热榜：雷达读取的AVE热榜','Hot list: the AVE hot list the radar reads'],['watchlist','自选：收藏与备注','Watchlist: favorites and notes'],
   ['wallet','钱包：交易热钱包与余额','Wallet: your trading hot wallet and balances'],['performance','表现：通过筛选的代币之后的涨跌','Performance: how screened tokens moved afterwards'],['settings','设置：扫描链、提醒、交易与语言','Settings: scan chain, alerts, trading and language'],['help','帮助：用法、命令与安全','Help: how it works, commands and safety']
 ];
 const MORE_COMMANDS = [

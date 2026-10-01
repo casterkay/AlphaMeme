@@ -103,14 +103,25 @@ test('audit filters use effective marks while overview keeps original on-chain c
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'lead'})).length,1);
 });
 
-test('audit and fresh cutoffs are inclusive and saved records survive evidence expiry',()=>{
-  const snapshot=fixture();snapshot.candidates=[candidate(0,{auditedAt:now-1_800_000}),candidate(1,{auditedAt:now-1_800_001}),candidate(2,{auditedAt:now-300_000}),candidate(3,{auditedAt:now-300_001})];
+test('Leads lists every kept token whatever its age, the fresh cutoff is inclusive, and saved records survive evidence expiry',()=>{
+  const snapshot=fixture();snapshot.candidates=[candidate(0,{auditedAt:now-1_800_000}),candidate(1,{auditedAt:now-6*3_600_000}),candidate(2,{auditedAt:now-300_000}),candidate(3,{auditedAt:now-300_001})];
   snapshot.annotations=[{chain:'base',address:'0x'+'a'.repeat(40),favorite:true,note:'Historical note',updatedAt:now}];
-  assert.equal(selectPanelRows(snapshot,session()).length,3);
+  assert.equal(selectPanelRows(snapshot,session()).length,4);
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'fresh'})).length,1);
   assert.equal(selectPanelRows(snapshot,{...session('saved'),viewChain:'all'}).length,1);
   const detail=renderPanel(snapshot,session('detail',{selectedToken:snapshot.annotations[0]}),'en');
   assert.match(detail.text,/no longer retained/);assert.ok(!actions(detail).includes('mark.set_passed'));
+});
+
+test('Leads finds alerted tokens and says when a kept lead is no longer live, and why in its detail',()=>{
+  const snapshot=fixture();
+  snapshot.candidates=[candidate(0,{status:'LIVE_READY',alertedAt:now-86_400_000,staleAt:now-1,metadata:{screenFailedAt:now-1,screenReasons:['市值超出范围']}}),candidate(1,{status:'LIVE_READY',staleAt:now-1}),candidate(2,{status:'LIVE_READY',staleAt:now+1})];
+  assert.deepEqual(selectPanelRows(snapshot,session('audits',{filter:'alerted'})).map(row=>row.symbol),['COIN0']);
+  const text=renderPanel(snapshot,session('audits',{sort:'score_desc'}),'en').text;
+  assert.match(text,/COIN0<\/b> · [^\n]+ · 🔔\n[^\n]*no longer passes the screen\n/);
+  assert.match(text,/COIN1<\/b>[^\n]*\n[^\n]*off the hot list\n/);
+  assert.doesNotMatch(text,/COIN2<\/b>[^\n]*\n[^\n]*(off the hot list|no longer)/);
+  assert.match(renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en').text,/no longer passes the screen: 市值超出范围/);
 });
 
 test('the hot list states its read status, staleness and whether the chain is scanned, in both locales',()=>{
