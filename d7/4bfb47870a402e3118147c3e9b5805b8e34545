@@ -1,0 +1,20 @@
+workers/trading.runtime.mjs
+  s_6295713717bc33::t_cef3e5b1f471c1 507-528
+  s_6295713717bc33::t_d2320582d94d1c 7,214-224,226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d74bfb47870a402e3118147c3e9b5805b8e34545",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
