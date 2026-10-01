@@ -25,6 +25,26 @@ test('all native panels render both locales with bounded text and typed action d
   assert.ok(commands.includes('mute')&&commands.includes('wallet')&&!commands.includes('unmute'));
 });
 
+// Panels whose content cannot change by re-reading: choices, confirmations, help, evidence
+// pages, and the trading dialogs (in this fixture trading is off, so they are all static).
+const STATIC_PANELS=new Set(['view_chain','filter','sort','language','horizon','cohort','chains','disconnect','help','evidence','trade','wallet','wallet_export','wallet_remove','trade_settings']);
+test('every panel ends with the standard footer and keeps navigation out of its body',()=>{
+  const home=item=>item.action==='panel.open'&&item.params.panel==='radar';
+  const nav=item=>item.action==='panel.refresh'||item.action==='panel.back'||home(item);
+  for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) for(const returning of [false,true]) {
+    const snapshot=fixture(), query={selectedToken:{chain:'sol',address:snapshot.candidates[0].address},...(returning?{returnTo:{panel:'audits',viewChain:'sol',query:{}}}:{})};
+    const result=renderPanel(snapshot,session(panel,query),locale), footer=result.keyboard.at(-1), label=`${panel} ${locale} ${returning}`;
+    assert.ok(footer.every(nav),label);
+    assert.ok(!result.keyboard.slice(0,-1).flat().some(nav),label);
+    const order=footer.map(item=>item.action==='panel.refresh'?0:item.action==='panel.back'?1:2);
+    assert.deepEqual(order,[...order].sort(),label);
+    assert.equal(footer.some(item=>item.action==='panel.back'),returning&&panel!=='radar',label);
+    assert.equal(footer.some(home),panel!=='radar',label);
+    assert.equal(footer.some(item=>item.action==='panel.refresh'),!STATIC_PANELS.has(panel),label);
+    assert.match(result.text,locale==='en'?/\n\nUpdated [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2} UTC$/:/\n\n更新于 \d{1,2}月\d{1,2}日 \d{2}:\d{2} UTC$/,label);
+  }
+});
+
 test('audit filters use effective marks while overview keeps original on-chain candidate count',()=>{
   const snapshot=fixture();snapshot.marks=[{chain:'sol',address:snapshot.candidates[0].address,decision:'passed',at:now-1,reviewRevision:'revision'}];
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'chain'})).length,12);
@@ -150,4 +170,10 @@ test('statistics distinguish unavailable from empty and require all three window
   snapshot.stats={sol:{tracked:60,completed30m:50,completed1h:1,completed2h:49,completed24h:0,averageReturn30m:null,averageReturn1h:null,averageReturn2h:null,averageReturn24h:null,calibrationReady:false,coverage:{passed:{h6:{eligible:0,completed:0,missing:0,median:null,positiveRate:null}}}}};
   const summary=renderPanel(snapshot,session('stats'),'en');assert.match(summary.text,/30m Ready/);assert.match(summary.text,/Overall calibration gate: Not ready/);
   const detail=renderPanel(snapshot,session('stats',{horizon:'h6'}),'en');assert.match(detail.text,/0\/0\/0/);assert.match(detail.text,/No samples/);
+});
+
+test('evidence pages keep the exact audit time while the detail summary shows it relatively',()=>{
+  const snapshot=fixture(),query={selectedToken:{chain:'sol',address:snapshot.candidates[0].address}};
+  assert.match(renderPanel(snapshot,session('evidence',query),'en').text,/Audit: 2027-01-15 07:59:00 UTC · 1m ago/);
+  assert.match(renderPanel(snapshot,session('detail',query),'en').text,/Audit: 1m ago\n/);
 });

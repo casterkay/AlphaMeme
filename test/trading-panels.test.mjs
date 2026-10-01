@@ -61,3 +61,13 @@ test('the wallet panel shows the address, hot-wallet risk and management actions
   assert.match(result.text, /export may not have arrived/);
   assert.deepEqual(buttons(result).map(item => item.action === 'panel.open' ? item.params.panel : item.action), ['wallet.refresh', 'trade_settings', 'wallet_export', 'wallet_remove', 'radar']);
 });
+
+test('a live trade offers Refresh and Back to its origin; the wallet refreshes balances instead', () => {
+  const origin = { panel: 'detail', viewChain: 'bsc', query: { selectedToken: { chain: 'bsc', address: TOKEN } } };
+  const trade = { id: 't1', chain: 'bsc', token: TOKEN, side: 'sell', percent: 50, state: 'QUOTING', tokenMeta: { symbol: 'MEME', decimals: 18 }, createdAt: now };
+  const footer = result => result.keyboard.at(-1).map(item => item.action);
+  assert.deepEqual(footer(renderPanel(snapshot({ trades: [trade] }), { panel: 'trade', viewChain: 'bsc', query: { tradeId: 't1', returnTo: origin }, version: 1 }, 'en')), ['panel.refresh', 'panel.back', 'panel.open']);
+  const wallet = renderPanel(snapshot(), { panel: 'wallet', viewChain: 'bsc', query: {}, version: 1 }, 'en');
+  assert.deepEqual(footer(wallet), ['panel.open']);
+  assert.ok(buttons(wallet).some(item => item.action === 'wallet.refresh'));
+});

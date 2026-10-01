@@ -459,6 +459,26 @@ describe('trading wallet custody', () => {
     });
   });
 
+  it('leaves the wallet on Back after create, export and removal instead of reopening a spent dialog', async () => {
+    await withTrading('wallet-back', async ({ runtime, network, click, link, seed, openDetail }) => {
+      seed('bsc');
+      const detail = await openDetail('bsc');
+      const current = () => runtime().commands.sessions.get(detail.id);
+      await click(link(current(), 'panel.open', params => params.panel === 'wallet'));
+      await click(link(current(), 'wallet.create'));
+      network.setWallet(runtime().trading.wallet().address);
+      expect(current().panel).toBe('wallet');expect(current().query.returnTo.panel).toBe('detail');
+      await click(link(current(), 'panel.open', params => params.panel === 'wallet_export'));
+      await click(link(current(), 'wallet.export'));
+      expect(current().panel).toBe('wallet');expect(current().query.returnTo.panel).toBe('detail');
+      await click(link(current(), 'panel.open', params => params.panel === 'wallet_remove'));
+      await click(link(current(), 'wallet.remove'));
+      expect(runtime().trading.wallet()).toBeNull();
+      await click(link(current(), 'panel.back'));
+      expect(current().panel).toBe('detail');
+    });
+  });
+
   it('removes the wallet only from its warning panel', async () => {
     await withTrading('remove', async ({ runtime, storage, tenantId, click, link, has, createWallet, sent }) => {
       const { panel } = await createWallet();

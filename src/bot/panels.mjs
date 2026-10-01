@@ -2,7 +2,7 @@ import { backendDisposition, effectiveStatus } from '../scoring/manual-review.mj
 import { SCAN_CHAINS } from '../chains.mjs';
 import { tokenIdentity, safeTelegramText } from './snapshot.mjs';
 import { TRADING_PANELS, TRADING_PANEL_NAMES, tokenTradeControls, renderTradingPanel } from './trading-panels.mjs';
-import { localize, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, age, truth, textPages, finishPanel, officialXUrl } from '../render/telegram.mjs';
+import { localize, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, ICONS } from '../render/telegram.mjs';
 
 export const PANEL_NAMES = Object.freeze(['radar','feed','audits','saved','events','status','sources','delivery','settings','chains','onboard','help','detail','evidence','view_chain','filter','sort','language','disconnect','stats','horizon','cohort',...TRADING_PANELS]);
 export const AUDIT_FILTERS = Object.freeze(['all','lead','chain','waiting','passed','ignored','rejected','fresh','favorite']);
@@ -23,10 +23,7 @@ const markFor = (snapshot, row) => (snapshot.marks || []).find(mark => id(mark) 
 const annotationFor = (snapshot, row) => (snapshot.annotations || []).find(mark => id(mark) === id(row));
 const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
 const searchMatches = (row, search) => !search || [row.symbol,row.name,row.address].join(' ').toLowerCase().includes(search.trim().toLowerCase());
-const open = (panel, locale, params = {}) => button(name(panel, locale), 'panel.open', { panel, ...params });
-const home = locale => open('radar', locale);
-const back = locale => button(localize(locale,'返回','Back'), 'panel.back');
-const refresh = locale => button(localize(locale,'刷新','Refresh'), 'panel.refresh');
+const open = (panel, locale, params = {}) => button(ICONS[panel] ? `${ICONS[panel]} ${name(panel, locale)}` : name(panel, locale), 'panel.open', { panel, ...params });
 const state = (snapshot, row, locale) => row.auditedAt ? name(effectiveStatus(row, markFor(snapshot,row), snapshot.at), locale) : localize(locale,'未审计','Not audited');
 
 export function selectPanelRows(snapshot, session) {
@@ -75,9 +72,9 @@ function listPanel(snapshot,session,locale) {
   const rows = selectPanelRows(snapshot,session), paging = pagination(rows.length,query.page,5,locale);
   const shown = rows.slice(paging.start,paging.start+5), isLive = session.panel === 'feed', saved = session.panel === 'saved';
   const feed = snapshot.feedByChain?.[session.viewChain];
-  const blocks = [userText(chainLabel(session.viewChain || 'all')), `${name(query.filter || 'all',locale)} · ${name(query.sort || (isLive ? 'priority' : 'audit_desc'),locale)}`, `${L('搜索','Search')}: ${userText(query.search || L('无','None'),128)}`, ''];
+  const blocks = [userText(session.viewChain && session.viewChain !== 'all' ? chainLabel(session.viewChain) : L('全部链','All chains')), `${name(query.filter || 'all',locale)} · ${name(query.sort || (isLive ? 'priority' : 'audit_desc'),locale)}`, `${L('搜索','Search')}: ${userText(query.search || L('无','None'),128)}`, ''];
   if (isLive) {
-    blocks.push(!feed?.observedAt ? L('等待首次读取AVE热榜','Waiting for the first AVE hot-list read') : `${L('热榜更新','Hot list updated')}: ${timestamp(feed.observedAt,locale)}`);
+    blocks.push(!feed?.observedAt ? L('等待首次读取AVE热榜','Waiting for the first AVE hot-list read') : `${L('热榜更新','Hot list updated')}: ${relativeTime(feed.observedAt,snapshot.at,locale)}`);
     if (feed?.observedAt && snapshot.at-feed.observedAt > 120_000) blocks.push(L('数据已陈旧','Data stale'));
     if (feed?.status && feed.status !== 'READY') blocks.push(`${L('读取状态','Read status')}: ${reasonText(feed.status,locale)}`);
     if (snapshot.control?.scanChain !== session.viewChain) blocks.push(L('此链未在扫描，显示最后一次读取','This chain is not being scanned; showing its last read'));
@@ -87,10 +84,10 @@ function listPanel(snapshot,session,locale) {
     if (saved) blocks.push(`${chainLabel(row.chain)} · <code>${userText(row.address?.slice(-12),12)}</code> · ${L('收藏','Favorite')}: ${truth(row.favorite,locale)}`, userText(row.note || L('无备注','No note'),60));
     else {
       blocks.push(`${L('市值','Market cap')} ${money(row.marketCap,locale)} · ${L('流动性','Liquidity')} ${money(row.liquidity,locale)}`);
-      if (isLive) blocks.push(row.pass ? L('通过AVE行情筛选','Passed the AVE market screen') : `${L('未通过','Not passed')}: ${userText(row.reasons.join('；') || name('unknown',locale),160)}`,`${L('币龄','Age')}: ${row.createdAt ? numberText(Math.max(0,Math.floor((snapshot.at-row.createdAt*1000)/60_000)),locale)+'m' : name('unknown',locale)}`,`${L('5m成交','5m volume')} ${money(row.volume5m,locale)} · ${L('买/卖','Buys/sells')} ${numberText(row.buys5m,locale)}/${numberText(row.sells5m,locale)}`, `${L('持有人','Holders')} ${numberText(row.holders,locale)} · ${L('5m价格变化','5m price change')} ${percent(row.priceChange5m,locale,true)}`);
+      if (isLive) blocks.push(row.pass ? L('通过AVE行情筛选','Passed the AVE market screen') : `${L('未通过','Not passed')}: ${userText(row.reasons.join('；') || name('unknown',locale),160)}`,`${L('币龄','Age')}: ${row.createdAt ? duration(snapshot.at-row.createdAt*1000,locale) : name('unknown',locale)}`,`${L('5m成交','5m volume')} ${money(row.volume5m,locale)} · ${L('买/卖','Buys/sells')} ${numberText(row.buys5m,locale)}/${numberText(row.sells5m,locale)}`, `${L('持有人','Holders')} ${numberText(row.holders,locale)} · ${L('5m价格变化','5m price change')} ${percent(row.priceChange5m,locale,true)}`);
       else blocks.push(`${L('发现评分','Discovery score')} ${numberText(row.discoveryScore,locale)} · ${L('失败/未知','Failed/unknown')} ${(row.deep?.failed || []).length}/${(row.deep?.unknownFields || []).length}`);
     }
-    if (!isLive) blocks.push(`${L('证据时间','Evidence time')}: ${timestamp(row.auditedAt,locale)}`);
+    if (!isLive) blocks.push(`${L('证据时间','Evidence time')}: ${relativeTime(row.auditedAt,snapshot.at,locale)}`);
     blocks.push('');
   });
   if (!shown.length) blocks.push(L('没有符合条件的记录','No matching records'));
@@ -99,7 +96,7 @@ function listPanel(snapshot,session,locale) {
   const keyboard = pairs(shown.map((row,index) => session.query?.noteTargetMatches ? button(`${paging.start + index + 1} ${safeTelegramText(row.symbol || row.address.slice(-8),30)}`, 'note.select', {}, token(row)) : detailButton(row,paging.start+index,locale)));
   keyboard.push([open('view_chain',locale),open(isLive ? 'sort' : 'filter',locale)]);
   if (!isLive && !saved) keyboard.push([open('sort',locale)]);
-  keyboard.push([button(L('搜索','Search'),'input.begin',{kind:'search'}),query.search ? button(L('清空搜索','Clear search'),'search.clear') : null],paging.keyboard,[refresh(locale),home(locale)]);
+  keyboard.push([button(L('搜索','Search'),'input.begin',{kind:'search'}),query.search ? button(L('清空搜索','Clear search'),'search.clear') : null],paging.keyboard);
   return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale);
 }
 
@@ -130,10 +127,10 @@ function findToken(snapshot,session) {
 
 function detailPanel(snapshot,session,locale) {
   const L = (zh,en) => localize(locale,zh,en), row = findToken(snapshot,session);
-  if (!row) return finishPanel(name('detail',locale),[L('未找到，请从列表选择代币','Not found; choose a token from a list')],[[back(locale),home(locale)]],snapshot,session,locale);
+  if (!row) return finishPanel(name('detail',locale),[L('未找到，请从列表选择代币','Not found; choose a token from a list')],[],snapshot,session,locale,{refresh:false});
   const mark = markFor(snapshot,row), annotation = annotationFor(snapshot,row), identity = token(row), deep = row.deep || {};
   const checks = Object.values(deep.checks || {}), unknown = deep.unknownFields || [], blocking = deep.blockingUnknownFields || [];
-  const header = [`${userText(row.symbol || '?',30)} · ${chainLabel(row.chain)} · ${state(snapshot,row,locale)}`, `CA: <code>${userText(row.address,80)}</code>`,`${L('审计','Audit')}: ${timestamp(row.auditedAt,locale)} · ${age(row.auditedAt,snapshot.at,locale)}`];
+  const header = [`${userText(row.symbol || '?',30)} · ${chainLabel(row.chain)} · ${state(snapshot,row,locale)}`, `CA: <code>${userText(row.address,80)}</code>`,`${L('审计','Audit')}: ${session.panel === 'evidence' ? `${timestamp(row.auditedAt,locale)} · ` : ''}${relativeTime(row.auditedAt,snapshot.at,locale)}`];
   const counts = `${L('通过/未通过检查','Passed/not-passed checks')}: ${checks.filter(value => value === true).length}/${checks.filter(value => value === false).length}\n${L('明确失败/阻断未知/其他未知/冲突','Explicit failures/blocking unknown/other unknown/conflicts')}: ${(deep.failed || []).length}/${blocking.length}/${unknown.filter(value => !blocking.includes(value)).length}/${(row.secondary?.conflicts || []).length}`;
   if (mark?.decision === 'passed' && effectiveStatus(row,mark,snapshot.at) !== 'passed') header.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
   if (session.panel === 'evidence') {
@@ -147,7 +144,7 @@ function detailPanel(snapshot,session,locale) {
     ];
     const pages = sections.flatMap(([title,lines]) => textPages(lines.filter(Boolean).length ? lines.filter(Boolean) : [L('未知；未视为通过','Unknown; not treated as passed')],1800).map((items,index) => ({ title:`${title} · ${index+1}`,items })));
     const paging = pagination(pages.length,session.query?.detailPage,1,locale), page = pages[paging.page];
-    return finishPanel(page.title,[...header,counts,'',...page.items.map(value => userText(value,2400)),`${paging.page+1}/${pages.length}`], [paging.keyboard,[button(L('摘要','Summary'),'panel.open',{panel:'detail'},identity),back(locale)]],snapshot,session,locale,identity);
+    return finishPanel(page.title,[...header,counts,'',...page.items.map(value => userText(value,2400)),`${paging.page+1}/${pages.length}`], [paging.keyboard,[button(L('摘要','Summary'),'panel.open',{panel:'detail'},identity)]],snapshot,session,locale,{token:identity,refresh:false});
   }
   const blocks = [...header,`${L('市值','Market cap')} ${money(row.marketCap,locale)} · ${L('流动性','Liquidity')} ${money(deep.security?.liquidity ?? row.liquidity,locale)} · ${L('持有人','Holders')} ${numberText(row.holders,locale)}`,counts];
   if (!row.auditedAt) blocks.push(L('审计快照已不再保留，或尚未审计。','Audit snapshot no longer retained, or not yet audited.'));
@@ -167,8 +164,7 @@ function detailPanel(snapshot,session,locale) {
   if (mark?.decision !== 'ignored') keyboard.push([button(L('忽略','Ignore'),'mark.set_ignored',binding,identity)]);
   keyboard.push([button(annotation?.favorite ? L('取消收藏','Remove favorite') : L('收藏','Favorite'),'favorite.set',{value:annotation?.favorite !== true},identity),button(L('备注','Note'),'note.begin',{},identity)]);
   if (annotation?.note) keyboard.push([button(L('清空备注','Clear note'),'note.clear',{},identity)]);
-  keyboard.push([refresh(locale),back(locale)]);
-  return finishPanel(name('detail',locale),blocks,keyboard,snapshot,session,locale,identity);
+  return finishPanel(name('detail',locale),blocks,keyboard,snapshot,session,locale,{token:identity});
 }
 
 function selectorPanel(snapshot,session,locale) {
@@ -182,8 +178,7 @@ function selectorPanel(snapshot,session,locale) {
   else { choices=['passed','rejected','compare'];action='cohort.set';selected=query.cohort || 'passed'; }
   const labels = { zh:'中文',en:'English',passed:L('通过筛选组','Passed screen'),rejected:L('排除对照组','Rejected control'),compare:L('对比','Compare'),m5:'5m',m15:'15m',m30:'30m',h1:'1h',h2:'2h',h6:'6h',h24:'24h' };
   const keyboard = choices.map(value => [button(`${selected === value ? '✓ ' : ''}${SCAN_CHAINS.includes(value) ? chainLabel(value) : labels[value] || name(value,locale)}`,action,{value})]);
-  keyboard.push([back(locale)]);
-  return finishPanel(name(session.panel,locale),[L('选择仅影响当前面板视图；语言设置影响后续交互。','View choices apply to this panel; language applies to future interactions.')],keyboard,snapshot,session,locale);
+  return finishPanel(name(session.panel,locale),[L('选择仅影响当前面板视图；语言设置影响后续交互。','View choices apply to this panel; language applies to future interactions.')],keyboard,snapshot,session,locale,{refresh:false});
 }
 
 function eventsPanel(snapshot,session,locale) {
@@ -194,7 +189,7 @@ function eventsPanel(snapshot,session,locale) {
   for(let index=0;index<rows.length;index+=12) {
     let page=[],size=0;
     for(const row of rows.slice(index,index+12)) {
-      const text=`${timestamp(row.at,locale)} · ${chainLabel(row.chain) || L('服务','Service')}\n${groups.candidates.includes(row.type) ? name('candidates',locale) : groups.risk.includes(row.type) ? name('risk',locale) : groups.service.includes(row.type) ? name('service',locale) : L('其他事件','Other event')}: ${safeTelegramText(row.message,500)}`;
+      const text=`${relativeTime(row.at,snapshot.at,locale)} · ${chainLabel(row.chain) || L('服务','Service')}\n${groups.candidates.includes(row.type) ? name('candidates',locale) : groups.risk.includes(row.type) ? name('risk',locale) : groups.service.includes(row.type) ? name('service',locale) : L('其他事件','Other event')}: ${safeTelegramText(row.message,500)}`;
       if(size+userText(text,1000).length>2200 && page.length) { logical.push(page);page=[];size=0; }
       page.push({row,text,index:rows.indexOf(row)});size+=userText(text,1000).length;
     }
@@ -202,7 +197,7 @@ function eventsPanel(snapshot,session,locale) {
   }
   const paging=pagination(logical.length,query.page,1,locale), shown=logical[paging.page] || [];
   const keyboard=pairs(shown.filter(({row}) => row.address && SCAN_CHAINS.includes(row.chain) && (snapshot.candidates.some(candidate => id(candidate) === id(row)) || snapshot.annotations.some(annotation => id(annotation) === id(row)))).map(({row,index}) => detailButton(row,index,locale)));
-  keyboard.push([open('view_chain',locale),open('filter',locale)],paging.keyboard,[refresh(locale),open('status',locale)],[home(locale)]);
+  keyboard.push([open('view_chain',locale),open('filter',locale)],paging.keyboard,[open('status',locale)]);
   return finishPanel(name('events',locale),shown.length ? [...shown.map(({text,index}) => `${index+1}. ${userText(text,1000)}`),`${shown[0].index+1}–${shown.at(-1).index+1} / ${rows.length}`] : [L('尚无事件','No events yet')],keyboard,snapshot,session,locale);
 }
 
@@ -221,17 +216,17 @@ function statusPanel(snapshot,session,locale) {
     const lines=evidenceLines(snapshot.sourceHealth || {},locale);
     const pages=textPages(lines.length ? lines : [L('尚无来源记录','No source records')]);
     const paging=pagination(pages.length,session.query?.page,1,locale);
-    blocks=pages[paging.page].map(value=>userText(value,2400));keyboard=[paging.keyboard,[refresh(locale),back(locale)]];
+    blocks=pages[paging.page].map(value=>userText(value,2400));keyboard=[paging.keyboard];
   } else if(session.panel === 'delivery') {
     const pages=textPages((snapshot.delivery || []).map(row=>`${row.purpose === 'ACTION_REQUIRED' ? L('需处理的提醒','Action-required notice') : row.purpose === 'PANEL_UPDATE' ? L('面板更新','Panel update') : L('请求回复','Requested response')}: ${row.status === 'UNKNOWN' ? L('发送结果不确定，请核对','Delivery unconfirmed; check it') : L('发送失败','Delivery failed')}`));
     const paging=pagination(pages.length,session.query?.page,1,locale);
     blocks=(snapshot.delivery || []).length ? pages[paging.page].map(value=>userText(value,2400)) : [L('没有待核对的投递问题','No delivery issues to check')];
-    keyboard=[paging.keyboard,(snapshot.delivery || []).length ? [button(L('已核对并清除','Acknowledge and clear'),'delivery.acknowledge')] : [],[home(locale),refresh(locale)],[back(locale)]];
+    keyboard=[paging.keyboard,(snapshot.delivery || []).length ? [button(L('已核对并清除','Acknowledge and clear'),'delivery.acknowledge')] : []];
   } else {
     const feed=snapshot.feedByChain?.[control.scanChain];
-    blocks=[`${L('扫描','Scanning')}: ${control.paused ? L('已暂停','Paused') : control.configured ? L('运行中','Running') : L('等待连接','Waiting for connection')}`,`${L('扫描链','Scan chain')}: ${chainLabel(control.scanChain)}`,`${L('上次尝试','Last attempt')}: ${timestamp(metrics.lastAttemptAt,locale)}`,`${L('上次成功','Last success')}: ${timestamp(metrics.lastSuccessAt,locale)}`,`${L('下轮计划','Next scheduled')}: ${metrics.nextCycleAt ? timestamp(metrics.nextCycleAt,locale) : L('未安排','Not scheduled')}`,`${L('审计队列/到期','Audit queue/due')}: ${snapshot.queue?.length ?? 0}/${snapshot.queue?.filter(row=>row.nextAuditAt !== null && row.nextAuditAt<=snapshot.at).length ?? 0}`,`${L('上次读取热榜','Last hot-list read')}: ${timestamp(feed?.observedAt,locale)}`,`${L('本期AVE额度已用','AVE credits used this period')}: ${numberText(ave.cuUsed,locale)}${snapshot.aveBudget ? ' / ' + numberText(snapshot.aveBudget.monthlyCu,locale) : ''}${L('（本地估算）',' (local estimate)')}`,`${L('下次AVE请求最早','Next AVE request at')}: ${ave.readyAt > snapshot.at ? timestamp(ave.readyAt,locale) : L('现在','Now')}`,`${L('投递需核对','Delivery issues')}: ${snapshot.delivery?.length ?? 0}`];
-    if(ave.blockedUntil>snapshot.at) blocks.push(`${ave.blockReason === 'RATE_LIMITED' ? L('AVE限流，等待至','AVE rate limited; waiting until') : ave.blockReason === 'QUOTA' ? L('AVE报告额度用完，等待至','AVE reports credits exhausted; waiting until') : L('已达本期额度估算上限，等待至','Estimated allowance reached; waiting until')} ${timestamp(ave.blockedUntil,locale)}`);
-    keyboard=[[open('sources',locale),open('delivery',locale)],[refresh(locale),open('settings',locale)],[home(locale)]];
+    blocks=[`${L('扫描','Scanning')}: ${control.paused ? L('已暂停','Paused') : control.configured ? L('运行中','Running') : L('等待连接','Waiting for connection')}`,`${L('扫描链','Scan chain')}: ${chainLabel(control.scanChain)}`,`${L('上次尝试','Last attempt')}: ${relativeTime(metrics.lastAttemptAt,snapshot.at,locale)}`,`${L('上次成功','Last success')}: ${relativeTime(metrics.lastSuccessAt,snapshot.at,locale)}`,`${L('下轮计划','Next scheduled')}: ${metrics.nextCycleAt ? clockTime(metrics.nextCycleAt,locale,{reference:snapshot.at,seconds:true}) : L('未安排','Not scheduled')}`,`${L('审计队列/到期','Audit queue/due')}: ${snapshot.queue?.length ?? 0}/${snapshot.queue?.filter(row=>row.nextAuditAt !== null && row.nextAuditAt<=snapshot.at).length ?? 0}`,`${L('上次读取热榜','Last hot-list read')}: ${relativeTime(feed?.observedAt,snapshot.at,locale)}`,`${L('本期AVE额度已用','AVE credits used this period')}: ${numberText(ave.cuUsed,locale)}${snapshot.aveBudget ? ' / ' + numberText(snapshot.aveBudget.monthlyCu,locale) : ''}${L('（本地估算）',' (local estimate)')}`,`${L('下次AVE请求最早','Next AVE request at')}: ${ave.readyAt > snapshot.at ? clockTime(ave.readyAt,locale,{reference:snapshot.at,seconds:true}) : L('现在','Now')}`,`${L('投递需核对','Delivery issues')}: ${snapshot.delivery?.length ?? 0}`];
+    if(ave.blockedUntil>snapshot.at) blocks.push(`${ave.blockReason === 'RATE_LIMITED' ? L('AVE限流，等待至','AVE rate limited; waiting until') : ave.blockReason === 'QUOTA' ? L('AVE报告额度用完，等待至','AVE reports credits exhausted; waiting until') : L('已达本期额度估算上限，等待至','Estimated allowance reached; waiting until')} ${clockTime(ave.blockedUntil,locale,{reference:snapshot.at})}`);
+    keyboard=[[open('sources',locale),open('delivery',locale)],[open('settings',locale)]];
   }
   return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale);
 }
@@ -239,7 +234,7 @@ function statusPanel(snapshot,session,locale) {
 export function renderStatisticsPanel(snapshot,session,locale='zh') {
   const L=(zh,en)=>localize(locale,zh,en),summary=snapshot.stats?.[session.viewChain],query=session.query || {},horizon=query.horizon || 'm30',cohort=query.cohort || 'passed';
   const blocks=[chainLabel(session.viewChain),L('影子观察，不代表可成交收益。','Shadow observations; not executable returns.')];
-  const keyboard=[[open('view_chain',locale),open('horizon',locale)],[open('cohort',locale),button(L('覆盖详情','Coverage details'),'panel.open',{panel:'stats',query:{coverage:true}})],[refresh(locale),home(locale)]];
+  const keyboard=[[open('view_chain',locale),open('horizon',locale)],[open('cohort',locale),button(L('覆盖详情','Coverage details'),'panel.open',{panel:'stats',query:{coverage:true}})]];
   if(!summary) blocks.push(L('统计数据不可用','Statistics unavailable'));
   else if(query.coverage || query.horizon || query.cohort) {
     for(const selected of cohort === 'compare' ? ['passed','rejected'] : [cohort]) {
@@ -277,30 +272,29 @@ export function renderPanel(snapshot,session,locale='zh') {
       keyboard=[[open('onboard',locale)],[open('language',locale),open('help',locale)],[open('saved',locale),open('status',locale)]];
     } else {
       const recent=snapshot.candidates.filter(row=>row.chain === session.viewChain && row.auditedAt>=snapshot.at-1_800_000),metrics=snapshot.metrics || {},queue=snapshot.queue.filter(row=>row.chain === session.viewChain);
-      blocks=[chainLabel(session.viewChain),`${control.paused ? L('扫描已暂停','Scanning paused') : L('扫描运行中','Scanning running')} · ${control.configured ? L('AVE已连接','AVE connected') : L('AVE未连接，显示历史数据','AVE disconnected; historical data')} · ${control.notifications ? L('提醒已开启','Alerts on') : L('提醒已关闭','Alerts off')}`,`${L('累计成功扫描','Successful scans')}: ${numberText(metrics.scanCount,locale)}`,`${L('本轮发现/初筛通过','Cycle discovered/prefilter passed')}: ${numberText(metrics.discoveredCount,locale)}/${numberText(metrics.prequalifiedCount,locale)}`,`${L('近30分钟线索/已否决','Last 30m leads/vetoed')}: ${recent.filter(row=>backendDisposition(row)==='lead').length}/${recent.filter(row=>row.status==='HARD_REJECT').length}`,`${L('队列/到期','Queue/due')}: ${queue.length}/${queue.filter(row=>row.nextAuditAt!==null && row.nextAuditAt<=snapshot.at).length}`,L('研究雷达；交易需在代币详情中确认报价（/wallet）。','Research radar; trades run only after you confirm a quote on a token detail (/wallet).')];
+      blocks=[chainLabel(session.viewChain),`${control.paused ? `${ICONS.paused} ${L('扫描已暂停','Scanning paused')}` : `${ICONS.scanning} ${L('扫描运行中','Scanning running')}`} · ${control.configured ? L('AVE已连接','AVE connected') : `${ICONS.disconnected} ${L('AVE未连接，显示历史数据','AVE disconnected; historical data')}`} · ${control.notifications ? `${ICONS.alertsOn} ${L('提醒已开启','Alerts on')}` : `${ICONS.alertsOff} ${L('提醒已关闭','Alerts off')}`}`,`${L('累计成功扫描','Successful scans')}: ${numberText(metrics.scanCount,locale)}`,`${L('本轮发现/初筛通过','Cycle discovered/prefilter passed')}: ${numberText(metrics.discoveredCount,locale)}/${numberText(metrics.prequalifiedCount,locale)}`,`${L('近30分钟线索/已否决','Last 30m leads/vetoed')}: ${recent.filter(row=>backendDisposition(row)==='lead').length}/${recent.filter(row=>row.status==='HARD_REJECT').length}`,`${L('队列/到期','Queue/due')}: ${queue.length}/${queue.filter(row=>row.nextAuditAt!==null && row.nextAuditAt<=snapshot.at).length}`,L('研究雷达；交易需在代币详情中确认报价（/wallet）。','Research radar; trades run only after you confirm a quote on a token detail (/wallet).')];
       keyboard=[[open('feed',locale),open('audits',locale)],[open('stats',locale),open('saved',locale)],[open('events',locale),open('status',locale)],[open('view_chain',locale),open('settings',locale)]];
     }
   } else if(session.panel === 'settings') {
-    blocks=[`${L('扫描链','Scan chain')}: ${chainLabel(control.scanChain)}`,control.configured ? L('AVE已连接','AVE connected') : L('尚未连接AVE','AVE not connected'),`${L('扫描','Scanning')}: ${control.paused ? L('已暂停','Paused') : L('运行中','Running')}`,`${L('提醒','Alerts')}: ${control.notifications ? L('已开启','On') : L('已关闭','Off')}`,`${L('语言','Language')}: ${locale==='en' ? 'English' : '中文'}`];
-    keyboard=[[open('chains',locale),open('onboard',locale)],[button(control.paused ? L('恢复扫描','Resume scanning') : L('暂停扫描','Pause scanning'),control.paused ? 'scan.resume' : 'scan.pause'),button(control.notifications ? L('关闭提醒','Mute alerts') : L('开启提醒','Enable alerts'),'notifications.set',{value:!control.notifications})],[open('language',locale),button(L('导出记录','Export records'),'export.create')],[open('wallet',locale),open('trade_settings',locale)],[open('status',locale),home(locale)]];
+    blocks=[`${L('扫描链','Scan chain')}: ${chainLabel(control.scanChain)}`,control.configured ? L('AVE已连接','AVE connected') : `${ICONS.disconnected} ${L('尚未连接AVE','AVE not connected')}`,`${L('扫描','Scanning')}: ${control.paused ? `${ICONS.paused} ${L('已暂停','Paused')}` : `${ICONS.scanning} ${L('运行中','Running')}`}`,`${L('提醒','Alerts')}: ${control.notifications ? `${ICONS.alertsOn} ${L('已开启','On')}` : `${ICONS.alertsOff} ${L('已关闭','Off')}`}`,`${L('语言','Language')}: ${locale==='en' ? 'English' : '中文'}`];
+    keyboard=[[open('chains',locale),open('onboard',locale)],[button(control.paused ? `${ICONS.scanning} ${L('恢复扫描','Resume scanning')}` : `${ICONS.paused} ${L('暂停扫描','Pause scanning')}`,control.paused ? 'scan.resume' : 'scan.pause'),button(control.notifications ? `${ICONS.alertsOff} ${L('关闭提醒','Mute alerts')}` : `${ICONS.alertsOn} ${L('开启提醒','Enable alerts')}`,'notifications.set',{value:!control.notifications})],[open('language',locale),button(L('导出记录','Export records'),'export.create')],[open('wallet',locale),open('trade_settings',locale)],[open('status',locale)]];
     if(control.configured) keyboard.push([open('disconnect',locale)]);
   } else if(session.panel === 'chains') {
     blocks=[L('一次扫描一条链。切换后旧链的研究记录保留，扫描立即转到新链。','One chain is scanned at a time. Switching keeps the old chain\'s records and moves scanning to the new chain.')];
     keyboard=SCAN_CHAINS.map(value=>[button(`${control.scanChain===value?'✓ ':''}${chainLabel(value)}`,'chains.set',{value})]);
-    keyboard.push([back(locale)]);
   } else if(session.panel === 'disconnect') {
     blocks=[L('停止扫描，删除AVE API密钥；保留研究记录。交易钱包不受影响（在 /wallet 中移除）。','Stop scanning and delete the AVE API key; research records stay. The trading wallet is not affected (remove it under /wallet).')];
-    keyboard=[[button(L('断开并删除密钥','Disconnect and delete key'),'connection.disconnect')],[back(locale)]];
+    keyboard=[[button(L('断开并删除密钥','Disconnect and delete key'),'connection.disconnect')]];
   } else if(session.panel === 'onboard') {
     blocks.push(control.configured ? L('AVE已连接；提交新密钥验证通过前，原连接保持不变。','AVE connected; the current connection stays until a new key passes verification.') : L('尚未连接AVE。','AVE is not connected.'));
     blocks.push(L('第1步：登录AVE Cloud，复制你的Data API Key（免费版即可）。','Step 1: sign in to AVE Cloud and copy your Data API key (the free plan works).'),L('第2步：发送 /setkey &lt;key&gt;。验证会消耗5个AVE额度。','Step 2: send /setkey &lt;key&gt;. Verification spends 5 AVE credits.'));
     keyboard.push([urlButton(L('打开AVE Cloud','Open AVE Cloud'),AVE_KEY_URL)],[open('help',locale)]);
     blocks.push(keySafetyCopy(locale));
-    if(control.configured) keyboard.push([home(locale),open('chains',locale)],[open('feed',locale),!control.notifications?button(L('开启提醒','Enable alerts'),'notifications.set',{value:true}):null]);
+    if(control.configured) keyboard.push([open('chains',locale),open('feed',locale)],[!control.notifications?button(`${ICONS.alertsOn} ${L('开启提醒','Enable alerts')}`,'notifications.set',{value:true}):null]);
     keyboard.push([open('status',locale),open('settings',locale)]);
   } else if(session.panel === 'help') {
     const pages=[HELP_COMMANDS.slice(0,12).map(([command,zh,en])=>`/${command} — ${L(zh,en)}`),HELP_COMMANDS.slice(12).map(([command,zh,en])=>`/${command} — ${L(zh,en)}`),[L('AVE只读研究；交易仅通过 /wallet 的热钱包，每笔需确认报价；非投资建议。','AVE research is read-only; trading uses only the /wallet hot wallet and needs each quote confirmed. Not investment advice.'),keySafetyCopy(locale),L('/chains 选择扫描链；查看链不改变扫描。/lang [zh|en] 设置语言。/note <简称或CA> 编辑备注；/cancel 取消输入。','/chains picks the scan chain; viewing a chain does not change it. /lang [zh|en] sets language. /note <symbol or CA> edits a note; /cancel cancels input.'),L('线索仅通过AVE行情筛选，不代表安全；交易前请自行核查。安全核验否决的代币禁止买入，仍可卖出。暂停扫描和关闭提醒是独立控制。历史消息不是实时状态，请刷新。','Leads passed the AVE market screen only and are not proven safe; check before any trade. Tokens vetoed by the safety check cannot be bought but can still be sold. Pause and mute are independent controls. Historical messages are not live state; refresh them.')]];
-    const paging=pagination(pages.length,query.page,1,locale);blocks=pages[paging.page];keyboard=[paging.keyboard,[open('onboard',locale),home(locale)]];
+    const paging=pagination(pages.length,query.page,1,locale);blocks=pages[paging.page];keyboard=[paging.keyboard,[open('onboard',locale)]];
   }
-  return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale);
+  return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale,{refresh:!['chains','disconnect','help'].includes(session.panel)});
 }

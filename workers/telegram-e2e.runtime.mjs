@@ -195,9 +195,9 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(runtime.notifications.controls().enabled).toBe(true);
       await command('mute');await drain();
       expect(runtime.notifications.controls().enabled).toBe(false);
-      expect(sent.at(-1).params.text).toContain('提醒: 已关闭');
+      expect(sent.at(-1).params.text).toContain('提醒: 🔕 已关闭');
       await command('mute');await drain();
-      expect(runtime.notifications.controls().enabled).toBe(true);expect(sent.at(-1).params.text).toContain('提醒: 已开启');
+      expect(runtime.notifications.controls().enabled).toBe(true);expect(sent.at(-1).params.text).toContain('提醒: 🔔 已开启');
       await command('unmute');
       expect(runtime.notifications.controls().enabled).toBe(true);
       expect(runtime.commands.preference('notificationsVersion',0)).toBe(2);
@@ -248,6 +248,16 @@ describe('Telegram complete command and delivery flows',()=>{
       await click(link(delivery,'delivery.acknowledge'));
       expect(runtime.outbox.issues()).toEqual([]);
       expect(runtime.commands.sessions.get(status.id).panel).toBe('delivery');
+    });
+  });
+
+  it('Home returns to the Radar root without a stale path back',async()=>{
+    await withRuntime('22931',async({runtime,command,sessions,link,click,seed})=>{
+      seed(3);await command('audits');const root=sessions()[0];
+      await click(link(root,'panel.open',params=>params.panel==='detail'));
+      await click(link(runtime.commands.sessions.get(root.id),'panel.open',params=>params.panel==='radar'));
+      const home=runtime.commands.sessions.get(root.id);expect(home.panel).toBe('radar');expect(home.query.returnTo).toBeUndefined();
+      expect(()=>link(home,'panel.back')).toThrow();
     });
   });
 
