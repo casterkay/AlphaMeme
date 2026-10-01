@@ -1,0 +1,44 @@
+src/providers/secondary.mjs
+  s_1310eef1feaa44::t_84d09ce41211bd 29-33
+  s_1310eef1feaa44::t_4030811ee393da 256,262-263,271-274,298-299,306-308
+workers/radar-agent.runtime.mjs
+  s_1310eef1feaa44::t_e0bfb92e96c65d 616
+  s_1310eef1feaa44::t_b36191f01b8e41 242-245,436
+test/scoring.test.mjs
+  s_1310eef1feaa44::t_720a18439b53a2 320-337
+src/bot/runtime.mjs
+  s_1310eef1feaa44::t_84d09ce41211bd 26-36,39-45,253
+  s_1310eef1feaa44::t_d154914a102146 37-38
+src/scoring/index.mjs
+  s_1310eef1feaa44::t_4030811ee393da 111-116,180-181
+test/outcomes.test.mjs
+  s_1310eef1feaa44::t_720a18439b53a2 3,10,25-41,71
+test/secondary.test.mjs
+  s_1310eef1feaa44::t_720a18439b53a2 75-76,95,111,114-115,123-125
+src/scoring/outcomes.mjs
+  s_1310eef1feaa44::t_4030811ee393da 8-10,19,21-22,27,36-37,40-41,46-47,49,51,54
+workers/telegram-e2e.runtime.mjs
+  s_1310eef1feaa44::t_c999fbe9b3bd6f 459-461
+  s_1310eef1feaa44::t_f74556fc1d1c84 462-463
+  s_1310eef1feaa44::t_2f7cd8e069d601 7,421,430,454-458,464-474
+src/recoverable-scanner.mjs
+  s_1310eef1feaa44::t_0b5a9cc41ed2b6 5,258-261,404,519
+test/radar-agent.test.mjs
+  s_1310eef1feaa44::t_c53dc17fd6b168 136,138-140,345-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4507131765d6d794970f2c38c000c53a4deef40e",
+  "prompts": {},
+  "sessions": {
+    "s_1310eef1feaa44": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f54e-1251-7370-ae45-86db73ba10a2",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
