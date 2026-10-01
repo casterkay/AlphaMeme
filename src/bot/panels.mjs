@@ -1,9 +1,10 @@
 import { backendDisposition, effectiveStatus } from '../scoring/manual-review.mjs';
 import { SCAN_CHAINS } from '../chains.mjs';
+import { safetyVerdict, blockingUnknownFields, blockingConflicts } from '../scoring/safety.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
 import { tokenIdentity, safeTelegramText } from './snapshot.mjs';
 import { TRADING_PANELS, TRADING_PANEL_NAMES, tokenTradeControls, renderTradingPanel } from './trading-panels.mjs';
-import { localize, escapeHtml, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, ICONS } from '../render/telegram.mjs';
+import { localize, escapeHtml, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, safetyBadge, ICONS } from '../render/telegram.mjs';
 
 export const PANEL_NAMES = Object.freeze(['radar','feed','audits','saved','events','status','sources','delivery','settings','chains','onboard','help','detail','evidence','view_chain','filter','sort','language','disconnect','stats','horizon','cohort',...TRADING_PANELS]);
 export const AUDIT_FILTERS = Object.freeze(['all','lead','chain','waiting','passed','ignored','rejected','fresh','favorite']);
@@ -78,48 +79,41 @@ const selectorButton = (panel,locale) => {
 };
 const present = value => value !== null && value !== undefined;
 
-// Display verdict of a token's recorded safety check. ✅ needs a COMPLETE
-// GoPlus/DexScreener check with no fatal flag; anything short of that is shown.
-const BLOCKING_CONFLICTS = ['MARKET_MISMATCH','SECURITY_MISMATCH'];
-function safetyVerdict(row) {
-  const deep = row.deep || {}, secondary = row.secondary, security = secondary?.security || {};
-  const failed = deep.failed || [], blocking = deep.blockingUnknownFields || [];
-  const checkedAt = secondary?.checkedAt || row.auditedAt || null;
-  if (['HARD_REJECT','REJECTED'].includes(row.status) || security.verdict === 'FATAL') return { kind:'vetoed', reasons:[...(security.fatal || []).map(item => item.field),...failed], checkedAt };
-  // Rows that never became candidates (hot-list or note-only) have no check at all.
-  if (!row.status) return { kind:'unchecked' };
-  if (backendDisposition(row) === 'waiting' || (!secondary && backendDisposition(row) === 'lead')) return { kind:'checking' };
-  const counts = {
-    failed:failed.length, blocking:blocking.length,
-    // GoPlus records a missing check as the single field 'tokenSecurity'; it is not one unknown field.
-    goPlusMissing:(security.unknownFields || []).includes('tokenSecurity'),
-    unknown:new Set([...(deep.unknownFields || []).filter(field => !blocking.includes(field)),...(security.unknownFields || []).filter(field => field !== 'tokenSecurity')]).size,
-    conflicts:(secondary?.conflicts || []).filter(conflict => BLOCKING_CONFLICTS.includes(conflict.type)).length
+// The shared safety verdict plus the facts the display explains it with. A row
+// that never became a candidate (hot-list or note-only) has no verdict at all.
+function tokenSafety(row) {
+  if (!row.status) return { verdict:null };
+  const deep = row.deep || {}, secondary = row.secondary || null, security = secondary?.security || {}, blocking = blockingUnknownFields(deep);
+  return {
+    verdict:safetyVerdict({ status:row.status, secondary, deep }), checkedAt:secondary?.checkedAt || row.auditedAt || null,
+    reasons:[...(security.fatal || []).map(item => item.field),...(deep.failed || [])],
+    counts:{
+      failed:(deep.failed || []).length, blocking:blocking.length,
+      // GoPlus records a missing check as the single field 'tokenSecurity'; it is not one unknown field.
+      goPlusMissing:(security.unknownFields || []).includes('tokenSecurity'),
+      unknown:new Set([...(deep.unknownFields || []).filter(field => !blocking.includes(field)),...(security.unknownFields || []).filter(field => field !== 'tokenSecurity')]).size,
+      conflicts:blockingConflicts(secondary).length
+    }
   };
-  const verified = secondary?.status === 'COMPLETE' && security.verdict === 'NO_FATAL_FLAGS';
-  return { kind:verified && !counts.failed && !counts.blocking && !counts.conflicts ? 'clear' : 'review', counts, checkedAt };
 }
-const VERDICT_SHORT = { clear:[ICONS.passed,'未发现问题','No failures'], review:[ICONS.unknown,'需复核','Needs review'], vetoed:[ICONS.vetoed,'已否决','Vetoed'], checking:[ICONS.checking,'核验中','Checking'], unchecked:[ICONS.unknown,'未核验','Not checked'] };
-const verdictShort = (verdict,locale) => { const [icon,zh,en] = VERDICT_SHORT[verdict.kind]; return `${icon} ${localize(locale,zh,en)}`; };
-function verdictLine(verdict,snapshot,locale) {
+const safetyMark = (safety,locale) => safety.verdict ? safetyBadge(safety.verdict,locale) : `${ICONS.unknown} ${localize(locale,'未核验','Not checked')}`;
+function safetyLine(safety,snapshot,locale) {
   const L = (zh,en) => localize(locale,zh,en);
-  const checked = present(verdict.checkedAt) ? ` · ${L(`${relativeTime(verdict.checkedAt,snapshot.at,locale)}核验`,`checked ${relativeTime(verdict.checkedAt,snapshot.at,locale)}`)}` : '';
-  if (verdict.kind === 'checking') return `${ICONS.checking} ${L('安全核验进行中','Safety check running')}`;
-  if (verdict.kind === 'unchecked') return `${ICONS.unknown} ${L('未经安全核验','Not safety-checked')}`;
-  if (verdict.kind === 'clear') return `${ICONS.passed} ${L('未发现问题','No failures found')}${checked}`;
-  if (verdict.kind === 'vetoed') {
-    const reasons = [...new Set(verdict.reasons)].map(value => fieldLabels[value] ? L(...fieldLabels[value]) : safeTelegramText(value,48));
-    return `${ICONS.vetoed} ${L('已否决','Vetoed')}${reasons.length ? `${L('：',': ')}${userText(reasons.slice(0,2).join(L('、',', ')),120)}${reasons.length > 2 ? ` +${reasons.length-2}` : ''}` : ''}${checked}`;
-  }
-  const { failed, blocking, goPlusMissing, unknown, conflicts } = verdict.counts, plural = (count,one,many) => count === 1 ? one : many;
-  const parts = [
-    failed ? L(`${failed}项检查失败`,`${failed} failed ${plural(failed,'check','checks')}`) : '',
-    blocking ? L(`${blocking}项阻断未知`,`${blocking} blocking unknown`) : '',
-    goPlusMissing ? L('GoPlus 检查不可用','GoPlus check unavailable') : '',
-    unknown ? L(`${unknown}项字段未知`,`${unknown} ${plural(unknown,'field','fields')} unknown`) : '',
-    conflicts ? L(`${conflicts}处来源冲突`,`${conflicts} source ${plural(conflicts,'conflict','conflicts')}`) : ''
-  ].filter(Boolean);
-  return `${ICONS.unknown} ${parts.length ? parts.join(L('，',', ')) : L('核验不完整','Check incomplete')}${checked}`;
+  if (!safety.verdict) return `${ICONS.unknown} ${L('未经安全核验','Not safety-checked')}`;
+  if (safety.verdict === 'PENDING') return safetyBadge('PENDING',locale);
+  const checked = present(safety.checkedAt) ? ` · ${L(`${relativeTime(safety.checkedAt,snapshot.at,locale)}核验`,`checked ${relativeTime(safety.checkedAt,snapshot.at,locale)}`)}` : '';
+  const { failed, blocking, goPlusMissing, unknown, conflicts } = safety.counts, plural = (count,one,many) => count === 1 ? one : many;
+  const details = safety.verdict === 'VETOED' ? [...new Set(safety.reasons)].map(value => fieldLabels[value] ? L(...fieldLabels[value]) : safeTelegramText(value,48))
+    : safety.verdict === 'PASSED' ? [] : [
+      failed ? L(`${failed}项检查失败`,`${failed} failed ${plural(failed,'check','checks')}`) : '',
+      blocking ? L(`${blocking}项阻断未知`,`${blocking} blocking unknown`) : '',
+      goPlusMissing ? L('GoPlus 检查不可用','GoPlus check unavailable') : '',
+      unknown ? L(`${unknown}项字段未知`,`${unknown} ${plural(unknown,'field','fields')} unknown`) : '',
+      conflicts ? L(`${conflicts}处来源冲突`,`${conflicts} source ${plural(conflicts,'conflict','conflicts')}`) : ''
+    ].filter(Boolean);
+  if (safety.verdict === 'INCOMPLETE' && !details.length) details.push(L('核验不完整','check incomplete'));
+  const shown = safety.verdict === 'VETOED' ? details.slice(0,2) : details, more = details.length - shown.length;
+  return `${safetyBadge(safety.verdict,locale)}${details.length ? `${L('：',': ')}${userText(shown.join(safety.verdict === 'VETOED' ? L('、',', ') : L('，',', ')),240)}${more ? ` +${more}` : ''}` : ''}${checked}`;
 }
 
 function listPanel(snapshot,session,locale) {
@@ -145,13 +139,13 @@ function listPanel(snapshot,session,locale) {
     if (isLive) {
       // ✅ is reserved for the safety check; a market-screen pass alone earns no icon.
       const candidate = snapshot.candidates.find(item => id(item) === id(row));
-      blocks.push(`${title} · ${candidate ? verdictShort(safetyVerdict(candidate),locale) : row.pass ? L('通过筛选','passed screen') : userText(row.reasons[0] || name('unknown',locale),60)}`);
+      blocks.push(`${title} · ${candidate ? safetyMark(tokenSafety(candidate),locale) : row.pass ? L('通过筛选','passed screen') : userText(row.reasons[0] || name('unknown',locale),60)}`);
       blocks.push([present(row.marketCap) ? money(row.marketCap,locale) : '', row.createdAt > 0 ? L(`币龄${duration(snapshot.at-row.createdAt*1000,locale)}`,`${duration(snapshot.at-row.createdAt*1000,locale)} old`) : '',
         present(row.volume5m) ? L(`5分钟成交${money(row.volume5m,locale)}`,`5m vol ${money(row.volume5m,locale)}`) : '', present(row.priceChange5m) ? percent(row.priceChange5m,locale,true) : ''].filter(Boolean).join(' · '));
     } else {
       const mark = markFor(snapshot,row), status = row.status && mark ? effectiveStatus(row,mark,snapshot.at) : null;
       const marked = status === 'passed' ? ` · ${ICONS.approve} ${name('passed',locale)}` : mark?.decision === 'ignored' ? ` · ${ICONS.ignore} ${name('ignored',locale)}` : '';
-      blocks.push(`${title} · ${verdictShort(safetyVerdict(row),locale)}${marked}`);
+      blocks.push(`${title} · ${safetyMark(tokenSafety(row),locale)}${marked}`);
       if (saved) blocks.push([chainLabel(row.chain),row.symbol ? '' : `<code>${userText(row.address?.slice(-12),12)}</code>`,row.favorite ? ICONS.saved : '',row.note?.trim() ? `${ICONS.note} ${userText(row.note,60)}` : ''].filter(Boolean).join(' · '));
       else blocks.push([present(row.marketCap) ? L(`市值 ${money(row.marketCap,locale)}`,`${money(row.marketCap,locale)} MC`) : '',present(row.liquidity) ? L(`流动性 ${money(row.liquidity,locale)}`,`${money(row.liquidity,locale)} liq`) : '',relativeTime(row.auditedAt,snapshot.at,locale)].filter(Boolean).join(' · '));
     }
@@ -199,10 +193,10 @@ function detailPanel(snapshot,session,locale) {
   const L = (zh,en) => localize(locale,zh,en), found = findToken(snapshot,session);
   if (!found) return finishPanel(name('detail',locale),[L('未找到，请从列表选择代币','Not found; choose a token from a list')],[],snapshot,session,locale,{refresh:false});
   const { row, listed } = found, mark = markFor(snapshot,row), annotation = annotationFor(snapshot,row), identity = token(row), deep = row.deep || {};
-  const verdict = safetyVerdict(row), invalidApproval = mark?.decision === 'passed' && effectiveStatus(row,mark,snapshot.at) !== 'passed';
+  const safety = tokenSafety(row), invalidApproval = mark?.decision === 'passed' && effectiveStatus(row,mark,snapshot.at) !== 'passed';
   if (session.panel === 'evidence') {
     const checks = Object.values(deep.checks || {}), unknown = deep.unknownFields || [], blocking = deep.blockingUnknownFields || [];
-    const header = [`${userText(row.symbol || '?',30)} · ${chainLabel(row.chain)} · ${verdictShort(verdict,locale)}`, `CA: <code>${userText(row.address,80)}</code>`,`${L('审计','Audit')}: ${timestamp(row.auditedAt,locale)} · ${relativeTime(row.auditedAt,snapshot.at,locale)}`];
+    const header = [`${userText(row.symbol || '?',30)} · ${chainLabel(row.chain)} · ${safetyMark(safety,locale)}`, `CA: <code>${userText(row.address,80)}</code>`,`${L('审计','Audit')}: ${timestamp(row.auditedAt,locale)} · ${relativeTime(row.auditedAt,snapshot.at,locale)}`];
     if (invalidApproval) header.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
     const counts = `${L('通过/未通过检查','Passed/not-passed checks')}: ${checks.filter(value => value === true).length}/${checks.filter(value => value === false).length}\n${L('明确失败/阻断未知/其他未知/冲突','Explicit failures/blocking unknown/other unknown/conflicts')}: ${(deep.failed || []).length}/${blocking.length}/${unknown.filter(value => !blocking.includes(value)).length}/${(row.secondary?.conflicts || []).length}`;
     const sections = [
@@ -218,7 +212,7 @@ function detailPanel(snapshot,session,locale) {
     return finishPanel(page.title,[...header,counts,'',...page.items.map(value => userText(value,2400)),`${paging.page+1}/${pages.length}`], [paging.keyboard,[button(L('摘要','Summary'),'panel.open',{panel:'detail'},identity)]],snapshot,session,locale,{token:identity,refresh:false});
   }
   const fact = key => row[key] ?? listed?.[key] ?? null, liquidity = deep.security?.liquidity ?? fact('liquidity'), createdAt = fact('createdAt');
-  const blocks = [verdictLine(verdict,snapshot,locale),
+  const blocks = [safetyLine(safety,snapshot,locale),
     [present(fact('marketCap')) ? L(`市值 ${money(fact('marketCap'),locale)}`,`MC ${money(fact('marketCap'),locale)}`) : '',present(liquidity) ? L(`流动性 ${money(liquidity,locale)}`,`Liq ${money(liquidity,locale)}`) : '',present(fact('holders')) ? L(`持有人 ${numberText(fact('holders'),locale)}`,`${numberText(fact('holders'),locale)} holders`) : ''].filter(Boolean).join(' · '),
     [createdAt > 0 ? L(`币龄${duration(snapshot.at-createdAt*1000,locale)}`,`${duration(snapshot.at-createdAt*1000,locale)} old`) : '',present(listed?.priceChange5m) ? `5m ${percent(listed.priceChange5m,locale,true)}` : '',present(listed?.volume5m) ? L(`5分钟成交 ${money(listed.volume5m,locale)}`,`5m vol ${money(listed.volume5m,locale)}`) : ''].filter(Boolean).join(' · '),
     `<code>${userText(row.address,80)}</code>`];
@@ -228,7 +222,7 @@ function detailPanel(snapshot,session,locale) {
   if (invalidApproval) blocks.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
   if (!row.auditedAt) blocks.push(L('审计快照已不再保留，或尚未审计。','Audit snapshot no longer retained, or not yet audited.'));
   if (backendDisposition(row) === 'chain') blocks.push(L('链上硬门通过；请人工查看X社区评论与回复。','On-chain gates passed; review X community comments and replies.'));
-  if (backendDisposition(row) === 'lead' && verdict.kind !== 'vetoed' && row.secondary?.status !== 'COMPLETE') blocks.push(L('市场线索：安全性尚未核验。','Market lead: safety not yet verified.'));
+  if (backendDisposition(row) === 'lead' && safety.verdict !== 'VETOED' && row.secondary?.status !== 'COMPLETE') blocks.push(L('市场线索：安全性尚未核验。','Market lead: safety not yet verified.'));
   const trading = tokenTradeControls(snapshot,row,locale,identity);
   blocks.push(...trading.blocks);
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };

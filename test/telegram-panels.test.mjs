@@ -222,6 +222,7 @@ test('statistics distinguish unavailable from empty and require all three window
 
 test('evidence pages keep the exact audit time while the detail summary shows it relatively',()=>{
   const snapshot=fixture(),query={selectedToken:{chain:'sol',address:snapshot.candidates[0].address}};
+  snapshot.candidates[0]={...snapshot.candidates[0],secondary:{...complete,checkedAt:now-60_000}};
   assert.match(renderPanel(snapshot,session('evidence',query),'en').text,/Audit: 2027-01-15 07:59:00 UTC · 1m ago/);
   const detail=renderPanel(snapshot,session('detail',query),'en').text;
   assert.match(detail,/· checked 1m ago\n/);assert.doesNotMatch(detail,/2027-01-15/);
@@ -235,17 +236,17 @@ test('the safety verdict leads the detail and marks each list row, from the reco
   const audited=deep=>candidate(0,{secondary:complete,deep:{chartRisk:{version:CHART_RISK_VERSION},chainPass:true,failed:[],unknownFields:[],blockingUnknownFields:[],...deep}});
   // [scenario, row, detail verdict line, list badge, lead caveat shown]
   const cases=[
-    ['lead before its check',lead(),'⏳ Safety check running','⏳ Checking',true],
-    ['candidate waiting for a recheck',candidate(0,{status:'WAIT_RECHECK',secondary:complete}),'⏳ Safety check running','⏳ Checking',false],
-    ['complete check without fatal flags',lead({secondary:complete}),'✅ No failures found · checked 2m ago','✅ No failures',false],
-    ['a website mismatch does not block',lead({secondary:{...complete,conflicts:[{type:'WEBSITE_MISMATCH',field:'website'}]}}),'✅ No failures found · checked 2m ago','✅ No failures',false],
-    ['incomplete GoPlus fields',degraded({complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['buyTax','sellTax']}),'⚠️ 2 fields unknown · checked 2m ago','⚠️ Needs review',true],
-    ['GoPlus check missing',degraded({complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['tokenSecurity']}),'⚠️ GoPlus check unavailable · checked 2m ago','⚠️ Needs review',true],
-    ['degraded market source only',degraded(),'⚠️ Check incomplete · checked 2m ago','⚠️ Needs review',true],
-    ['one failed deep check',audited({failed:['tax']}),'⚠️ 1 failed check · checked 2m ago','⚠️ Needs review',false],
-    ['one blocking unknown',audited({unknownFields:['top10'],blockingUnknownFields:['top10']}),'⚠️ 1 blocking unknown · checked 2m ago','⚠️ Needs review',false],
-    ['failures, blocking and other unknowns together',audited({failed:['tax'],unknownFields:['top10','devHold','lockRate'],blockingUnknownFields:['top10']}),'⚠️ 1 failed check, 1 blocking unknown, 2 fields unknown · checked 2m ago','⚠️ Needs review',false],
-    ['conflicting sources after a complete check',lead({secondary:{...complete,conflicts:[{type:'MARKET_MISMATCH',field:'marketCap'}]}}),'⚠️ 1 source conflict · checked 2m ago','⚠️ Needs review',false],
+    ['lead before its check',lead(),'⏳ Checking','⏳ Checking',true],
+    ['candidate with no recorded check',candidate(0),'⏳ Checking','⏳ Checking',false],
+    ['complete check without fatal flags',lead({secondary:complete}),'✅ No failures found · checked 2m ago','✅ No failures found',false],
+    ['a website mismatch does not block',lead({secondary:{...complete,conflicts:[{type:'WEBSITE_MISMATCH',field:'website'}]}}),'✅ No failures found · checked 2m ago','✅ No failures found',false],
+    ['incomplete GoPlus fields',degraded({complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['buyTax','sellTax']}),'⚠️ Needs review: 2 fields unknown · checked 2m ago','⚠️ Needs review',true],
+    ['GoPlus check missing',degraded({complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['tokenSecurity']}),'⚠️ Needs review: GoPlus check unavailable · checked 2m ago','⚠️ Needs review',true],
+    ['degraded market source only',degraded(),'⚠️ Needs review: check incomplete · checked 2m ago','⚠️ Needs review',true],
+    ['one failed deep check',audited({failed:['tax']}),'⚠️ Needs review: 1 failed check · checked 2m ago','⚠️ Needs review',false],
+    ['one blocking unknown',audited({unknownFields:['top10'],blockingUnknownFields:['top10']}),'⚠️ Needs review: 1 blocking unknown · checked 2m ago','⚠️ Needs review',false],
+    ['failures, blocking and other unknowns together',audited({failed:['tax'],unknownFields:['top10','devHold','lockRate'],blockingUnknownFields:['top10']}),'⚠️ Needs review: 1 failed check, 1 blocking unknown, 2 fields unknown · checked 2m ago','⚠️ Needs review',false],
+    ['conflicting sources after a complete check',lead({secondary:{...complete,conflicts:[{type:'MARKET_MISMATCH',field:'marketCap'}]}}),'⚠️ Needs review: 1 source conflict · checked 2m ago','⚠️ Needs review',false],
     ['secondary veto',fatal(['isHoneypot','hiddenOwner','mintable']),'⛔ Vetoed: Honeypot, Hidden owner +1 · checked 2m ago','⛔ Vetoed',false],
     ['fatal verdict before the status changes',fatal(['isHoneypot'],'LIVE_READY'),'⛔ Vetoed: Honeypot · checked 2m ago','⛔ Vetoed',false],
     ['held risk exclusion',applyRiskExclusion(lead({secondary:complete}),{['sol:'+'A'.repeat(32)+'0']:{reasons:['x'],codes:['VERTICAL_PLATEAU']}}),'⛔ Vetoed: Chart risk · checked 2m ago','⛔ Vetoed',false],
@@ -290,7 +291,7 @@ test('watchlist rows and the detail show watch state, and note-only rows say the
   const snapshot=fixture(),watched=snapshot.candidates[0],noted={chain:'sol',address:'N'.repeat(32),favorite:false,note:'dev wallet',updatedAt:now-1};
   snapshot.annotations=[{chain:'sol',address:watched.address,favorite:true,note:'',updatedAt:now},noted];
   const text=renderPanel(snapshot,session('saved'),'en').text;
-  assert.match(text,/<b>1\. COIN0<\/b> · ⚠️ Needs review\nSolana · ⭐\n/);
+  assert.match(text,/<b>1\. COIN0<\/b> · ⏳ Checking\nSolana · ⭐\n/);
   assert.match(text,/<b>2\. \?<\/b> · ⚠️ Not checked\nSolana · <code>NNNNNNNNNNNN<\/code> · 📝 dev wallet\n/);
   const label=selected=>renderPanel(snapshot,session('detail',{selectedToken:selected}),'en').keyboard.flat().find(item=>item.action==='favorite.set').text;
   assert.equal(label(watched),'⭐ Unwatch');assert.equal(label(noted),'⭐ Watch');

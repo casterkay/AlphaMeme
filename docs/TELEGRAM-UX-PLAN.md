@@ -202,10 +202,13 @@ MC $120K · Liq $30K · 2,431 holders
 [🔄 Refresh] [⬅ Back] [🏠 Home]
 ```
 
-- Verdict line replaces the four-way slash counter: ⛔ "Vetoed: honeypot risk" /
-  ⚠️ "1 blocking unknown, 3 fields unknown" / ⏳ "Safety check running" / ✅.
-- Lead caveat stays, shortened, only for leads: "Market lead: safety not yet
-  verified."
+- Verdict line replaces the four-way slash counter. It is the shared
+  `safetyBadge(safetyVerdict(...))` plus its evidence: ⛔ "Vetoed: Honeypot" /
+  ⚠️ "Needs review: 1 blocking unknown, 3 fields unknown" (or "GoPlus check
+  unavailable") / ⏳ "Checking" / ✅ "No failures found", with "checked 4m ago".
+  A token that never became a candidate reads "⚠️ Not safety-checked".
+- Lead caveat stays, shortened, only for leads whose check is not complete:
+  "Market lead: safety not yet verified."
 - Buy buttons show for every token except a vetoed one; on an unverified token a
   buy first asks the Yes/No confirmation of §3.9.
 - Market line joins the hot-list row when the candidate lacks age/5m fields
