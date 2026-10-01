@@ -1,10 +1,13 @@
-# Telegram M3 implementation and validation
+# Telegram implementation and operations
 
-The implementation follows [the interface contract](TELEGRAM-M3-INTERFACE-DESIGN.md),
-with the AVE changes below: data comes from the AVE Data API, one chain is scanned
-at a time (Arc by default), and alerts are AVE market leads rather than deep-audit
-passes. Runtime implementation is in `src/bot/`, `src/render/telegram.mjs`,
-`src/auth/connection.mjs`, `src/recoverable-scanner.mjs` and `src/radar-agent.mjs`.
+This is the current runtime and operations guide. The implementation originated
+from the [archived M3 interface contract](.archive/TELEGRAM-M3-INTERFACE-DESIGN.md),
+but current behavior is authoritative here: data comes from the AVE Data API, one
+chain is scanned at a time (Arc by default), and alerts are AVE market leads rather
+than GMGN deep-audit passes. Current interface changes are tracked in the
+[Telegram UX plan](TELEGRAM-UX-PLAN.md). Runtime implementation is in `src/bot/`,
+`src/render/telegram.mjs`, `src/auth/connection.mjs`,
+`src/recoverable-scanner.mjs` and `src/radar-agent.mjs`.
 
 ## Configuration
 

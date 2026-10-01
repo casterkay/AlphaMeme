@@ -1,21 +1,91 @@
-# meme-radar → Cloudflare Worker + Telegram 重构计划
+# [已归档] meme-radar → Cloudflare Worker + Telegram 重构计划
 
-> **Historical design.** This document was written for the GMGN data provider.
-> The Worker now uses AVE: one scan chain (Arc by default), AVE credit-paced
-> admission instead of GMGN request weights, `/setkey` onboarding without signing
-> keys, and alerts on AVE market leads vetoed by GoPlus/DexScreener instead of
-> GMGN deep-audit passes. The live-feed subscription and 1–3 chain selection are
-> gone. See [the operations guide](TELEGRAM-M3-OPERATIONS.md) for current behavior.
+> **归档日期：2026-10-01。** 本文移至 `docs/.archive/`，供审计设计决策、issue 和提交历史；
+> 它不再是当前需求、运行手册或待办清单。不要依据下方 GMGN 时代的参数、文件映射、
+> 命令表或验收矩阵新增实现。
 
+## 归档结论
+
+**可以归档，本文现已移入历史文档目录。** 原计划的核心迁移已经完成：运行时是 Cloudflare
+Worker + 每租户一个 SQLite Durable Object，Telegram 是主要界面，扫描、命令、投递与恢复
+共享持久调度模型。原计划没有未被跟踪的剩余工作。
+
+当前事实来源按优先级为：
+
+1. [README](../../README.md)：当前产品、部署与用户流程。
+2. [Telegram 运维与验证边界](../TELEGRAM-M3-OPERATIONS.md)：当前 AVE、Telegram、恢复与交易行为。
+3. [Telegram UX 计划](../TELEGRAM-UX-PLAN.md)：当前界面改造切片。
+4. [凭据与主密钥边界](../development/ONBOARDING-CRYPTO.md)：加密存储与轮换。
+5. [AVE Workers 实测](../spikes/AVE-EGRESS.md)：出口、15 秒节奏与 Workers Paid CPU 结论。
+6. GitHub open issues：尚未完成工作的唯一计划来源。
+
+当前实现已经偏离本文原方案，且偏离是有意的：
+
+- 数据源从 GMGN 改为 AVE；GMGN 对共享 Workers 出口的封禁证据见
+  [历史实测](../spikes/LIVE-TIMING.md)。
+- 一次只扫描一条链，默认 Arc；没有独立 live 订阅或 1–3 条扫描链集合。
+- 调度按 AVE 额度以 15 秒为最小间隔动态放慢，不再使用 GMGN request weight 或 20 秒 live 目标。
+- `/setkey` 绑定 AVE Data API key，不生成或保存 GMGN Ed25519 signing key。
+- 通过 AVE 市场筛选的条目是 market lead，再由 GoPlus/DexScreener 否决致命风险；
+  它不是本文所述的 GMGN 深审通过。
+- 项目后来增加了默认关闭的 KyberSwap 一键交易；因此本文“永久不交易”的边界已经失效。
+
+## 里程碑处置
+
+| 原里程碑 | 最终处置 |
+|---|---|
+| M0 `#3–#6` | 已由 PR `#35–#38` 完成并关闭。 |
+| M1 `#7–#10` | GMGN 直连与准入曾完成；随后由 PR `#52` 的 AVE provider/额度准入取代。相关 issue 已关闭。 |
+| M2 `#11–#17` | Worker、SQLite DO、统一 alarm、可恢复扫描、代际 fencing、registry/watchdog 与 Workers 测试已完成；成本结论后来由 AVE 实测收敛为 Workers Paid。相关 issue 已关闭。 |
+| M3 `#18–#28` | Telegram webhook、inbox/outbox、面板、人工复核、通知策略、统计与恢复已完成；GMGN live/onboarding 部分由 AVE 模型取代。相关 issue 已关闭。 |
+| M4 `#29`, `#50` | GMGN 出口实测已得到否定结论；Fly.io/5 秒方案被 AVE-on-Workers 取代，issue 已关闭。 |
+| M5 `#30–#34` | `#30` 按“不迁移旧 GMGN DO、重新部署 v2”关闭；`#34` 因 AVE + 可选交易使原文失效而关闭。`#31–#33` 仍开放，见下一节。 |
+
+## 仍需完成，但不再由本文驱动
+
+以下三项是原计划唯一仍有现实意义的尾项；它们已有独立 issue，完成时应按当前 AVE、
+交易和 Telegram runtime 更新验收条件，而不是照抄本文的 GMGN/live 文件名与指标：
+
+- [`#31` 完整故障矩阵与运行指标](https://github.com/casterkay/AlphaMeme/issues/31)：
+  现有恢复、乱序、并发和 Workers SQLite 测试已很广，但仍缺当前 provider/交易口径下的
+  持久运行指标、日志泄密审计和明确的低优先级等待观测。
+- [`#32` 删除旧运行资产并说明测试替代](https://github.com/casterkay/AlphaMeme/issues/32)：
+  主要本地 UI/runtime 已删除，但生产代码 `src/bot/notification-policy.mjs` 仍从
+  `public/voice-alerts.mjs` 导入通知资格与去重 helper。它已不是语音或浏览器 runtime，
+  但仍处于误导性的旧位置；应迁入当前 bot/notification 模块并更新测试，或明确修订该 issue 的保留边界。
+- [`#33` Worker 发布审计与构建校验](https://github.com/casterkay/AlphaMeme/issues/33)：
+  仍需稳定的 CI/release audit、不会受 `.dev.vars` 干扰的类型检查、精确部署 revision 记录，
+  以及按当前启用能力执行的 credentialed smoke test。dry-run 和本地全绿不能替代这些证据。
+
+`#1`、`#2`、`#58`、`#60` 与 `#63–#68` 是独立产品、交易、清理或 UX 工作，
+不是完成本重构计划的前置条件，也不是继续保持本文“活动中”的理由。
+
+## 仍然有效的工程不变量
+
+尽管具体 provider 和产品功能已变化，以下不变量仍由当前代码与测试承担：
+
+- 每租户一个 Durable Object，租户路由与业务状态分离；所有业务行仍显式带 `tenant_id`。
+- 一个 DO 只有一个 alarm；多类持久任务由最早到期时间统一重排。Cloudflare alarm 是
+  at-least-once，恢复路径必须依赖 checkpoint、稳定 effect ID 与幂等提交，而非假设只执行一次。
+- 外部 await 期间控制命令可以进入；提交前必须重查 credential/control generation。
+- 相关业务状态、事件与 outbox 意图在同步事务内提交，网络副作用在事务外执行并可协调恢复。
+- Telegram secret、私聊 owner 授权、callback/message 归属与 inbox 去重是独立边界。
+- 不把本地测试、dry-run、部署存在或健康端点等同于 credentialed 端到端验收。
+
+Cloudflare 当前的 [Alarm API](https://developers.cloudflare.com/durable-objects/api/alarms/)
+仍明确规定单 alarm、at-least-once 执行和失败重试；如平台契约变化，应更新当前实现与测试，
+不要修改本历史计划来掩盖差异。
+
+---
+
+## 历史设计原文（GMGN，非规范）
 
 > 本计划只改本仓库（meme-radar）。不涉及 MemeHarness。
 > 目标：把本地只读 Node web 应用，重构为 Cloudflare Worker 服务，Telegram bot 作为唯一用户界面。
-> 状态：设计稿，已纳入本轮评审修订；本次只更新计划，不代表实现或平台 spike 已通过。
+> 状态：历史设计稿；以下内容不代表当前实现或仍待实施。
 >
-> Telegram 详细交互设计见 [TELEGRAM-M3-INTERFACE-DESIGN.md](TELEGRAM-M3-INTERFACE-DESIGN.md)：
-> 包含面板、双语文案、回调/状态契约与验收矩阵，并提议将 GitHub #26–29 从 M4 移入 M3。
-> 实施阶段将原M4依赖（#26–29）纳入M3；完整实测验收仍不可省略。
-> 当前实现与未完成的平台验收见 [TELEGRAM-M3-OPERATIONS.md](TELEGRAM-M3-OPERATIONS.md)。
+> Telegram 原交互设计见 [TELEGRAM-M3-INTERFACE-DESIGN.md](TELEGRAM-M3-INTERFACE-DESIGN.md)。
+> 当前实现与平台验收边界见 [TELEGRAM-M3-OPERATIONS.md](../TELEGRAM-M3-OPERATIONS.md)。
 
 ## 0. 已确认的决策
 
