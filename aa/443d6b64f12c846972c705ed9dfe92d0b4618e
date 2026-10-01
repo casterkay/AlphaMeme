@@ -1,0 +1,23 @@
+docs/TELEGRAM-UX-PLAN.md
+  s_6295713717bc33::t_38244bf6d4b0f2 205-211
+src/bot/panels.mjs
+  s_6295713717bc33::t_9eb5c6bfc7ec9d 3,7,82-96,99-100,102-116,142,148,196,199,215,225
+test/telegram-panels.test.mjs
+  s_6295713717bc33::t_f4f7bf3ddd966a 225,239-249,294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "aa443d6b64f12c846972c705ed9dfe92d0b4618e",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
