@@ -1,0 +1,33 @@
+docs/TELEGRAM-UX-PLAN.md
+  s_6295713717bc33::t_72196c721f80ab 302-303
+src/bot/commands.mjs
+  s_6295713717bc33::t_703923689b23d9 235
+src/bot/panels.mjs
+  s_6295713717bc33::t_f8bebc03c0985a 9,15,299-304,368-374,417-433,443
+src/bot/runtime.mjs
+  s_6295713717bc33::t_add02e08aa0f20 204,222,233,240-244
+src/render/telegram.mjs
+  s_6295713717bc33::t_1e5743a2ee2a64 14
+test/telegram-panels.test.mjs
+  s_6295713717bc33::t_c7506006945350 16,63,68,87,422-458
+workers/radar-agent.runtime.mjs
+  s_6295713717bc33::t_c64eb22ca9a169 614-615
+workers/telegram-e2e.runtime.mjs
+  s_6295713717bc33::t_d41e062ad07ac2 365-366,395,413-414,422-423,431-435,451,459-460,477-481,560-577
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b6deffe523c76e5f26907eef7e6efbe2c80b1097",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
