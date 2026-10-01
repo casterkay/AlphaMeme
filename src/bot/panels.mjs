@@ -12,7 +12,7 @@ export const FEED_SORTS = Object.freeze(['priority','volume']);
 const AVE_KEY_URL = 'https://cloud.ave.ai/login';
 const names = {
   radar:['雷达','Radar'], feed:['热榜','Hot list'], audits:['线索','Leads'], saved:['自选','Watchlist'], events:['动态','Activity'], status:['状态','Status'], sources:['来源','Sources'], delivery:['投递','Delivery'], settings:['设置','Settings'], chains:['扫描链','Scan chain'], onboard:['AVE密钥','AVE key'], help:['帮助','Help'], detail:['代币详情','Token detail'], evidence:['检查证据','Evidence'], view_chain:['查看链','View chain'], filter:['筛选','Filter'], sort:['排序','Order'], language:['语言','Language'], disconnect:['断开AVE','Disconnect AVE'], stats:['表现','Performance'], horizon:['观察窗口','Window'], cohort:['样本组别','Cohort'],
-  all:['全部','All'], lead:['市场线索，安全待核验','Market lead; security unverified'], chain:['链上候选，待人工看X','On-chain candidate; review X'], waiting:['等待复查','Waiting for recheck'], passed:['人工通过','Manually approved'], ignored:['已忽略','Ignored'], rejected:['已排除','Rejected'], fresh:['5分钟内审计','Audited within 5 min'], favorite:['收藏','Favorites'], notes:['有备注','With notes'],
+  all:['全部','All'], lead:['线索','Leads'], chain:['待看X','Needs X review'], waiting:['复查中','Rechecking'], passed:['人工通过','Approved'], ignored:['已忽略','Ignored'], rejected:['已否决','Vetoed'], fresh:['近5分钟','Last 5 min'], favorite:['收藏','Favorites'], notes:['有备注','With notes'],
   audit_desc:['最新审计','Newest audit'], score_desc:['发现评分','Discovery score'], market_desc:['市值↓','Market cap ↓'], market_asc:['市值↑','Market cap ↑'], liquidity_desc:['流动性↓','Liquidity ↓'], priority:['通过筛选优先','Screen passes first'], volume:['5分钟成交额','5-minute volume'],
   candidates:['候选事件','Candidates'], risk:['风险变化','Risk changes'], service:['服务事件','Service'], unknown:['未知','Unknown'],
   ...TRADING_PANEL_NAMES
@@ -30,7 +30,6 @@ const heading = (panel, locale) => { const icon = PANEL_ICONS[panel] ?? ICONS[pa
 const open = (panel, locale, params = {}) => button(heading(panel, locale), 'panel.open', { panel, ...params });
 const scanState = (control, locale) => !control.configured ? `${ICONS.disconnected} ${localize(locale,'未连接AVE','Not connected')}` : control.paused ? `${ICONS.paused} ${localize(locale,'已暂停','Paused')}` : `${ICONS.scanning} ${localize(locale,'扫描中','Scanning')}`;
 const alertState = (control, locale) => control.notifications ? `${ICONS.alertsOn} ${localize(locale,'提醒开启','Alerts on')}` : `${ICONS.alertsOff} ${localize(locale,'提醒关闭','Alerts off')}`;
-const state = (snapshot, row, locale) => row.auditedAt ? name(effectiveStatus(row, markFor(snapshot,row), snapshot.at), locale) : localize(locale,'未审计','Not audited');
 
 export function selectPanelRows(snapshot, session) {
   const query = session.query || {}, chain = session.viewChain;
@@ -68,42 +67,99 @@ export function selectPanelRows(snapshot, session) {
 
 function pagination(total, requested, size, locale, action = 'page.set') {
   const page = Math.min(Math.max(0, Number.isSafeInteger(requested) ? requested : 0), Math.max(0, Math.ceil(total / size) - 1));
-  return { page, start: page * size, keyboard: [page > 0 ? button(localize(locale,'上一页','Previous'),action,{page:page - 1}) : null, (page+1)*size < total ? button(localize(locale,'下一页','Next'),action,{page:page + 1}) : null].filter(Boolean) };
+  return { page, start: page * size, keyboard: [page > 0 ? button(ICONS.previous,action,{page:page - 1}) : null, (page+1)*size < total ? button(ICONS.next,action,{page:page + 1}) : null].filter(Boolean) };
 }
 const detailButton = (row,index,locale) => button(`${index + 1} ${safeTelegramText(row.symbol || row.address?.slice(-8) || '?',30)}`, 'panel.open', { panel:'detail' },token(row));
-const pairs = rows => Array.from({length:Math.ceil(rows.length/2)}, (_,index) => rows.slice(index*2,index*2+2));
+const rowsOf = (items,size) => Array.from({length:Math.ceil(items.length/size)}, (_,index) => items.slice(index*size,index*size+size));
+const rangeText = (start,end,total,locale) => localize(locale,`第${start}–${end}条，共${total}条`,`${start}–${end} of ${total}`);
+const selectorButton = (panel,locale) => {
+  const [icon,zh,en] = { view_chain:[ICONS.view_chain,'链','Chain'], filter:[ICONS.filter,'筛选','Filter'], sort:[ICONS.sort,'排序','Sort'] }[panel];
+  return button(`${icon} ${localize(locale,zh,en)}`,'panel.open',{panel});
+};
+const present = value => value !== null && value !== undefined;
+
+// Display verdict of a token's recorded safety check. ✅ needs a COMPLETE
+// GoPlus/DexScreener check with no fatal flag; anything short of that is shown.
+const BLOCKING_CONFLICTS = ['MARKET_MISMATCH','SECURITY_MISMATCH'];
+function safetyVerdict(row) {
+  const deep = row.deep || {}, secondary = row.secondary, security = secondary?.security || {};
+  const failed = deep.failed || [], blocking = deep.blockingUnknownFields || [];
+  const checkedAt = secondary?.checkedAt || row.auditedAt || null;
+  if (['HARD_REJECT','REJECTED'].includes(row.status) || security.verdict === 'FATAL') return { kind:'vetoed', reasons:[...(security.fatal || []).map(item => item.field),...failed], checkedAt };
+  // Rows that never became candidates (hot-list or note-only) have no check at all.
+  if (!row.status) return { kind:'unchecked' };
+  if (backendDisposition(row) === 'waiting' || (!secondary && backendDisposition(row) === 'lead')) return { kind:'checking' };
+  const counts = {
+    failed:failed.length, blocking:blocking.length,
+    unknown:new Set([...(deep.unknownFields || []).filter(field => !blocking.includes(field)),...(security.unknownFields || [])]).size,
+    conflicts:(secondary?.conflicts || []).filter(conflict => BLOCKING_CONFLICTS.includes(conflict.type)).length
+  };
+  const verified = secondary?.status === 'COMPLETE' && security.verdict === 'NO_FATAL_FLAGS';
+  return { kind:verified && !counts.failed && !counts.blocking && !counts.conflicts ? 'clear' : 'review', counts, checkedAt };
+}
+const VERDICT_SHORT = { clear:[ICONS.passed,'未发现问题','No failures'], review:[ICONS.unknown,'需复核','Needs review'], vetoed:[ICONS.vetoed,'已否决','Vetoed'], checking:[ICONS.checking,'核验中','Checking'], unchecked:[ICONS.unknown,'未核验','Not checked'] };
+const verdictShort = (verdict,locale) => { const [icon,zh,en] = VERDICT_SHORT[verdict.kind]; return `${icon} ${localize(locale,zh,en)}`; };
+function verdictLine(verdict,snapshot,locale) {
+  const L = (zh,en) => localize(locale,zh,en);
+  const checked = present(verdict.checkedAt) ? ` · ${L(`${relativeTime(verdict.checkedAt,snapshot.at,locale)}核验`,`checked ${relativeTime(verdict.checkedAt,snapshot.at,locale)}`)}` : '';
+  if (verdict.kind === 'checking') return `${ICONS.checking} ${L('安全核验进行中','Safety check running')}`;
+  if (verdict.kind === 'unchecked') return `${ICONS.unknown} ${L('未经安全核验','Not safety-checked')}`;
+  if (verdict.kind === 'clear') return `${ICONS.passed} ${L('未发现问题','No failures found')}${checked}`;
+  if (verdict.kind === 'vetoed') {
+    const reasons = [...new Set(verdict.reasons)].map(value => fieldLabels[value] ? L(...fieldLabels[value]) : safeTelegramText(value,48));
+    return `${ICONS.vetoed} ${L('已否决','Vetoed')}${reasons.length ? `${L('：',': ')}${userText(reasons.slice(0,2).join(L('、',', ')),120)}${reasons.length > 2 ? ` +${reasons.length-2}` : ''}` : ''}${checked}`;
+  }
+  const { failed, blocking, unknown, conflicts } = verdict.counts, plural = (count,one,many) => count === 1 ? one : many;
+  const parts = [
+    failed ? L(`${failed}项检查失败`,`${failed} failed ${plural(failed,'check','checks')}`) : '',
+    blocking ? L(`${blocking}项阻断未知`,`${blocking} blocking unknown`) : '',
+    unknown ? L(`${unknown}项字段未知`,`${unknown} ${plural(unknown,'field','fields')} unknown`) : '',
+    conflicts ? L(`${conflicts}处来源冲突`,`${conflicts} source ${plural(conflicts,'conflict','conflicts')}`) : ''
+  ].filter(Boolean);
+  return `${ICONS.unknown} ${parts.length ? parts.join(L('，',', ')) : L('核验不完整','Check incomplete')}${checked}`;
+}
 
 function listPanel(snapshot,session,locale) {
   const L = (zh,en) => localize(locale,zh,en), query = session.query || {};
   const rows = selectPanelRows(snapshot,session), paging = pagination(rows.length,query.page,5,locale);
   const shown = rows.slice(paging.start,paging.start+5), isLive = session.panel === 'feed', saved = session.panel === 'saved';
   const feed = snapshot.feedByChain?.[session.viewChain];
-  const blocks = [userText(session.viewChain && session.viewChain !== 'all' ? chainLabel(session.viewChain) : L('全部链','All chains')), `${name(query.filter || 'all',locale)} · ${name(query.sort || (isLive ? 'priority' : 'audit_desc'),locale)}`, `${L('搜索','Search')}: ${userText(query.search || L('无','None'),128)}`, ''];
+  // Only state the owner changed is printed; defaults stay silent.
+  const header = [session.viewChain && session.viewChain !== 'all' ? chainLabel(session.viewChain) : L('全部链','All chains')];
+  if (query.filter && query.filter !== 'all') header.push(`${L('筛选','Filter')}: ${name(query.filter,locale)}`);
+  if (query.sort && query.sort !== (isLive ? 'priority' : 'audit_desc')) header.push(`${L('排序','Sort')}: ${name(query.sort,locale)}`);
+  if (query.search) header.push(`${L('搜索','Search')}: "${safeTelegramText(query.search,128)}"`);
+  const blocks = [userText(header.join(' · '),400)];
   if (isLive) {
-    blocks.push(!feed?.observedAt ? L('等待首次读取AVE热榜','Waiting for the first AVE hot-list read') : `${L('热榜更新','Hot list updated')}: ${relativeTime(feed.observedAt,snapshot.at,locale)}`);
-    if (feed?.observedAt && snapshot.at-feed.observedAt > 120_000) blocks.push(L('数据已陈旧','Data stale'));
+    if (!feed?.observedAt) blocks.push(L('等待首次读取AVE热榜','Waiting for the first AVE hot-list read'));
+    else if (snapshot.at-feed.observedAt > 120_000) blocks.push(L('数据已陈旧','Data stale'));
     if (feed?.status && feed.status !== 'READY') blocks.push(`${L('读取状态','Read status')}: ${reasonText(feed.status,locale)}`);
     if (snapshot.control?.scanChain !== session.viewChain) blocks.push(L('此链未在扫描，显示最后一次读取','This chain is not being scanned; showing its last read'));
   }
+  blocks.push('');
   shown.forEach((row,index) => {
-    blocks.push(`<b>${paging.start + index + 1}. ${userText(row.symbol || '?',30)}</b> · ${state(snapshot,row,locale)}`);
-    if (saved) blocks.push(`${chainLabel(row.chain)} · <code>${userText(row.address?.slice(-12),12)}</code> · ${L('收藏','Favorite')}: ${truth(row.favorite,locale)}`, userText(row.note || L('无备注','No note'),60));
-    else {
-      blocks.push(`${L('市值','Market cap')} ${money(row.marketCap,locale)} · ${L('流动性','Liquidity')} ${money(row.liquidity,locale)}`);
-      if (isLive) blocks.push(row.pass ? L('通过AVE行情筛选','Passed the AVE market screen') : `${L('未通过','Not passed')}: ${userText(row.reasons.join('；') || name('unknown',locale),160)}`,`${L('币龄','Age')}: ${row.createdAt ? duration(snapshot.at-row.createdAt*1000,locale) : name('unknown',locale)}`,`${L('5m成交','5m volume')} ${money(row.volume5m,locale)} · ${L('买/卖','Buys/sells')} ${numberText(row.buys5m,locale)}/${numberText(row.sells5m,locale)}`, `${L('持有人','Holders')} ${numberText(row.holders,locale)} · ${L('5m价格变化','5m price change')} ${percent(row.priceChange5m,locale,true)}`);
-      else blocks.push(`${L('发现评分','Discovery score')} ${numberText(row.discoveryScore,locale)} · ${L('失败/未知','Failed/unknown')} ${(row.deep?.failed || []).length}/${(row.deep?.unknownFields || []).length}`);
+    const title = `<b>${paging.start + index + 1}. ${userText(row.symbol || '?',30)}</b>`;
+    if (isLive) {
+      blocks.push(`${title} · ${row.pass ? `${ICONS.passed} ${L('通过筛选','passed screen')}` : userText(row.reasons[0] || name('unknown',locale),60)}`);
+      blocks.push([present(row.marketCap) ? money(row.marketCap,locale) : '', row.createdAt > 0 ? L(`币龄${duration(snapshot.at-row.createdAt*1000,locale)}`,`${duration(snapshot.at-row.createdAt*1000,locale)} old`) : '',
+        present(row.volume5m) ? L(`5分钟成交${money(row.volume5m,locale)}`,`5m vol ${money(row.volume5m,locale)}`) : '', present(row.priceChange5m) ? percent(row.priceChange5m,locale,true) : ''].filter(Boolean).join(' · '));
+    } else {
+      const mark = markFor(snapshot,row), status = row.status && mark ? effectiveStatus(row,mark,snapshot.at) : null;
+      const marked = status === 'passed' ? ` · ${ICONS.approve} ${name('passed',locale)}` : mark?.decision === 'ignored' ? ` · ${ICONS.ignore} ${name('ignored',locale)}` : '';
+      blocks.push(`${title}${saved && !row.status ? '' : ` · ${verdictShort(safetyVerdict(row),locale)}`}${marked}`);
+      if (saved) blocks.push([chainLabel(row.chain),row.symbol ? '' : `<code>${userText(row.address?.slice(-12),12)}</code>`,row.favorite ? ICONS.saved : '',row.note?.trim() ? `${ICONS.note} ${userText(row.note,60)}` : ''].filter(Boolean).join(' · '));
+      else blocks.push([present(row.marketCap) ? L(`市值 ${money(row.marketCap,locale)}`,`${money(row.marketCap,locale)} MC`) : '',present(row.liquidity) ? L(`流动性 ${money(row.liquidity,locale)}`,`${money(row.liquidity,locale)} liq`) : '',relativeTime(row.auditedAt,snapshot.at,locale)].filter(Boolean).join(' · '));
     }
-    if (!isLive) blocks.push(`${L('证据时间','Evidence time')}: ${relativeTime(row.auditedAt,snapshot.at,locale)}`);
     blocks.push('');
   });
   if (!shown.length) blocks.push(L('没有符合条件的记录','No matching records'));
-  blocks.push(`${rows.length ? paging.start+1 : 0}–${Math.min(paging.start+5,rows.length)} / ${rows.length}`);
-  if (isLive) blocks.push(`${L('本次读取/线索','This read/leads')}: ${numberText(feed?.receivedCount,locale)}/${numberText(feed?.leadCount,locale)}`, L('热榜由扫描读取；本消息仅在操作时刷新。','The scanner reads the hot list; this message refreshes on interaction.'));
-  const keyboard = pairs(shown.map((row,index) => session.query?.noteTargetMatches ? button(`${paging.start + index + 1} ${safeTelegramText(row.symbol || row.address.slice(-8),30)}`, 'note.select', {}, token(row)) : detailButton(row,paging.start+index,locale)));
-  keyboard.push([open('view_chain',locale),open(isLive ? 'sort' : 'filter',locale)]);
-  if (!isLive && !saved) keyboard.push([open('sort',locale)]);
-  keyboard.push([button(L('搜索','Search'),'input.begin',{kind:'search'}),query.search ? button(L('清空搜索','Clear search'),'search.clear') : null],paging.keyboard);
-  return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale);
+  else blocks.push(rangeText(paging.start+1,paging.start+shown.length,rows.length,locale));
+  if (isLive && feed?.observedAt) blocks.push(`${L('本次读取','This read')}: ${numberText(feed.receivedCount,locale)} · ${L('线索','leads')}: ${numberText(feed.leadCount,locale)}`);
+  const keyboard = rowsOf(shown.map((row,index) => session.query?.noteTargetMatches ? button(`${paging.start + index + 1} ${safeTelegramText(row.symbol || row.address.slice(-8),30)}`, 'note.select', {}, token(row)) : detailButton(row,paging.start+index,locale)),2);
+  keyboard.push([selectorButton('view_chain',locale),isLive ? null : selectorButton('filter',locale),saved ? null : selectorButton('sort',locale)]);
+  keyboard.push([button(`${ICONS.search} ${L('搜索','Search')}`,'input.begin',{kind:'search'}),query.search ? button(`${ICONS.clear} ${L('清空','Clear')}`,'search.clear') : null],paging.keyboard);
+  const footnote = isLive && feed?.observedAt ? L(`热榜读取于${relativeTime(feed.observedAt,snapshot.at,locale)}`,`hot list read ${relativeTime(feed.observedAt,snapshot.at,locale)}`) : null;
+  return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale,{footnote});
 }
 
 const fieldLabels = {
@@ -122,24 +178,28 @@ function evidenceLines(value,locale,prefix='') {
   return [`${prefix}: ${typeof value === 'boolean' ? truth(value,locale) : typeof value === 'number' ? numberText(value,locale) : value === null || value === undefined || value === '' ? name('unknown',locale) : safeTelegramText(value,500)}`];
 }
 
+// The candidate is the token of record; its latest hot-list row supplies the
+// age and 5-minute facts a candidate does not keep.
 function findToken(snapshot,session) {
   const selected = session.query?.selectedToken;
   if (!selected) return null;
   const candidate = snapshot.candidates.find(row => id(row) === id(selected));
-  const listed = snapshot.feedByChain?.[selected.chain]?.rows?.find(row => id(row) === id(selected));
+  const listed = snapshot.feedByChain?.[selected.chain]?.rows?.find(row => id(row) === id(selected)) || null;
   const annotation = snapshot.annotations.find(row => id(row) === id(selected));
-  return candidate || (listed ? { ...listed, info:{} } : annotation ? { ...annotation, symbol:'?' } : null);
+  const row = candidate || (listed ? { ...listed, info:{} } : annotation ? { ...annotation, symbol:'?' } : null);
+  return row && { row, listed };
 }
 
 function detailPanel(snapshot,session,locale) {
-  const L = (zh,en) => localize(locale,zh,en), row = findToken(snapshot,session);
-  if (!row) return finishPanel(name('detail',locale),[L('未找到，请从列表选择代币','Not found; choose a token from a list')],[],snapshot,session,locale,{refresh:false});
-  const mark = markFor(snapshot,row), annotation = annotationFor(snapshot,row), identity = token(row), deep = row.deep || {};
-  const checks = Object.values(deep.checks || {}), unknown = deep.unknownFields || [], blocking = deep.blockingUnknownFields || [];
-  const header = [`${userText(row.symbol || '?',30)} · ${chainLabel(row.chain)} · ${state(snapshot,row,locale)}`, `CA: <code>${userText(row.address,80)}</code>`,`${L('审计','Audit')}: ${session.panel === 'evidence' ? `${timestamp(row.auditedAt,locale)} · ` : ''}${relativeTime(row.auditedAt,snapshot.at,locale)}`];
-  const counts = `${L('通过/未通过检查','Passed/not-passed checks')}: ${checks.filter(value => value === true).length}/${checks.filter(value => value === false).length}\n${L('明确失败/阻断未知/其他未知/冲突','Explicit failures/blocking unknown/other unknown/conflicts')}: ${(deep.failed || []).length}/${blocking.length}/${unknown.filter(value => !blocking.includes(value)).length}/${(row.secondary?.conflicts || []).length}`;
-  if (mark?.decision === 'passed' && effectiveStatus(row,mark,snapshot.at) !== 'passed') header.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
+  const L = (zh,en) => localize(locale,zh,en), found = findToken(snapshot,session);
+  if (!found) return finishPanel(name('detail',locale),[L('未找到，请从列表选择代币','Not found; choose a token from a list')],[],snapshot,session,locale,{refresh:false});
+  const { row, listed } = found, mark = markFor(snapshot,row), annotation = annotationFor(snapshot,row), identity = token(row), deep = row.deep || {};
+  const verdict = safetyVerdict(row), invalidApproval = mark?.decision === 'passed' && effectiveStatus(row,mark,snapshot.at) !== 'passed';
   if (session.panel === 'evidence') {
+    const checks = Object.values(deep.checks || {}), unknown = deep.unknownFields || [], blocking = deep.blockingUnknownFields || [];
+    const header = [`${userText(row.symbol || '?',30)} · ${chainLabel(row.chain)} · ${verdictShort(verdict,locale)}`, `CA: <code>${userText(row.address,80)}</code>`,`${L('审计','Audit')}: ${timestamp(row.auditedAt,locale)} · ${relativeTime(row.auditedAt,snapshot.at,locale)}`];
+    if (invalidApproval) header.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
+    const counts = `${L('通过/未通过检查','Passed/not-passed checks')}: ${checks.filter(value => value === true).length}/${checks.filter(value => value === false).length}\n${L('明确失败/阻断未知/其他未知/冲突','Explicit failures/blocking unknown/other unknown/conflicts')}: ${(deep.failed || []).length}/${blocking.length}/${unknown.filter(value => !blocking.includes(value)).length}/${(row.secondary?.conflicts || []).length}`;
     const sections = [
       [L('阻断发现','Blocking findings'), [...(deep.failed || []).map(value => `${L('失败','Failure')}: ${reasonText(value,locale)}`),...blocking.map(value => `${L('阻断未知','Blocking unknown')}: ${safeTelegramText(value)}`),...unknown.filter(value => !blocking.includes(value)).map(value => `${L('其他未知','Other unknown')}: ${safeTelegramText(value)}`),row.auditHealth?.earlyExit ? L('审计提前结束，部分证据未采集','Audit exited early; some evidence was not collected') : '',row.decisionReason ? reasonText(row.decisionReason,locale) : '',...evidenceLines(deep.checks || {},locale)]],
       [L('合约与供应','Contract and supply'),[safeTelegramText(deep.honeypotEvidence,500),...evidenceLines(deep.security || {},locale)]],
@@ -148,29 +208,31 @@ function detailPanel(snapshot,session,locale) {
       [L('第二来源','Second sources'),evidenceLines(row.secondary || {},locale)],
       [L('完整备注','Full note'),[annotation?.note || L('无备注','No note')]]
     ];
-    const pages = sections.flatMap(([title,lines]) => textPages(lines.filter(Boolean).length ? lines.filter(Boolean) : [L('未知；未视为通过','Unknown; not treated as passed')],1800).map((items,index) => ({ title:`${title} · ${index+1}`,items })));
+    const pages = sections.flatMap(([title,lines]) => textPages(lines.filter(Boolean).length ? lines.filter(Boolean) : [L('未知；未视为通过','Unknown; not treated as passed')],1800).map((items,index) => ({ title:`${ICONS.evidence} ${title} · ${index+1}`,items })));
     const paging = pagination(pages.length,session.query?.detailPage,1,locale), page = pages[paging.page];
     return finishPanel(page.title,[...header,counts,'',...page.items.map(value => userText(value,2400)),`${paging.page+1}/${pages.length}`], [paging.keyboard,[button(L('摘要','Summary'),'panel.open',{panel:'detail'},identity)]],snapshot,session,locale,{token:identity,refresh:false});
   }
-  const blocks = [...header,`${L('市值','Market cap')} ${money(row.marketCap,locale)} · ${L('流动性','Liquidity')} ${money(deep.security?.liquidity ?? row.liquidity,locale)} · ${L('持有人','Holders')} ${numberText(row.holders,locale)}`,counts];
+  const fact = key => row[key] ?? listed?.[key] ?? null, liquidity = deep.security?.liquidity ?? fact('liquidity'), createdAt = fact('createdAt');
+  const blocks = [verdictLine(verdict,snapshot,locale),
+    [present(fact('marketCap')) ? L(`市值 ${money(fact('marketCap'),locale)}`,`MC ${money(fact('marketCap'),locale)}`) : '',present(liquidity) ? L(`流动性 ${money(liquidity,locale)}`,`Liq ${money(liquidity,locale)}`) : '',present(fact('holders')) ? L(`持有人 ${numberText(fact('holders'),locale)}`,`${numberText(fact('holders'),locale)} holders`) : ''].filter(Boolean).join(' · '),
+    [createdAt > 0 ? L(`币龄${duration(snapshot.at-createdAt*1000,locale)}`,`${duration(snapshot.at-createdAt*1000,locale)} old`) : '',present(listed?.priceChange5m) ? `5m ${percent(listed.priceChange5m,locale,true)}` : '',present(listed?.volume5m) ? L(`5分钟成交 ${money(listed.volume5m,locale)}`,`5m vol ${money(listed.volume5m,locale)}`) : ''].filter(Boolean).join(' · '),
+    `<code>${userText(row.address,80)}</code>`];
+  const status = mark ? effectiveStatus(row,mark,snapshot.at) : null;
+  blocks.push([annotation?.favorite ? `${ICONS.saved} ${L('已加入自选','In watchlist')}` : '',status === 'passed' ? `${ICONS.approve} ${name('passed',locale)}` : status === 'ignored' ? `${ICONS.ignore} ${name('ignored',locale)}` : '',
+    annotation?.note ? `${ICONS.note} "${userText(annotation.note,140)}${annotation.note.length>140 ? `…"${L('（完整备注见证据）',' (full note in Evidence)')}` : '"'}` : ''].filter(Boolean).join(' · '));
+  if (invalidApproval) blocks.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
   if (!row.auditedAt) blocks.push(L('审计快照已不再保留，或尚未审计。','Audit snapshot no longer retained, or not yet audited.'));
   if (backendDisposition(row) === 'chain') blocks.push(L('链上硬门通过；请人工查看X社区评论与回复。','On-chain gates passed; review X community comments and replies.'));
-  if (backendDisposition(row) === 'lead') blocks.push(L('市场线索：仅通过AVE行情筛选。GoPlus/DexScreener安全核验结果见“检查证据”；未核验不代表安全。','Market lead: passed the AVE market screen only. GoPlus/DexScreener results are under Evidence; unverified does not mean safe.'));
-  blocks.push(`${L('人工标记','Manual mark')}: ${mark?.decision ? name(mark.decision,locale) : L('未标记','None')} · ${L('收藏','Favorite')}: ${truth(annotation?.favorite === true,locale)}`);
-  if (annotation?.note) blocks.push(`${L('备注','Note')}: ${userText(annotation.note,140)}${annotation.note.length>140 ? L('…（完整备注见检查证据）','… (full note in Evidence)') : ''}`);
-  blocks.push(L('人工通过不会改变筛选结果或执行交易；交易只在你确认报价后执行。','Manual approval does not change screening results or execute trades; a trade runs only after you confirm its quote.'));
-  const x = officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter), site = row.info?.website;
-  if (!x || !site) blocks.push(L('部分官方链接不可用。','Some official links are unavailable.'));
+  if (backendDisposition(row) === 'lead' && ['checking','review'].includes(verdict.kind)) blocks.push(L('市场线索：安全性尚未核验。','Market lead: safety not yet verified.'));
   const trading = tokenTradeControls(snapshot,row,locale,identity);
   blocks.push(...trading.blocks);
-  const keyboard = [...trading.keyboard,[urlButton(L('查看X','View X'),x)],[urlButton(L('官网','Website'),site)],[button(name('evidence',locale),'panel.open',{panel:'evidence'},identity)]];
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };
-  if (mark?.decision) keyboard.push([button(mark.decision === 'passed' ? L('撤销人工通过','Undo approval') : L('取消忽略','Stop ignoring'),'mark.clear',binding,identity)]);
-  else if (row.reviewRevision && backendDisposition(row) === 'chain' && row.auditedAt && snapshot.at-row.auditedAt <= 600_000) keyboard.push([button(L('人工通过','Approve manually'),'mark.set_passed',binding,identity)]);
-  if (mark?.decision !== 'ignored') keyboard.push([button(L('忽略','Ignore'),'mark.set_ignored',binding,identity)]);
-  keyboard.push([button(annotation?.favorite ? L('取消收藏','Remove favorite') : L('收藏','Favorite'),'favorite.set',{value:annotation?.favorite !== true},identity),button(L('备注','Note'),'note.begin',{},identity)]);
-  if (annotation?.note) keyboard.push([button(L('清空备注','Clear note'),'note.clear',{},identity)]);
-  return finishPanel(name('detail',locale),blocks,keyboard,snapshot,session,locale,{token:identity});
+  const eligible = !mark?.decision && row.reviewRevision && backendDisposition(row) === 'chain' && row.auditedAt && snapshot.at-row.auditedAt <= 600_000;
+  const keyboard = [...trading.keyboard,
+    [urlButton(ICONS.x,officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter)),urlButton(`${ICONS.site} ${L('官网','Site')}`,row.info?.website),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,row.secondary?.market?.pairUrl),button(`${ICONS.evidence} ${L('证据','Evidence')}`,'panel.open',{panel:'evidence'},identity)],
+    [button(`${ICONS.saved} ${annotation?.favorite ? L('取消自选','Unwatch') : L('自选','Watch')}`,'favorite.set',{value:annotation?.favorite !== true},identity),button(`${ICONS.note} ${L('备注','Note')}`,'note.begin',{},identity),mark?.decision === 'ignored' ? null : button(`${ICONS.ignore} ${L('忽略','Ignore')}`,'mark.set_ignored',binding,identity)],
+    [mark?.decision ? button(mark.decision === 'passed' ? L('撤销人工通过','Undo approval') : L('取消忽略','Stop ignoring'),'mark.clear',binding,identity) : eligible ? button(`${ICONS.approve} ${L('人工通过','Approve')}`,'mark.set_passed',binding,identity) : null,annotation?.note ? button(`${ICONS.clear} ${L('清空备注','Clear note')}`,'note.clear',{},identity) : null]];
+  return finishPanel(`${safeTelegramText(row.symbol || '?',30)} · ${chainLabel(row.chain)}`,blocks.filter(value => value !== ''),keyboard,snapshot,session,locale,{token:identity});
 }
 
 function selectorPanel(snapshot,session,locale) {
@@ -183,28 +245,32 @@ function selectorPanel(snapshot,session,locale) {
   else if (session.panel === 'horizon') { choices=['m5','m15','m30','h1','h2','h6','h24'];action='horizon.set';selected=query.horizon || 'm30'; }
   else { choices=['passed','rejected','compare'];action='cohort.set';selected=query.cohort || 'passed'; }
   const labels = { zh:'中文',en:'English',passed:L('通过筛选组','Passed screen'),rejected:L('排除对照组','Rejected control'),compare:L('对比','Compare'),m5:'5m',m15:'15m',m30:'30m',h1:'1h',h2:'2h',h6:'6h',h24:'24h' };
-  const keyboard = choices.map(value => [button(`${selected === value ? '✓ ' : ''}${SCAN_CHAINS.includes(value) ? chainLabel(value) : labels[value] || name(value,locale)}`,action,{value})]);
-  return finishPanel(name(session.panel,locale),[L('选择仅影响当前面板视图；语言设置影响后续交互。','View choices apply to this panel; language applies to future interactions.')],keyboard,snapshot,session,locale,{refresh:false});
+  const keyboard = rowsOf(choices.map(value => button(`${selected === value ? '✓ ' : ''}${SCAN_CHAINS.includes(value) ? chainLabel(value) : labels[value] || name(value,locale)}`,action,{value})),session.panel === 'horizon' ? 3 : 2);
+  const blocks = session.panel === 'view_chain' ? [L('查看某条链不会改变扫描的链。','Viewing a chain does not change what is scanned.')] : [];
+  return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale,{refresh:false});
 }
 
 function eventsPanel(snapshot,session,locale) {
   const L = (zh,en) => localize(locale,zh,en), query=session.query || {};
   const groups={candidates:['CANDIDATE_NEW'],risk:['RISK_WORSENED'],service:['ERROR','AUTH','RATE_LIMITED','STATE_ERROR','SCAN_COMPLETE','SCAN_STARTED']};
+  const known=[...snapshot.candidates,...Object.values(snapshot.feedByChain || {}).flatMap(feed => feed.rows)];
+  const symbolFor=row => safeTelegramText(known.find(item => item.symbol && row.address && id(item) === id(row))?.symbol,30) || (row.address ? `${safeTelegramText(row.address,80).slice(0,6)}…${safeTelegramText(row.address,80).slice(-4)}` : '?');
   const rows=snapshot.events.filter(row => (!session.viewChain || session.viewChain === 'all' || row.chain === session.viewChain) && (!groups[query.filter] || groups[query.filter].includes(row.type))).sort((a,b) => b.at-a.at);
   const logical=[];
   for(let index=0;index<rows.length;index+=12) {
     let page=[],size=0;
     for(const row of rows.slice(index,index+12)) {
-      const text=`${relativeTime(row.at,snapshot.at,locale)} · ${chainLabel(row.chain) || L('服务','Service')}\n${groups.candidates.includes(row.type) ? name('candidates',locale) : groups.risk.includes(row.type) ? name('risk',locale) : groups.service.includes(row.type) ? name('service',locale) : L('其他事件','Other event')}: ${safeTelegramText(row.message,500)}`;
+      const where=session.viewChain === 'all' || !row.chain ? `${chainLabel(row.chain) || L('服务','Service')} · ` : '', symbol=symbolFor(row);
+      const text=`${relativeTime(row.at,snapshot.at,locale)} · ${where}${row.type === 'CANDIDATE_NEW' ? `${ICONS.newLead} ${symbol} — ${L('新线索','new lead')}` : row.type === 'RISK_WORSENED' ? `${ICONS.vetoed} ${symbol} — ${L('安全核验未通过','failed the safety check')}` : `${groups.service.includes(row.type) ? name('service',locale) : L('其他事件','Other event')}: ${safeTelegramText(row.message,500)}`}`;
       if(size+userText(text,1000).length>2200 && page.length) { logical.push(page);page=[];size=0; }
       page.push({row,text,index:rows.indexOf(row)});size+=userText(text,1000).length;
     }
     if(page.length) logical.push(page);
   }
   const paging=pagination(logical.length,query.page,1,locale), shown=logical[paging.page] || [];
-  const keyboard=pairs(shown.filter(({row}) => row.address && SCAN_CHAINS.includes(row.chain) && (snapshot.candidates.some(candidate => id(candidate) === id(row)) || snapshot.annotations.some(annotation => id(annotation) === id(row)))).map(({row,index}) => detailButton(row,index,locale)));
-  keyboard.push([open('view_chain',locale),open('filter',locale)],paging.keyboard,[open('status',locale)]);
-  return finishPanel(name('events',locale),shown.length ? [...shown.map(({text,index}) => `${index+1}. ${userText(text,1000)}`),`${shown[0].index+1}–${shown.at(-1).index+1} / ${rows.length}`] : [L('尚无事件','No events yet')],keyboard,snapshot,session,locale);
+  const keyboard=rowsOf(shown.filter(({row}) => row.address && SCAN_CHAINS.includes(row.chain) && (snapshot.candidates.some(candidate => id(candidate) === id(row)) || snapshot.annotations.some(annotation => id(annotation) === id(row)))).map(({row,index}) => detailButton({...row,symbol:symbolFor(row)},index,locale)),2);
+  keyboard.push([selectorButton('view_chain',locale),selectorButton('filter',locale)],paging.keyboard,[open('status',locale)]);
+  return finishPanel(name('events',locale),shown.length ? [...shown.map(({text,index}) => `${index+1}. ${userText(text,1000)}`),rangeText(shown[0].index+1,shown.at(-1).index+1,rows.length,locale)] : [L('尚无事件','No events yet')],keyboard,snapshot,session,locale);
 }
 
 // The registered command menu, in order of use. Rarer commands work but stay out of
@@ -253,25 +319,29 @@ function statusPanel(snapshot,session,locale) {
   return finishPanel(heading(session.panel,locale),blocks,keyboard,snapshot,session,locale);
 }
 
+const WINDOW_LABELS = { m5:['5分钟','5 min'], m15:['15分钟','15 min'], m30:['30分钟','30 min'], h1:['1小时','1 h'], h2:['2小时','2 h'], h6:['6小时','6 h'], h24:['24小时','24 h'] };
 export function renderStatisticsPanel(snapshot,session,locale='zh') {
   const L=(zh,en)=>localize(locale,zh,en),summary=snapshot.stats?.[session.viewChain],query=session.query || {},horizon=query.horizon || 'm30',cohort=query.cohort || 'passed';
-  const blocks=[chainLabel(session.viewChain),L('影子观察，不代表可成交收益。','Shadow observations; not executable returns.')];
-  const keyboard=[[open('view_chain',locale),open('horizon',locale)],[open('cohort',locale),button(L('覆盖详情','Coverage details'),'panel.open',{panel:'stats',query:{coverage:true}})]];
+  const windowName=key=>L(...WINDOW_LABELS[key]);
+  const blocks=[chainLabel(session.viewChain)];
+  const keyboard=[[selectorButton('view_chain',locale),open('horizon',locale)],[open('cohort',locale),button(L('覆盖详情','Coverage details'),'panel.open',{panel:'stats',query:{coverage:true}})]];
   if(!summary) blocks.push(L('统计数据不可用','Statistics unavailable'));
   else if(query.coverage || query.horizon || query.cohort) {
     for(const selected of cohort === 'compare' ? ['passed','rejected'] : [cohort]) {
       const row=summary.coverage?.[selected]?.[horizon];
-      blocks.push(`<b>${selected === 'passed' ? L('链上通过组','On-chain passed') : L('排除对照组','Rejected control')} · ${horizon}</b>`);
+      blocks.push(`<b>${selected === 'passed' ? L('通过筛选组','Passed the screen') : L('否决对照组','Vetoed control')} · ${windowName(horizon)}</b>`);
       if(!row) blocks.push(L('不可用','Unavailable'));
-      else blocks.push(`${L('到期/完成/缺失','Eligible/completed/missing')}: ${numberText(row.eligible,locale)}/${numberText(row.completed,locale)}/${numberText(row.missing,locale)}`,`${L('中位数','Median')}: ${row.median === null ? L('暂无样本','No samples') : percent(row.median,locale,true)}`,`${L('正收益比例','Positive returns')}: ${row.positiveRate === null ? L('暂无样本','No samples') : percent(row.positiveRate,locale)}`);
+      else blocks.push(`${L('到期','Due')} ${numberText(row.eligible,locale)} · ${L('已测','measured')} ${numberText(row.completed,locale)} · ${L('缺失','missing')} ${numberText(row.missing,locale)}`,`${L('中位数','Median')}: ${row.median === null ? L('暂无样本','No samples') : percent(row.median,locale,true)}`,`${L('正收益比例','Positive returns')}: ${row.positiveRate === null ? L('暂无样本','No samples') : percent(row.positiveRate,locale)}`);
     }
+    blocks.push('',`${L('50样本门槛','50-sample gate')}: ${[['m30','30m'],['h2','2h'],['h24','24h']].map(([key,suffix])=>`${windowName(key)} ${summary['completed'+suffix]>=50 ? L('已达','Ready') : L('未达','Not ready')}`).join(' · ')}`,`${L('整体调参门槛','Overall calibration gate')}: ${summary.calibrationReady === true ? L('已达','Ready') : L('未达','Not ready')}`);
   } else {
-    blocks.push(`${L('链上通过组：跟踪','On-chain passed: tracked')} ${numberText(summary.tracked,locale)}`);
-    for(const [label,suffix] of [['30m','30m'],['1h','1h'],['2h','2h'],['24h','24h']]) blocks.push(`${label}: ${summary['averageReturn'+suffix] === null ? L('暂无样本','No samples') : percent(summary['averageReturn'+suffix],locale,true)} · ${L('完成','Completed')} ${numberText(summary['completed'+suffix],locale)}`);
+    ['m30','h1','h2','h24'].forEach((key,index)=>{
+      const row=summary.coverage?.passed?.[key], when=index ? L(`${windowName(key)}后`,`${windowName(key)} later`) : L(`通过筛选的代币，${windowName(key)}后`,`Tokens that passed the screen, ${windowName(key)} later`);
+      blocks.push(`${when}: ${!row ? L('不可用','unavailable') : row.median === null ? L('暂无样本','no samples yet') : L(`中位数 ${percent(row.median,locale,true)}（${numberText(row.completed,locale)}个）`,`median ${percent(row.median,locale,true)} (${numberText(row.completed,locale)} ${row.completed === 1 ? 'token' : 'tokens'})`)}`);
+    });
+    blocks.push(L(`跟踪中：${numberText(summary.tracked,locale)}个代币`,`Tracking ${numberText(summary.tracked,locale)} tokens`));
   }
-  if(summary) {
-    blocks.push(`${L('50样本门槛','50-sample gate')}: ${['30m','2h','24h'].map(window=>`${window} ${summary['completed'+window]>=50 ? L('已达','Ready') : L('未达','Not ready')}`).join(' · ')}`,`${L('整体调参门槛','Overall calibration gate')}: ${summary.calibrationReady === true ? L('已达','Ready') : L('未达','Not ready')}`);
-  }
+  blocks.push(L('影子观察，不代表可成交收益。','Shadow observations; not executable returns.'));
   return finishPanel(name('stats',locale),blocks,keyboard,snapshot,session,locale);
 }
 
