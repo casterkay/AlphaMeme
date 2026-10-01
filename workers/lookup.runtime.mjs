@@ -224,6 +224,38 @@ describe('pasted contract-address lookup', () => {
     });
   });
 
+  it('opens a hot-list token at once and spends nothing, but looks up a token that is only watched', async () => {
+    await withLookups('26819', async ({ storage, tenantId, connect, paste, tasks, lookups, lastText, clock }) => {
+      await connect();
+      const HOT = '0x' + 'ab'.repeat(20);
+      storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)', tenantId, 'feed.snapshot:arc',
+        JSON.stringify({ rows: [{ address: HOT, symbol: 'HOT', marketCap: 90_000 }], status: 'READY', at: clock.now(), observedAt: clock.now(), receivedCount: 1, leadCount: 0 }));
+      await paste(HOT);
+      expect(lastText()).toMatch(/^<b>HOT · Arc<\/b>/);
+      expect([lookups(), tasks()]).toEqual([[], []]);
+      storage.sql.exec('INSERT INTO annotations (tenant_id,chain,address,favorite,note,updated_at) VALUES (?,?,?,?,?,?)', tenantId, 'arc', TOKEN, 1, '', clock.now());
+      await paste(TOKEN);
+      expect(lookups()).toEqual([expect.objectContaining({ address: TOKEN, state: 'DETAILS' })]);
+    });
+  });
+
+  it('runs Retry at once, within the reuse window and after the token was watched', async () => {
+    await withLookups('26820', async ({ net, connect, paste, step, tasks, lookups, link, click, session, clock }) => {
+      await connect();
+      net.knobs.ave = () => new Response('unauthorized', { status: 401 });
+      const detail = await paste(TOKEN);
+      await step();
+      expect(lookups()[0]).toMatchObject({ state: 'FAILED', reason: 'AVE_AUTH' });
+      await click(link(session(detail.id), 'favorite.set'));
+      clock.advance(1_000);net.knobs.ave = null;
+      await click(link(session(detail.id), 'lookup.start', params => params.retry === true));
+      expect(lookups()[0]).toMatchObject({ state: 'DETAILS', startedAt: clock.now() });
+      expect(tasks()).toHaveLength(1);
+      await step();
+      expect(lookups()[0].state).toBe('DEXSCREENER');
+    });
+  });
+
   it('opens a token known locally at once and spends nothing', async () => {
     await withLookups('26811', async ({ storage, tenantId, connect, paste, tasks, lookups, session, lastText, clock }) => {
       await connect();

@@ -413,7 +413,10 @@ formats are tracked in #82. The receipt type is `secret_warning`, not
 
 1. **Chain.** The scan chain (every supported chain is EVM).
 2. **Known locally** (candidate, hot-list row, annotation or a fresh lookup on
-   that chain) → open Token detail immediately; no credits spent.
+   that chain) → open Token detail immediately; no credits spent. Amended in #87
+   review: only local market data counts (a candidate or hot-list row; a lookup
+   within 60 s is reused by the task). A watch or note alone does not, and an
+   explicit Retry or chain button always runs a lookup.
 3. **AVE not connected** → the onboarding panel with a line explaining lookups
    need AVE.
 4. **Otherwise** → create the lookup record, open Token detail in state

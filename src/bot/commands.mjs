@@ -149,13 +149,15 @@ export class TelegramCommands {
   }
 
   /**
-   * Session changes that show a pasted token: a token known locally opens at once
-   * and spends nothing; otherwise a lookup is started (or reused) and bound to the
-   * session, which needs AVE connected. A full lookup queue leaves the panel under a banner.
+   * Session changes that show a token. A pasted token with local market data (a
+   * candidate or hot-list row) opens at once and spends nothing; a watch or note
+   * alone does not count. Otherwise, and always for an explicit lookup (Retry or a
+   * chain button), a lookup is started (or reused) and bound to the session, which
+   * needs AVE connected. A full lookup queue leaves the panel under a banner.
    */
-  lookupChangesInTransaction(session, token, retry = false) {
+  lookupChangesInTransaction(session, token, { explicit = false, retry = false } = {}) {
     const snapshot = this.snapshot(this.storage, this.tenantId, this.now()), key = tokenIdentity(token.chain, token.address);
-    const known = [...snapshot.candidates, ...(snapshot.feedByChain?.[token.chain]?.rows ?? []), ...snapshot.annotations].some(row => row.chain === token.chain && tokenIdentity(row.chain, row.address) === key);
+    const known = !explicit && [...snapshot.candidates, ...(snapshot.feedByChain?.[token.chain]?.rows ?? [])].some(row => row.chain === token.chain && tokenIdentity(row.chain, row.address) === key);
     if (!known && !this.controls.snapshot().configured) {
       return { panel: 'onboard', query: { schemaVersion: 1, page: 0, notice: text(this.language, '查询代币需要先连接AVE。', 'Looking up a token needs AVE. Connect it first.') } };
     }
@@ -278,7 +280,7 @@ export class TelegramCommands {
     else if (action === 'export.create') this.exportInTransaction(row.update_id);
     else if (action === 'lookup.start') {
       if (!token) throw new ReviewConflict('invalid_token');
-      changes = this.lookupChangesInTransaction(session, token, params.retry === true);
+      changes = this.lookupChangesInTransaction(session, token, { explicit: true, retry: params.retry === true });
     }
     else if (/^(trade|trading|wallet)\./.test(action)) {
       changes = this.tradingActionInTransaction(row, session, action, params, token, prepared);

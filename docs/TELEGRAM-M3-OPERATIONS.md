@@ -93,8 +93,8 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   banner on the panel it came from and is gone on that panel's next render.
 - A pasted token contract address is looked up live on the scan chain; the
   token detail offers the other chains when AVE has no such token there. A token
-  already known as a lead, hot-list row or watchlist entry opens at once and spends
-  nothing. Otherwise one AVE details read (5 credits, paced by admission like the
+  already known as a lead or hot-list row opens at once and spends nothing (a
+  watched token is looked up; Retry and the chain buttons always look up). Otherwise one AVE details read (5 credits, paced by admission like the
   scan's), then DexScreener, then GoPlus run as `lookup` scheduler steps,
   re-rendering the token detail after each; DexScreener and GoPlus see the address
   only after AVE confirms it is a token. A lookup is not a lead: it never enters
