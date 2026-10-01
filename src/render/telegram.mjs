@@ -15,7 +15,7 @@ export const ICONS = Object.freeze({
   scanning: '🟢', paused: '⏸️', disconnected: '🔌', alertsOn: '🔔', alertsOff: '🔕',
   radar: '📡', audits: '🎯', feed: '🔥', saved: '⭐', stats: '📈', events: '🗂️', status: '📊', settings: '⚙️', wallet: '👛', help: '❓',
   passed: '✅', unknown: '⚠️', vetoed: '⛔', checking: '⏳', newLead: '🆕', key: '🔑',
-  chains: '🔗', trade_settings: '🎚️', language: '🌐', export: '📤', sources: '📡', delivery: '📭'
+  chains: '🔗', trade_settings: '🎚️', language: '🌐', export: '📤', sources: '🛜', delivery: '📭'
 });
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);

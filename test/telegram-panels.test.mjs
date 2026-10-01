@@ -78,6 +78,20 @@ test('every panel ends with the standard footer and keeps navigation out of its 
   }
 });
 
+// A destination's icon must name one place: a title or a panel.open button never
+// reuses another panel's icon (Radar's 📡 once marked Sources too).
+test('no icon leads to two different panels',()=>{
+  const owners=new Map(),claim=(icon,panel,label)=>{ if(!owners.has(icon)) owners.set(icon,new Set());owners.get(icon).add(panel);assert.equal(owners.get(icon).size,1,`${icon} marks ${[...owners.get(icon)].join(' and ')} (${label})`); };
+  const icon=text=>text.match(/^(\p{Extended_Pictographic}\S*) /u)?.[1];
+  for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) {
+    const snapshot=fixture(),result=renderPanel(snapshot,session(panel,{selectedToken:{chain:'sol',address:snapshot.candidates[0].address}}),locale);
+    const title=icon(result.text.match(/^<b>(.*?)<\/b>/)[1]);
+    if(title) claim(title,panel,`${panel} title`);
+    for(const item of result.keyboard.flat()) if(item.action==='panel.open'&&icon(item.text)) claim(icon(item.text),item.params.panel,`${panel} button ${item.text}`);
+  }
+  assert.ok(owners.get('🛜')?.has('sources')&&owners.get('📡')?.has('radar'));
+});
+
 test('audit filters use effective marks while overview keeps original on-chain candidate count',()=>{
   const snapshot=fixture();snapshot.marks=[{chain:'sol',address:snapshot.candidates[0].address,decision:'passed',at:now-1,reviewRevision:'revision'}];
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'chain'})).length,12);
