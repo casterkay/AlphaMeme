@@ -45,12 +45,13 @@ function privateOwner(envelope) {
   return tenantId && actorUserId && tenantId === actorUserId ? { tenantId, actorUserId } : null;
 }
 
-function messageReceipt(updateId, message, dueAt, botUsername) {
+function messageReceipt(updateId, message, dueAt, botUsername, { edited = false } = {}) {
   const owner = privateOwner(message);
   const sourceMessageId = positiveInteger(message?.message_id);
-  if (!owner || !sourceMessageId || typeof message.text !== 'string' || message.text.length > MAX_MESSAGE_LENGTH) return null;
+  const body = typeof message?.text === 'string' ? message.text : typeof message?.caption === 'string' ? message.caption : null;
+  if (!owner || !sourceMessageId || body === null || body.length > MAX_MESSAGE_LENGTH) return null;
 
-  const text = message.text.trim();
+  const text = body.trim();
   const match = /^\/([a-z][a-z0-9_]{0,31})(?:@([a-z0-9_]{1,32}))?(?:\s+([\s\S]*))?$/i.exec(text);
   const replyToMessageId = positiveInteger(message.reply_to_message?.message_id);
   const base = {
@@ -62,21 +63,24 @@ function messageReceipt(updateId, message, dueAt, botUsername) {
     sourceMessageId: String(sourceMessageId),
     locale: senderLocale(message.from)
   };
+  // Divert secrets before reading anything else. Any message holding a private
+  // key (an edit, a caption, one addressed to another bot or a /setkey) is
+  // deleted unread: it never reaches storage, logs or a provider. An AVE key (64
+  // mixed-case alphanumerics) matches neither private-key shape, so a key shape on
+  // /setkey is a wallet key that verification would send to AVE.
+  if (containsPrivateKey(text)) return { kind: 'accepted', receipt: { ...base, commandType: 'secret_warning', payload: {} } };
+  // An edit or a caption is never a new instruction.
+  if (edited || typeof message.text !== 'string') return null;
   if (match?.[2] && (!botUsername || match[2].toLowerCase() !== botUsername.toLowerCase())) return null;
   const command = match?.[1].toLowerCase();
   const argumentsText = match?.[3] || '';
-  // Divert secrets before interpreting commands or prompt replies. An AVE key
-  // (64 mixed-case alphanumerics) matches neither private-key shape, so a key
-  // shape on /setkey is a wallet key that verification would send to AVE. Any
-  // message holding one is deleted unread: it never reaches storage, logs or a provider.
-  if (command === 'setkey' && argumentsText && !containsPrivateKey(text)) {
+  if (command === 'setkey' && argumentsText) {
     return {
       kind: 'credential',
       receipt: { ...base, commandType: 'credential', payload: { source: 'message' } },
       credentialText: text
     };
   }
-  if (containsPrivateKey(text)) return { kind: 'accepted', receipt: { ...base, commandType: 'secret_warning', payload: {} } };
   if (match) return {
     kind: 'accepted',
     receipt: {
@@ -132,6 +136,7 @@ export function parseTelegramUpdate(value, { now = Date.now, botUsername } = {})
   const dueAt = now();
   if (!Number.isSafeInteger(dueAt) || dueAt < 0) throw new TypeError('Telegram receipt clock returned an invalid timestamp');
   if (plainObject(value.message)) return messageReceipt(updateId, value.message, dueAt, botUsername) || { kind: 'ignored' };
+  if (plainObject(value.edited_message)) return messageReceipt(updateId, value.edited_message, dueAt, botUsername, { edited: true }) || { kind: 'ignored' };
   if (plainObject(value.callback_query)) return callbackReceipt(updateId, value.callback_query, dueAt) || { kind: 'ignored' };
   return { kind: 'ignored' };
 }

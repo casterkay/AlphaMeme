@@ -91,12 +91,19 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   the token. Credentials are routed before note/search input and are never
   persisted as either. A trade refusal or an invalid reply appears as a one-line
   banner on the panel it came from and is gone on that panel's next render.
-- Plain text that is neither a command nor a prompt reply gets a hint; its text
-  is never stored. Any message that holds a private key (a 64-character hex
-  string, a base58 Solana secret key or a PEM block, anywhere in the message) is
-  deleted with a warning saying why, and its text is never stored, logged or sent
-  anywhere, `/setkey` included (an AVE key has neither shape). A transaction
-  hash has the same shape and is deleted too.
+- Plain text that is neither a command nor a reply gets a hint, and its text is
+  never stored. A reply is kept in the command log for up to seven days like any
+  command; a reply that answers no open prompt is refused as expired.
+- A message holding a 64-character hex string, a base58 64-byte Solana secret
+  key or a PEM private key block anywhere in it is deleted with a warning saying
+  why. This applies to every path: plain text, replies, command arguments,
+  `/setkey` (an AVE key has neither shape), edits, photo and document captions,
+  and commands addressed to another bot. Its text is never stored, logged or
+  sent anywhere. A transaction hash has the same shape and is deleted too. Other
+  key formats (mnemonics, JSON byte arrays, PGP blocks, hex split by spaces) are
+  not detected yet (#82).
+- A refusal banner can be lost if its panel is re-rendered before the first
+  delivery (#81).
 - An uncertain Telegram send gets at most one automatic uncertain retry over its
   entire lifetime. A second uncertainty suspends it; `/status` exposes it. The
   system does not promise external exactly-once or guaranteed delivery.

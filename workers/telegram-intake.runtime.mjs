@@ -253,7 +253,7 @@ describe('Telegram text that is not a command', () => {
   const pem = () => `-----BEGIN PRIVATE KEY-----\nMIIE${base58(random(24))}\n-----END PRIVATE KEY-----`;
 
   // Run the webhook end to end, then the tenant's commands, and read what its outbox would send.
-  async function deliver(tenantId, message) {
+  async function deliver(tenantId, message, field = 'message') {
     const logged = [];
     const spies = ['log', 'info', 'warn', 'error', 'debug'].map(level => vi.spyOn(console, level).mockImplementation((...values) => { logged.push(values); }));
     // Every outbound request in this isolate, including any another tenant's alarm makes.
@@ -264,7 +264,7 @@ describe('Telegram text that is not a command', () => {
       return new Response('{}', { status: 500 });
     }));
     try {
-      const update = { update_id: 1, message: { message_id: 77, date: Math.floor(Date.now() / 1000), chat: { id: Number(tenantId), type: 'private' }, from: { id: Number(tenantId), language_code: 'en' }, ...message } };
+      const update = { update_id: 1, [field]: { message_id: 77, date: Math.floor(Date.now() / 1000), chat: { id: Number(tenantId), type: 'private' }, from: { id: Number(tenantId), language_code: 'en' }, ...message } };
       expect(await (await worker.fetch(webhookRequest(update), webhookEnv)).json()).toEqual({ accepted: true });
       const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
       return await runInDurableObject(radar, async (_instance, { storage }) => {
@@ -294,10 +294,13 @@ describe('Telegram text that is not a command', () => {
     ['a /setkey PEM block', '23615', pem, secret => ({ text: `/setkey ${secret}` })],
     ['a /setkey EVM key', '23617', () => hex(random(32)), secret => ({ text: `/setkey ${secret}` })],
     ['a /setkey 0x EVM key', '23618', () => '0x' + hex(random(32)), secret => ({ text: `/setkey ${secret}` })],
-    ['a /setkey Solana secret key', '23619', () => base58(random(64)), secret => ({ text: `/setkey ${secret}` })]
-  ])('deletes a private key sent as %s and keeps it out of storage, logs, AVE and every request', async (_path, tenantId, secret, message) => {
+    ['a /setkey Solana secret key', '23619', () => base58(random(64)), secret => ({ text: `/setkey ${secret}` })],
+    ['an edit', '23622', () => '0x' + hex(random(32)), secret => ({ text: `/setkey ${secret}` }), 'edited_message'],
+    ['a photo caption', '23623', () => base58(random(64)), secret => ({ caption: secret, photo: [{ file_id: 'photo' }] })],
+    ['a command for another bot', '23624', () => hex(random(32)), secret => ({ text: `/start@other_bot ${secret}` })]
+  ])('deletes a private key sent as %s and keeps it out of storage, logs, AVE and every request', async (_path, tenantId, secret, message, field = 'message') => {
     const value = secret();
-    const { inbox, requests, verifications, keys, fetched, stored, logged } = await deliver(tenantId, message(value));
+    const { inbox, requests, verifications, keys, fetched, stored, logged } = await deliver(tenantId, message(value), field);
     expect(inbox).toEqual({ command_type: 'secret_warning', payload_json: '{}', status: 'DONE' });
     // No verification is scheduled and no key kept, so nothing can reach AVE.
     expect([verifications, keys]).toEqual([[], []]);
