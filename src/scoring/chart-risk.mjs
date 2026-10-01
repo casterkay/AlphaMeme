@@ -3,7 +3,7 @@
 export const CHART_RISK_VERSION = 1;
 export function applyRiskExclusion(row, exclusions = {}, chain = row.chain) {
   const address = String(row.address || '').trim();
-  const held = exclusions[`${chain}:${chain === 'sol' ? address : address.toLowerCase()}`];
+  const held = exclusions[`${chain}:${address.toLowerCase()}`];
   if (!held) return row;
   return { ...row, status: 'HARD_REJECT', decisionReason: held.reasons.join('；'),
     deep: { ...row.deep, chainPass: false, checks: { ...row.deep?.checks, chartRisk: false },

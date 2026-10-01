@@ -1,13 +1,25 @@
-import { base58ByteLength, normalizeTokenAddress } from './address.mjs';
+import { normalizeTokenAddress } from './address.mjs';
 
 const MAX_CALLBACK_DATA_BYTES = 64;
 const MAX_MESSAGE_LENGTH = 4096;
 const PEM_PRIVATE_KEY = /-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----/i;
 const HEX_PRIVATE_KEY = /^(?:0x)?[0-9a-f]{64}$/i;
+const BASE58_TEXT = /^[1-9A-HJ-NP-Za-km-z]+$/;
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+/** The number of bytes base58 text decodes to, or 0 when it is not base58. */
+function base58ByteLength(value) {
+  if (!BASE58_TEXT.test(value)) return 0;
+  let number = 0n;
+  for (const character of value) number = number * 58n + BigInt(BASE58.indexOf(character));
+  const significant = number === 0n ? 0 : Math.ceil(number.toString(16).length / 2);
+  return significant + (value.match(/^1*/)?.[0].length || 0);
+}
 
 // A wallet private key: 32 bytes of hex (EVM) or base58 of 64 bytes (a Solana
-// secret key). A transaction hash has the hex shape too; refusing one is the
-// accepted cost of never storing a key.
+// secret key; users still paste them though the radar no longer scans Solana).
+// A transaction hash has the hex shape too; refusing one is the accepted cost
+// of never storing a key.
 const privateKeyWord = word => HEX_PRIVATE_KEY.test(word) || (word.length >= 64 && word.length <= 100 && base58ByteLength(word) === 64);
 
 /** Whether text holds a private key anywhere: a PEM block or a key-shaped word. */
@@ -100,8 +112,8 @@ function messageReceipt(updateId, message, dueAt, botUsername, { edited = false 
 // Plain text is a pasted contract address or something the bot does not act on;
 // the latter's text is dropped here, so it is never stored.
 function plainText(text) {
-  const evm = normalizeTokenAddress('eth', text), sol = evm ? null : normalizeTokenAddress('sol', text);
-  if (evm || sol) return { commandType: 'lookup', payload: { family: evm ? 'evm' : 'sol', address: evm ?? sol } };
+  const address = normalizeTokenAddress(text);
+  if (address) return { commandType: 'lookup', payload: { family: 'evm', address } };
   return { commandType: 'text', payload: {} };
 }
 
@@ -164,8 +176,8 @@ export function validateTelegramReceipt(value) {
     if (Object.keys(input).length !== 0) throw new TypeError('Telegram text receipt has an unsupported shape');
     payload = {};
   } else if (value.commandType === 'lookup') {
-    if (Object.keys(input).length !== 2 || !['evm', 'sol'].includes(input.family)
-      || normalizeTokenAddress(input.family === 'evm' ? 'eth' : 'sol', input.address) !== input.address) throw new TypeError('Telegram lookup receipt has an unsupported shape');
+    if (Object.keys(input).length !== 2 || input.family !== 'evm'
+      || normalizeTokenAddress(input.address) !== input.address) throw new TypeError('Telegram lookup receipt has an unsupported shape');
     payload = { family: input.family, address: input.address };
   } else if (value.commandType === 'reply') {
     if (Object.keys(input).length !== 3 || input.source !== 'reply' || typeof input.text !== 'string'

@@ -1,7 +1,7 @@
 import { validTokenAddress } from '../address.mjs';
 import { verifiedAvePoolEvidence } from '../pool-identity.mjs';
 
-const DEX_CHAIN_IDS = Object.freeze({ sol: 'solana', bsc: 'bsc', base: 'base', eth: 'ethereum', arc: 'arc' });
+const DEX_CHAIN_IDS = Object.freeze({ bsc: 'bsc', base: 'base', eth: 'ethereum', arc: 'arc' });
 // Fast overlays must use the same verified chain map as deep validation.
 // Robinhood Chain currently has no verified DexScreener chain id here; a
 // speculative request only wastes time and makes the UI overstate coverage.
@@ -72,17 +72,14 @@ function safeHttpUrl(value) {
   }
 }
 
-function normalizedAddress(value, chain) {
-  const address = cleanString(value, 128);
-  return chain === 'sol' ? address : address.toLowerCase();
-}
+const normalizedAddress = value => cleanString(value, 128).toLowerCase();
 
-function sameAddress(left, right, chain) {
-  const a = normalizedAddress(left, chain), b = normalizedAddress(right, chain);
+function sameAddress(left, right) {
+  const a = normalizedAddress(left), b = normalizedAddress(right);
   return Boolean(a && b && a === b);
 }
 
-const validAddress = (value, chain) => validTokenAddress(chain, cleanString(value, 128));
+const validAddress = value => validTokenAddress(cleanString(value, 128));
 
 function errorCode(error) {
   if (error?.code) return String(error.code).slice(0, 64);
@@ -201,7 +198,7 @@ function emptyMarket() {
   };
 }
 
-function parseDexScreener(payload, { chain, dexChainId, tokenAddress }) {
+function parseDexScreener(payload, { dexChainId, tokenAddress }) {
   if (!Array.isArray(payload)) {
     const error = new Error('unexpected DexScreener JSON shape');
     error.code = 'INVALID_JSON_SHAPE';
@@ -209,7 +206,7 @@ function parseDexScreener(payload, { chain, dexChainId, tokenAddress }) {
   }
   const pairs = payload.filter(pair => pair && typeof pair === 'object'
     && cleanString(pair.chainId, 32) === dexChainId
-    && sameAddress(pair.baseToken?.address, tokenAddress, chain));
+    && sameAddress(pair.baseToken?.address, tokenAddress));
   if (!pairs.length) return { found: false, market: emptyMarket() };
   pairs.sort((a, b) => (optionalNonNegative(b.liquidity?.usd) ?? -1) - (optionalNonNegative(a.liquidity?.usd) ?? -1));
   const pair = pairs[0];
@@ -232,25 +229,23 @@ function parseDexScreener(payload, { chain, dexChainId, tokenAddress }) {
   return { found: true, market };
 }
 
-function validPairAddress(value, chain) {
-  const pair = cleanString(value, 128);
-  if (chain === 'sol') return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pair);
-  return /^0x(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(pair);
+function validPairAddress(value) {
+  return /^0x(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(cleanString(value, 128));
 }
 
-function parseDexBatch(payload, { chain, dexChainId, tokenAddresses, capturedAt }) {
+function parseDexBatch(payload, { dexChainId, tokenAddresses, capturedAt }) {
   if (!Array.isArray(payload) || payload.length > 1_000) {
     const error = new Error('unexpected DexScreener batch JSON shape');
     error.code = 'INVALID_JSON_SHAPE';
     throw error;
   }
-  const requested = new Set(tokenAddresses.map(value => normalizedAddress(value, chain)));
+  const requested = new Set(tokenAddresses.map(value => normalizedAddress(value)));
   const best = new Map();
   for (const pair of payload) {
     if (!pair || typeof pair !== 'object' || cleanString(pair.chainId, 32) !== dexChainId) continue;
-    const baseAddress = normalizedAddress(pair.baseToken?.address, chain);
-    const members = [baseAddress, normalizedAddress(pair.quoteToken?.address, chain)].filter(value => requested.has(value));
-    if (!members.length || !validPairAddress(pair.pairAddress, chain)) continue;
+    const baseAddress = normalizedAddress(pair.baseToken?.address);
+    const members = [baseAddress, normalizedAddress(pair.quoteToken?.address)].filter(value => requested.has(value));
+    if (!members.length || !validPairAddress(pair.pairAddress)) continue;
     const liquidity = optionalNonNegative(pair.liquidity?.usd);
     const volume5m = optionalNonNegative(pair.volume?.m5);
     const buys5m = optionalCount(pair.txns?.m5?.buys), sells5m = optionalCount(pair.txns?.m5?.sells);
@@ -281,13 +276,13 @@ function parseDexBatch(payload, { chain, dexChainId, tokenAddresses, capturedAt 
 
 function overlayDexMarket(rows, chain, marketByToken, capturedAt, ttlMs) {
   return rows.map(row => {
-    const market = marketByToken.get(normalizedAddress(row?.address, chain));
+    const market = marketByToken.get(normalizedAddress(row?.address));
     if (!market) return row;
     const evidence = verifiedAvePoolEvidence(row, chain);
     const evidencePair = evidence?.pair || '';
     // Pair-scoped AVE facts (age, ATH and 1h move) are atomic. Do not combine
     // them with DexScreener's highest-liquidity *different* pool.
-    if (evidencePair && evidencePair !== normalizedAddress(market.pairAddress, chain)) return row;
+    if (evidencePair && evidencePair !== normalizedAddress(market.pairAddress)) return row;
     // An overlay without a strictly verified same-pool AVE identity starts a
     // new atomic pool tuple. Never carry a legacy first-trade clock, ATH or
     // other pair-scoped evidence into the selected DexScreener pool.
@@ -341,9 +336,9 @@ export class DexBatchMarketOverlay {
     const addresses = [...new Set(rows.filter(row => {
       const marketCap = optionalNonNegative(row?.market_cap);
       return row?.marketProvider === 'AVE' && marketCap !== null && marketCap >= minMarketCap && marketCap <= maxMarketCap
-        && validAddress(row.address, normalizedChain);
+        && validAddress(row.address);
     })
-      .map(row => normalizedAddress(row.address, normalizedChain)))].slice(0, 30);
+      .map(row => normalizedAddress(row.address)))].slice(0, 30);
     if (!addresses.length) return rows;
     const key = normalizedChain + ':' + [...addresses].sort().join(',');
     const at = this.now(), cached = this.cache.get(key);
@@ -354,7 +349,7 @@ export class DexBatchMarketOverlay {
       job = (async () => {
         const capturedAt = this.now();
         const payload = await requestJson(this.fetchImpl, url, this);
-        const marketByToken = parseDexBatch(payload, { chain: normalizedChain, dexChainId, tokenAddresses: addresses, capturedAt });
+        const marketByToken = parseDexBatch(payload, { dexChainId, tokenAddresses: addresses, capturedAt });
         const entry = { marketByToken, capturedAt, until: capturedAt + this.ttlMs, staleUntil: capturedAt + this.staleTtlMs };
         if (!this.cache.has(key) && this.cache.size >= 16) this.cache.delete(this.cache.keys().next().value);
         this.cache.set(key, entry);
@@ -390,30 +385,20 @@ const EVM_SECURITY_RULES = Object.freeze([
   ['tradingCooldown', 'trading_cooldown', true, false, '合约包含交易冷却限制']
 ]);
 
-const SOL_SECURITY_RULES = Object.freeze([
-  ['mintable', 'mintable', true, true, '代币仍可增发'],
-  ['freezable', 'freezable', true, true, '代币账户仍可冻结'],
-  ['closable', 'closable', true, false, '代币账户可被关闭'],
-  ['balanceMutableAuthority', 'balance_mutable_authority', true, false, '存在修改余额权限'],
-  ['transferFeeUpgradable', 'transfer_fee_upgradable', true, false, '转账费权限可升级'],
-  ['nonTransferable', 'non_transferable', true, false, '代币被标记为不可转账']
-]);
-
-function findGoPlusRecord(payload, tokenAddress, chain) {
+function findGoPlusRecord(payload, tokenAddress) {
   if (!payload || Array.isArray(payload) || typeof payload !== 'object') return null;
   const result = payload.result;
   if (!result || typeof result !== 'object') return null;
   if (Array.isArray(result)) {
-    return result.find(row => sameAddress(row?.contract_address || row?.address || row?.mint, tokenAddress, chain)) || null;
+    return result.find(row => sameAddress(row?.contract_address || row?.address, tokenAddress)) || null;
   }
   for (const [key, value] of Object.entries(result)) {
-    if (sameAddress(key, tokenAddress, chain) && value && typeof value === 'object') return value;
+    if (sameAddress(key, tokenAddress) && value && typeof value === 'object') return value;
   }
-  if (chain === 'sol' && SOL_SECURITY_RULES.some(([, raw]) => Object.hasOwn(result, raw))) return result;
   return null;
 }
 
-function parseGoPlus(payload, { chain, tokenAddress }) {
+function parseGoPlus(payload, { tokenAddress }) {
   if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
     const error = new Error('unexpected GoPlus JSON shape');
     error.code = 'INVALID_JSON_SHAPE';
@@ -424,16 +409,15 @@ function parseGoPlus(payload, { chain, tokenAddress }) {
     error.code = 'UPSTREAM_REJECTED';
     throw error;
   }
-  const record = findGoPlusRecord(payload, tokenAddress, chain);
+  const record = findGoPlusRecord(payload, tokenAddress);
   if (!record) return {
     found: false,
     security: { complete: false, verdict: 'UNKNOWN', fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null }
   };
-  const rules = chain === 'sol' ? SOL_SECURITY_RULES : EVM_SECURITY_RULES;
   const fields = {};
   const fatal = [];
   const unknownFields = [];
-  for (const [field, rawField, fatalWhen, , reason] of rules) {
+  for (const [field, rawField, fatalWhen, , reason] of EVM_SECURITY_RULES) {
     const value = nestedBoolean(record[rawField]);
     fields[field] = value;
     if (value === null) {
@@ -442,12 +426,12 @@ function parseGoPlus(payload, { chain, tokenAddress }) {
       fatal.push({ field, reason });
     }
   }
-  const buyTax = chain === 'sol' ? null : optionalRate(record.buy_tax);
-  const sellTax = chain === 'sol' ? null : optionalRate(record.sell_tax);
-  if (chain !== 'sol' && buyTax === null) {
+  const buyTax = optionalRate(record.buy_tax);
+  const sellTax = optionalRate(record.sell_tax);
+  if (buyTax === null) {
     unknownFields.push('buyTax');
   }
-  if (chain !== 'sol' && sellTax === null) {
+  if (sellTax === null) {
     unknownFields.push('sellTax');
   }
   // An omitted risk flag is not evidence of safety. Keep the source incomplete
@@ -546,17 +530,15 @@ function sourceConfiguration(source, chain, tokenAddress) {
   const dexChainId = DEX_CHAIN_IDS[normalizedChain];
   const goPlusChainId = GOPLUS_EVM_CHAIN_IDS[normalizedChain];
   const supported = source === 'dexScreener' ? Boolean(dexChainId)
-    : source === 'goPlus' ? normalizedChain === 'sol' || Boolean(goPlusChainId)
+    : source === 'goPlus' ? Boolean(goPlusChainId)
       : null;
   if (supported === null) throw new TypeError('secondary source is not supported');
-  const valid = validAddress(address, normalizedChain);
+  const valid = validAddress(address);
   const url = source === 'dexScreener'
     ? dexChainId ? `https://api.dexscreener.com/token-pairs/v1/${dexChainId}/${encodeURIComponent(address)}` : ''
-    : normalizedChain === 'sol'
-      ? `https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${encodeURIComponent(address)}`
-      : goPlusChainId
-        ? `https://api.gopluslabs.io/api/v1/token_security/${goPlusChainId}?contract_addresses=${encodeURIComponent(address)}`
-        : '';
+    : goPlusChainId
+      ? `https://api.gopluslabs.io/api/v1/token_security/${goPlusChainId}?contract_addresses=${encodeURIComponent(address)}`
+      : '';
   return { normalizedChain, address, supported, valid, url, dexChainId };
 }
 
@@ -654,7 +636,7 @@ export class SecondaryValidator {
         ? { source: sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' }), market: emptyMarket() }
         : { source: sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' }), security: unknownSecurity() };
     }
-    const context = { chain: configuration.normalizedChain, tokenAddress: configuration.address, dexChainId: configuration.dexChainId };
+    const context = { tokenAddress: configuration.address, dexChainId: configuration.dexChainId };
     return source === 'dexScreener'
       ? this.fetchDex(configuration.url, context, { signal })
       : this.fetchGoPlus(configuration.url, context, { signal });
@@ -690,5 +672,5 @@ export async function validateSecondary(input, options = {}) {
 
 export const secondaryChainSupport = Object.freeze({
   dexScreener: Object.freeze({ ...DEX_CHAIN_IDS }),
-  goPlus: Object.freeze({ sol: 'solana', ...GOPLUS_EVM_CHAIN_IDS })
+  goPlus: Object.freeze({ ...GOPLUS_EVM_CHAIN_IDS })
 });

@@ -6,14 +6,14 @@ import { CHART_RISK_VERSION, applyRiskExclusion } from '../src/scoring/chart-ris
 import { money, officialXUrl } from '../src/render/telegram.mjs';
 
 const now=1_800_000_000_000;
-function candidate(index=0,changes={}) { return projectTelegramCandidate({ chain:'sol',address:'A'.repeat(32)+index,symbol:'COIN'+index,name:'Research token',status:'X_REVIEW',marketCap:20000+index,liquidity:8000,holders:0,auditedAt:now-60_000,reviewRevision:'revision',deep:{chainPass:true,chartRisk:{version:CHART_RISK_VERSION,pass:true},checks:{openSource:true,ownerRenounced:false},failed:[],unknownFields:[],blockingUnknownFields:[]},...changes }); }
-function fixture() { return {at:now,control:{configured:true,paused:false,notifications:false,activeChain:'sol',scanChain:'sol'},candidates:Array.from({length:13},(_,index)=>candidate(index)),annotations:[],marks:[],events:[],queue:[],delivery:[],metrics:{},sourceHealth:{},feedByChain:{},ave:{cuUsed:0,blockedUntil:0,readyAt:0},outcomes:[]}; }
-function session(panel='audits',query={}) { return {panel,viewChain:'sol',query,version:2}; }
+function candidate(index=0,changes={}) { return projectTelegramCandidate({ chain:'robinhood',address:'a'.repeat(32)+index,symbol:'COIN'+index,name:'Research token',status:'X_REVIEW',marketCap:20000+index,liquidity:8000,holders:0,auditedAt:now-60_000,reviewRevision:'revision',deep:{chainPass:true,chartRisk:{version:CHART_RISK_VERSION,pass:true},checks:{openSource:true,ownerRenounced:false},failed:[],unknownFields:[],blockingUnknownFields:[]},...changes }); }
+function fixture() { return {at:now,control:{configured:true,paused:false,notifications:false,activeChain:'robinhood',scanChain:'robinhood'},candidates:Array.from({length:13},(_,index)=>candidate(index)),annotations:[],marks:[],events:[],queue:[],delivery:[],metrics:{},sourceHealth:{},feedByChain:{},ave:{cuUsed:0,blockedUntil:0,readyAt:0},outcomes:[]}; }
+function session(panel='audits',query={}) { return {panel,viewChain:'robinhood',query,version:2}; }
 const actions=result=>result.keyboard.flat().filter(item=>item.action).map(item=>item.action);
 
 test('all native panels render both locales with bounded text and typed action descriptors',()=>{
   for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) {
-    const snapshot=fixture(), current=session(panel,{selectedToken:{chain:'sol',address:snapshot.candidates[0].address},outcome:'connected'});
+    const snapshot=fixture(), current=session(panel,{selectedToken:{chain:'robinhood',address:snapshot.candidates[0].address},outcome:'connected'});
     const result=renderPanel(snapshot,current,locale);
     assert.ok(result.text.length<=3500,`${panel} ${locale}`);
     assert.ok(result.keyboard.length,`${panel} has navigation`);
@@ -65,7 +65,7 @@ test('every panel ends with the standard footer and keeps navigation out of its 
   const home=item=>item.action==='panel.open'&&item.params.panel==='radar';
   const nav=item=>item.action==='panel.refresh'||item.action==='panel.back'||home(item);
   for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) for(const returning of [false,true]) {
-    const snapshot=fixture(), query={selectedToken:{chain:'sol',address:snapshot.candidates[0].address},outcome:'connected',...(returning?{returnTo:{panel:'audits',viewChain:'sol',query:{}}}:{})};
+    const snapshot=fixture(), query={selectedToken:{chain:'robinhood',address:snapshot.candidates[0].address},outcome:'connected',...(returning?{returnTo:{panel:'audits',viewChain:'robinhood',query:{}}}:{})};
     const result=renderPanel(snapshot,session(panel,query),locale), footer=result.keyboard.at(-1), label=`${panel} ${locale} ${returning}`;
     assert.ok(footer.every(nav),label);
     assert.ok(!result.keyboard.slice(0,-1).flat().some(nav),label);
@@ -84,7 +84,7 @@ test('no icon leads to two different panels',()=>{
   const owners=new Map(),claim=(icon,panel,label)=>{ if(!owners.has(icon)) owners.set(icon,new Set());owners.get(icon).add(panel);assert.equal(owners.get(icon).size,1,`${icon} marks ${[...owners.get(icon)].join(' and ')} (${label})`); };
   const icon=text=>text.match(/^(\p{Extended_Pictographic}\S*) /u)?.[1];
   for(const locale of ['zh','en']) for(const panel of PANEL_NAMES) {
-    const snapshot=fixture(),result=renderPanel(snapshot,session(panel,{selectedToken:{chain:'sol',address:snapshot.candidates[0].address},outcome:'connected'}),locale);
+    const snapshot=fixture(),result=renderPanel(snapshot,session(panel,{selectedToken:{chain:'robinhood',address:snapshot.candidates[0].address},outcome:'connected'}),locale);
     const title=icon(result.text.match(/^<b>(.*?)<\/b>/)[1]);
     if(title) claim(title,panel,`${panel} title`);
     for(const item of result.keyboard.flat()) if(item.action==='panel.open'&&icon(item.text)) claim(icon(item.text),item.params.panel,`${panel} button ${item.text}`);
@@ -93,7 +93,7 @@ test('no icon leads to two different panels',()=>{
 });
 
 test('audit filters use effective marks while overview keeps original on-chain candidate count',()=>{
-  const snapshot=fixture();snapshot.marks=[{chain:'sol',address:snapshot.candidates[0].address,decision:'passed',at:now-1,reviewRevision:'revision'}];
+  const snapshot=fixture();snapshot.marks=[{chain:'robinhood',address:snapshot.candidates[0].address,decision:'passed',at:now-1,reviewRevision:'revision'}];
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'chain'})).length,12);
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'passed'})).length,1);
   snapshot.candidates[1]={...snapshot.candidates[1],status:'LIVE_READY'};snapshot.candidates[2]={...snapshot.candidates[2],status:'HARD_REJECT'};
@@ -114,14 +114,14 @@ test('audit and fresh cutoffs are inclusive and saved records survive evidence e
 test('the hot list states its read status, staleness and whether the chain is scanned, in both locales',()=>{
   for(const [status,zh,en] of [['AVE_RATE_LIMITED','AVE限流','AVE rate limited'],['AVE_QUOTA','AVE额度用完','AVE credits exhausted']]) {
     const snapshot=fixture();
-    snapshot.feedByChain={sol:{rows:[],status,observedAt:now}};
+    snapshot.feedByChain={robinhood:{rows:[],status,observedAt:now}};
     assert.match(renderPanel(snapshot,session('feed'),'zh').text,new RegExp(zh),status);
     assert.match(renderPanel(snapshot,session('feed'),'en').text,new RegExp(en),status);
   }
   const healthy=fixture();
-  healthy.feedByChain={sol:{rows:[],status:'READY',observedAt:now}};
+  healthy.feedByChain={robinhood:{rows:[],status:'READY',observedAt:now}};
   assert.doesNotMatch(renderPanel(healthy,session('feed'),'en').text,/Read status|stale/);
-  healthy.feedByChain.sol.observedAt=now-120_001;assert.match(renderPanel(healthy,session('feed'),'en').text,/Data stale/);
+  healthy.feedByChain.robinhood.observedAt=now-120_001;assert.match(renderPanel(healthy,session('feed'),'en').text,/Data stale/);
   healthy.control.scanChain='arc';assert.match(renderPanel(healthy,session('feed'),'en').text,/not being scanned/);
 });
 
@@ -133,7 +133,7 @@ test('five-row pagination clamps after deletion and token buttons bind identitie
 });
 
 test('search precedes sorting and live top-15 truncation, with stable volume ties',()=>{
-  const snapshot=fixture();snapshot.feedByChain.sol={rows:Array.from({length:25},(_,index)=>projectTelegramFeedRow({address:'a'+index,symbol:index<20?'OTHER':'MATCH',priorityBand:true,pass:index%2===0,volume5m:1,reasons:[]},'sol'))};
+  const snapshot=fixture();snapshot.feedByChain.robinhood={rows:Array.from({length:25},(_,index)=>projectTelegramFeedRow({address:'a'+index,symbol:index<20?'OTHER':'MATCH',priorityBand:true,pass:index%2===0,volume5m:1,reasons:[]},'robinhood'))};
   const selected=selectPanelRows(snapshot,session('feed',{search:'match'}));
   assert.equal(selected.length,5);assert.deepEqual(selected.map(row=>row.address),['a20','a22','a24','a21','a23'],'screen passes first, stable ties');
   assert.equal(selectPanelRows(snapshot,session('feed')).length,15);
@@ -178,7 +178,7 @@ test('manual approval creation is unavailable for ignored, stale or revisionless
 
 test('a lead detail links no external trading page and offers no manual approval',()=>{
   const snapshot=fixture();
-  snapshot.candidates=[candidate(0,{status:'LIVE_READY',aveUrl:'https://pro.ave.ai/token/'+'A'.repeat(32)+'0-solana?ref=0001'})];
+  snapshot.candidates=[candidate(0,{status:'LIVE_READY',aveUrl:'https://pro.ave.ai/token/'+'a'.repeat(32)+'0-solana?ref=0001'})];
   const lead=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
   assert.ok(!lead.keyboard.flat().some(item=>String(item.url).includes('ave.ai')));assert.doesNotMatch(lead.text,/Trade on AVE/);
   assert.match(lead.text,/Market lead/);assert.ok(!actions(lead).includes('mark.set_passed'));
@@ -187,12 +187,12 @@ test('a lead detail links no external trading page and offers no manual approval
 test('the chain panel selects exactly one scan chain',()=>{
   const snapshot=fixture(),result=renderPanel(snapshot,session('chains'),'en');
   const choices=result.keyboard.flat().filter(item=>item.action==='chains.set');
-  assert.deepEqual(choices.map(item=>item.params.value),['arc','bsc','base','eth','sol','robinhood']);
+  assert.deepEqual(choices.map(item=>item.params.value),['arc','bsc','base','eth','robinhood']);
   assert.equal(choices.filter(item=>item.text.startsWith('✓')).length,1);
 });
 
 test('events split long logical pages without hiding events and link only resolvable tokens',()=>{
-  const snapshot=fixture();snapshot.events=Array.from({length:15},(_,index)=>({at:now-index,chain:'sol',type:'CUSTOM',message:`event-${index} `+'long '.repeat(90)}));
+  const snapshot=fixture();snapshot.events=Array.from({length:15},(_,index)=>({at:now-index,chain:'robinhood',type:'CUSTOM',message:`event-${index} `+'long '.repeat(90)}));
   const seen=[];let page=0;
   while(true) { const result=renderPanel(snapshot,session('events',{page}),'en');seen.push(result.text);if(!result.keyboard.flat().some(item=>item.action==='page.set' && item.params.page===page+1)) break;page++; }
   for(let index=0;index<15;index++) assert.ok(seen.join('').includes(`event-${index} `));
@@ -209,19 +209,19 @@ test('onboarding in both languages links AVE Cloud, asks for /setkey and states 
 test('export is all-chain and whitelist-only with original manual revision and sanitized annotations',()=>{
   const snapshot=fixture();snapshot.annotations=[{chain:'base',address:'0x'+'a'.repeat(40),favorite:true,note:'api_key=secret',updatedAt:now,tenantId:'private'}];snapshot.marks=[{...snapshot.candidates[0],decision:'passed',at:now-1,reviewRevision:'revision',version:3}];snapshot.privateKey='private secret';
   const exported=createTelegramExport(snapshot),serialized=JSON.stringify(exported);
-  assert.equal(Object.keys(exported.chains).length,6);assert.equal(exported.chains.base.annotations.length,1);assert.equal(exported.chains.sol.manualMarks[0].reviewRevision,'revision');assert.ok(!serialized.includes('api_key=secret'));assert.ok(!serialized.includes('tenantId'));assert.ok(!serialized.includes('privateKey'));
+  assert.equal(Object.keys(exported.chains).length,5);assert.equal(exported.chains.base.annotations.length,1);assert.equal(exported.chains.robinhood.manualMarks[0].reviewRevision,'revision');assert.ok(!serialized.includes('api_key=secret'));assert.ok(!serialized.includes('tenantId'));assert.ok(!serialized.includes('privateKey'));
 });
 
 test('statistics distinguish unavailable from empty and require all three windows for overall readiness',()=>{
   const snapshot=fixture();assert.match(renderPanel(snapshot,session('stats'),'en').text,/unavailable/);
-  snapshot.stats={sol:{tracked:60,completed30m:50,completed1h:1,completed2h:49,completed24h:0,calibrationReady:false,coverage:{passed:{h6:{eligible:0,completed:0,missing:0,median:null,positiveRate:null}}}}};
+  snapshot.stats={robinhood:{tracked:60,completed30m:50,completed1h:1,completed2h:49,completed24h:0,calibrationReady:false,coverage:{passed:{h6:{eligible:0,completed:0,missing:0,median:null,positiveRate:null}}}}};
   const summary=renderPanel(snapshot,session('stats'),'en');assert.doesNotMatch(summary.text,/gate/);
   const coverage=renderPanel(snapshot,session('stats',{coverage:true}),'en');assert.match(coverage.text,/30 min Ready · 2 h Not ready · 24 h Not ready/);assert.match(coverage.text,/Overall calibration gate: Not ready/);
   const detail=renderPanel(snapshot,session('stats',{horizon:'h6'}),'en');assert.match(detail.text,/Due 0 · measured 0 · missing 0/);assert.match(detail.text,/No samples/);
 });
 
 test('evidence pages keep the exact audit time while the detail summary shows it relatively',()=>{
-  const snapshot=fixture(),query={selectedToken:{chain:'sol',address:snapshot.candidates[0].address}};
+  const snapshot=fixture(),query={selectedToken:{chain:'robinhood',address:snapshot.candidates[0].address}};
   snapshot.candidates[0]={...snapshot.candidates[0],secondary:{...complete,checkedAt:now-60_000}};
   assert.match(renderPanel(snapshot,session('evidence',query),'en').text,/Audit: 2027-01-15 07:59:00 UTC · 1m ago/);
   const detail=renderPanel(snapshot,session('detail',query),'en').text;
@@ -249,7 +249,7 @@ test('the safety verdict leads the detail and marks each list row, from the reco
     ['conflicting sources after a complete check',lead({secondary:{...complete,conflicts:[{type:'MARKET_MISMATCH',field:'marketCap'}]}}),'⚠️ Needs review: 1 source conflict · checked 2m ago','⚠️ Needs review',false],
     ['secondary veto',fatal(['isHoneypot','hiddenOwner','mintable']),'⛔ Vetoed: Honeypot, Hidden owner +1 · checked 2m ago','⛔ Vetoed',false],
     ['fatal verdict before the status changes',fatal(['isHoneypot'],'LIVE_READY'),'⛔ Vetoed: Honeypot · checked 2m ago','⛔ Vetoed',false],
-    ['held risk exclusion',applyRiskExclusion(lead({secondary:complete}),{['sol:'+'A'.repeat(32)+'0']:{reasons:['x'],codes:['VERTICAL_PLATEAU']}}),'⛔ Vetoed: Chart risk · checked 2m ago','⛔ Vetoed',false],
+    ['held risk exclusion',applyRiskExclusion(lead({secondary:complete}),{['robinhood:'+'a'.repeat(32)+'0']:{reasons:['x'],codes:['VERTICAL_PLATEAU']}}),'⛔ Vetoed: Chart risk · checked 2m ago','⛔ Vetoed',false],
     ['veto reasons are escaped',fatal(['<x>']),'⛔ Vetoed: &lt;x&gt; · checked 2m ago','⛔ Vetoed',false]
   ];
   for(const [label,row,line,mark,caveat] of cases) {
@@ -260,19 +260,19 @@ test('the safety verdict leads the detail and marks each list row, from the reco
     assert.match(renderPanel(snapshot,session('audits'),'en').text,new RegExp(`<b>1\\. COIN0</b> · ${mark}\n`),label);
     assert.equal(/Market lead: safety not yet verified/.test(detail),caveat,label);
   }
-  const feedRow=projectTelegramFeedRow({address:'F'.repeat(32),symbol:'HOT',pass:true,reasons:[]},'sol');
-  const snapshot=fixture();snapshot.candidates=[];snapshot.feedByChain.sol={rows:[feedRow]};
+  const feedRow=projectTelegramFeedRow({address:'f'.repeat(32),symbol:'HOT',pass:true,reasons:[]},'robinhood');
+  const snapshot=fixture();snapshot.candidates=[];snapshot.feedByChain.robinhood={rows:[feedRow]};
   assert.equal(renderPanel(snapshot,session('detail',{selectedToken:feedRow}),'zh').text.split('\n')[1],'⚠️ 未经安全核验','a hot-list row never checked');
 });
 
 test('a hot-list row shows its candidate safety badge, never ✅ for the market screen alone',()=>{
-  const snapshot=fixture(),vetoed={...lead({status:'HARD_REJECT'}),address:'V'.repeat(32),symbol:'RUG'},fresh={...lead(),address:'L'.repeat(32),symbol:'NEWLEAD'};
+  const snapshot=fixture(),vetoed={...lead({status:'HARD_REJECT'}),address:'v'.repeat(32),symbol:'RUG'},fresh={...lead(),address:'l'.repeat(32),symbol:'NEWLEAD'};
   snapshot.candidates=[vetoed,fresh];
-  snapshot.feedByChain.sol={observedAt:now-300_000,status:'READY',rows:[
-    projectTelegramFeedRow({address:vetoed.address,symbol:'RUG',pass:true,priorityBand:true,volume5m:3,reasons:[]},'sol'),
-    projectTelegramFeedRow({address:fresh.address,symbol:'NEWLEAD',pass:true,volume5m:2,reasons:[]},'sol'),
-    projectTelegramFeedRow({address:'S'.repeat(32),symbol:'SCREENED',pass:true,volume5m:1,reasons:[]},'sol'),
-    projectTelegramFeedRow({address:'R'.repeat(32),symbol:'LATE',pass:false,reasons:['上线不足5分钟']},'sol')]};
+  snapshot.feedByChain.robinhood={observedAt:now-300_000,status:'READY',rows:[
+    projectTelegramFeedRow({address:vetoed.address,symbol:'RUG',pass:true,priorityBand:true,volume5m:3,reasons:[]},'robinhood'),
+    projectTelegramFeedRow({address:fresh.address,symbol:'NEWLEAD',pass:true,volume5m:2,reasons:[]},'robinhood'),
+    projectTelegramFeedRow({address:'s'.repeat(32),symbol:'SCREENED',pass:true,volume5m:1,reasons:[]},'robinhood'),
+    projectTelegramFeedRow({address:'r'.repeat(32),symbol:'LATE',pass:false,reasons:['上线不足5分钟']},'robinhood')]};
   for(const locale of ['en','zh']) assert.ok(!renderPanel(snapshot,session('feed'),locale).text.includes('✅'),locale);
   const text=renderPanel(snapshot,session('feed'),'en').text;
   assert.match(text,/<b>1\. RUG<\/b> · ⛔ Vetoed\n/);assert.match(text,/<b>2\. NEWLEAD<\/b> · ⏳ Checking\n/);
@@ -282,37 +282,37 @@ test('a hot-list row shows its candidate safety badge, never ✅ for the market 
 
 test('the detail takes age and 5-minute facts from the hot list when the candidate lacks them',()=>{
   const snapshot=fixture(),row=lead({holders:undefined,marketCap:120000,liquidity:30000});snapshot.candidates=[row];
-  snapshot.feedByChain.sol={rows:[projectTelegramFeedRow({address:row.address,symbol:'COIN0',holders:2431,createdAt:(now-18*60_000)/1000,volume5m:12000,priceChange5m:.35,reasons:[]},'sol')]};
+  snapshot.feedByChain.robinhood={rows:[projectTelegramFeedRow({address:row.address,symbol:'COIN0',holders:2431,createdAt:(now-18*60_000)/1000,volume5m:12000,priceChange5m:.35,reasons:[]},'robinhood')]};
   const lines=renderPanel(snapshot,session('detail',{selectedToken:row}),'en').text.split('\n');
   assert.equal(lines[2],'MC $120K · Liq $30K · 2,431 holders');assert.equal(lines[3],'18m old · 5m +35% · 5m vol $12K');
 });
 
 test('watchlist rows and the detail show watch state, and note-only rows say they were never checked',()=>{
-  const snapshot=fixture(),watched=snapshot.candidates[0],noted={chain:'sol',address:'N'.repeat(32),favorite:false,note:'dev wallet',updatedAt:now-1};
-  snapshot.annotations=[{chain:'sol',address:watched.address,favorite:true,note:'',updatedAt:now},noted];
+  const snapshot=fixture(),watched=snapshot.candidates[0],noted={chain:'robinhood',address:'n'.repeat(32),favorite:false,note:'dev wallet',updatedAt:now-1};
+  snapshot.annotations=[{chain:'robinhood',address:watched.address,favorite:true,note:'',updatedAt:now},noted];
   const text=renderPanel(snapshot,session('saved'),'en').text;
-  assert.match(text,/<b>1\. COIN0<\/b> · ⏳ Checking\nSolana · ⭐\n/);
-  assert.match(text,/<b>2\. \?<\/b> · ⚠️ Not checked\nSolana · <code>NNNNNNNNNNNN<\/code> · 📝 dev wallet\n/);
+  assert.match(text,/<b>1\. COIN0<\/b> · ⏳ Checking\nRobinhood · ⭐\n/);
+  assert.match(text,/<b>2\. \?<\/b> · ⚠️ Not checked\nRobinhood · <code>nnnnnnnnnnnn<\/code> · 📝 dev wallet\n/);
   const label=selected=>renderPanel(snapshot,session('detail',{selectedToken:selected}),'en').keyboard.flat().find(item=>item.action==='favorite.set').text;
   assert.equal(label(watched),'⭐ Unwatch');assert.equal(label(noted),'⭐ Watch');
 });
 
 test('list headers print only the chain and the state the owner changed',()=>{
   const snapshot=fixture(),header=result=>result.text.split('\n')[1];
-  assert.equal(header(renderPanel(snapshot,session('audits'),'en')),'Solana');
-  assert.equal(header(renderPanel(snapshot,session('audits',{filter:'all',sort:'audit_desc'}),'en')),'Solana');
-  assert.equal(header(renderPanel(snapshot,session('audits',{filter:'fresh',sort:'market_desc',search:'coin'}),'en')),'Solana · Filter: Last 5 min · Sort: Market cap ↓ · Search: &quot;coin&quot;');
-  assert.equal(header(renderPanel(snapshot,session('feed',{sort:'priority'}),'en')),'Solana');
-  assert.equal(header(renderPanel(snapshot,session('feed',{sort:'volume'}),'zh')),'Solana · 排序: 5分钟成交额');
+  assert.equal(header(renderPanel(snapshot,session('audits'),'en')),'Robinhood');
+  assert.equal(header(renderPanel(snapshot,session('audits',{filter:'all',sort:'audit_desc'}),'en')),'Robinhood');
+  assert.equal(header(renderPanel(snapshot,session('audits',{filter:'fresh',sort:'market_desc',search:'coin'}),'en')),'Robinhood · Filter: Last 5 min · Sort: Market cap ↓ · Search: &quot;coin&quot;');
+  assert.equal(header(renderPanel(snapshot,session('feed',{sort:'priority'}),'en')),'Robinhood');
+  assert.equal(header(renderPanel(snapshot,session('feed',{sort:'volume'}),'zh')),'Robinhood · 排序: 5分钟成交额');
 });
 
 test('list, activity and detail panels fit the text budget with maximum-length rows in both languages',()=>{
   const wide='<'.repeat(500),symbol='&'.repeat(30),rows=Array.from({length:10},(_,index)=>candidate(index,{symbol,deep:{chartRisk:{version:CHART_RISK_VERSION},failed:Array(32).fill('<'),unknownFields:Array(48).fill('<'),blockingUnknownFields:Array(48).fill('<')},secondary:{...complete,security:{verdict:'FATAL',fatal:Array(20).fill({field:wide}),unknownFields:[]}},status:'HARD_REJECT'}));
   const snapshot=fixture();snapshot.candidates=rows;
-  snapshot.annotations=rows.map(row=>({chain:'sol',address:row.address,favorite:true,note:wide,updatedAt:now}));
-  snapshot.marks=rows.map(row=>({chain:'sol',address:row.address,decision:'ignored',at:now,reviewRevision:'revision',version:1}));
-  snapshot.events=rows.map((row,index)=>({at:now-index,chain:'sol',address:row.address,type:index%2?'CANDIDATE_NEW':'CUSTOM',message:wide}));
-  snapshot.feedByChain.sol={observedAt:now-1_000_000,status:'AVE_RATE_LIMITED',receivedCount:100,leadCount:10,rows:rows.map(row=>projectTelegramFeedRow({address:row.address,symbol,marketCap:-1.23e12,createdAt:1,volume5m:9.99e14,priceChange5m:-4.99,reasons:[wide.slice(0,120)]},'sol'))};
+  snapshot.annotations=rows.map(row=>({chain:'robinhood',address:row.address,favorite:true,note:wide,updatedAt:now}));
+  snapshot.marks=rows.map(row=>({chain:'robinhood',address:row.address,decision:'ignored',at:now,reviewRevision:'revision',version:1}));
+  snapshot.events=rows.map((row,index)=>({at:now-index,chain:'robinhood',address:row.address,type:index%2?'CANDIDATE_NEW':'CUSTOM',message:wide}));
+  snapshot.feedByChain.robinhood={observedAt:now-1_000_000,status:'AVE_RATE_LIMITED',receivedCount:100,leadCount:10,rows:rows.map(row=>projectTelegramFeedRow({address:row.address,symbol,marketCap:-1.23e12,createdAt:1,volume5m:9.99e14,priceChange5m:-4.99,reasons:[wide.slice(0,120)]},'robinhood'))};
   for(const locale of ['zh','en']) for(const panel of ['audits','feed','saved','events','detail']) for(const search of ['a'.repeat(32),wide.slice(0,128)]) {
     const result=renderPanel(snapshot,session(panel,{search,selectedToken:rows[0]}),locale);
     assert.ok(result.text.length<=3500,`${panel} ${locale}`);
@@ -331,7 +331,7 @@ test('the token detail links only what exists, with the chart from DexScreener, 
 
 test('selectors lay out two choices per row, time windows three, and only the chain selector explains itself',()=>{
   const snapshot=fixture(),choices=result=>result.keyboard.slice(0,-1).map(row=>row.length);
-  assert.deepEqual(choices(renderPanel(snapshot,session('view_chain',{returnTo:{panel:'saved'}}),'en')),[2,2,2,1]);
+  assert.deepEqual(choices(renderPanel(snapshot,session('view_chain',{returnTo:{panel:'saved'}}),'en')),[2,2,2]);
   assert.deepEqual(choices(renderPanel(snapshot,session('horizon'),'en')),[3,3,1]);
   assert.deepEqual(renderPanel(snapshot,session('cohort'),'en').keyboard[0].map(item=>item.text),['✓ Passed the screen','Vetoed control']);
   assert.match(renderPanel(snapshot,session('view_chain'),'en').text,/^<b>[^<]+<\/b>\nViewing a chain does not change what is scanned\.\n\nUpdated/);
@@ -340,16 +340,16 @@ test('selectors lay out two choices per row, time windows three, and only the ch
 
 test('activity rows name the token and what happened in plain words',()=>{
   const snapshot=fixture(),address=snapshot.candidates[0].address;
-  snapshot.events=[{at:now-240_000,chain:'sol',address,type:'CANDIDATE_NEW',message:'COIN0：新市场线索，安全性待核验'},{at:now-300_000,chain:'sol',address:'B'.repeat(32),type:'RISK_WORSENED',message:'?'}];
+  snapshot.events=[{at:now-240_000,chain:'robinhood',address,type:'CANDIDATE_NEW',message:'COIN0：新市场线索，安全性待核验'},{at:now-300_000,chain:'robinhood',address:'b'.repeat(32),type:'RISK_WORSENED',message:'?'}];
   const result=renderPanel(snapshot,session('events'),'en');
-  assert.match(result.text,/\n1\. 4m ago · 🆕 COIN0 — new lead\n2\. 5m ago · ⛔ BBBBBB…BBBB — failed the safety check\n/);
+  assert.match(result.text,/\n1\. 4m ago · 🆕 COIN0 — new lead\n2\. 5m ago · ⛔ bbbbbb…bbbb — failed the safety check\n/);
   assert.doesNotMatch(result.text,/新市场线索/);
-  assert.match(renderPanel(snapshot,{...session('events'),viewChain:'all'},'en').text,/4m ago · Solana · 🆕 COIN0/);
+  assert.match(renderPanel(snapshot,{...session('events'),viewChain:'all'},'en').text,/4m ago · Robinhood · 🆕 COIN0/);
 });
 
 test('performance leads with the median return of screen passes in plain words',()=>{
   const snapshot=fixture(),cell=(median,completed)=>({eligible:completed+3,completed,missing:3,median,positiveRate:null});
-  snapshot.stats={sol:{tracked:40,calibrationReady:false,coverage:{passed:{m30:cell(.042,37),h1:cell(-.5,1),h2:cell(null,0),h24:cell(null,0)}}}};
+  snapshot.stats={robinhood:{tracked:40,calibrationReady:false,coverage:{passed:{m30:cell(.042,37),h1:cell(-.5,1),h2:cell(null,0),h24:cell(null,0)}}}};
   const text=renderPanel(snapshot,session('stats'),'en').text;
   assert.match(text,/Tokens that passed the screen, 30 min later: median \+4\.2% \(37 tokens\)\n1 h later: median -50% \(1 token\)\n2 h later: no samples yet/);
   assert.match(text,/Shadow observations; not executable returns\./);
@@ -369,10 +369,10 @@ test('radar leads with the newest leads on the scan chain, vetoed last, and leav
     candidate(4,{symbol:'REVIEW',status:'X_REVIEW',auditedAt:now-1000}),
     {...candidate(5,{symbol:'ELSEWHERE',status:'LIVE_READY',auditedAt:now-1000}),chain:'base'}
   ];
-  snapshot.feedByChain={sol:{rows:[projectTelegramFeedRow({address:snapshot.candidates[0].address,symbol:'PEPE',priceChange5m:.35},'sol')]}};
+  snapshot.feedByChain={robinhood:{rows:[projectTelegramFeedRow({address:snapshot.candidates[0].address,symbol:'PEPE',priceChange5m:.35},'robinhood')]}};
   // The radar shows the scan chain even when the session last viewed another one.
   const result=renderPanel(snapshot,{...session('radar'),viewChain:'base'},'en');
-  assert.equal(result.text,'<b>📡 Radar · Solana</b>\n🟢 Scanning · 🔕 Alerts off\n\nLast 30 min: 2 leads · 1 vetoed\n1. <b>DOGE2</b>\n2. <b>PEPE</b> · $120K · 4m old · +35%\n3. ⛔ RUGME · vetoed\n\nUpdated Jan 15 08:00 UTC');
+  assert.equal(result.text,'<b>📡 Radar · Robinhood</b>\n🟢 Scanning · 🔕 Alerts off\n\nLast 30 min: 2 leads · 1 vetoed\n1. <b>DOGE2</b>\n2. <b>PEPE</b> · $120K · 4m old · +35%\n3. ⛔ RUGME · vetoed\n\nUpdated Jan 15 08:00 UTC');
   assert.deepEqual(result.keyboard[0].map(item=>item.token.address),[1,0,2].map(index=>snapshot.candidates[index].address));
   assert.deepEqual(panelRows(result).slice(1),[['audits','feed'],['saved','stats'],['wallet','settings']]);
   const status=renderPanel(snapshot,session('status'),'en').text;
@@ -398,22 +398,22 @@ test('radar says why nothing arrives when scanning is paused or AVE is disconnec
 test('settings groups state first and actions below, with disconnect alone and only when connected',()=>{
   const snapshot=fixture();snapshot.control.notifications=true;snapshot.trading={chains:['arc'],settings:{slippageBps:500,capUsd:100}};
   const connected=renderPanel(snapshot,session('settings'),'en');
-  assert.equal(connected.text,'<b>⚙️ Settings</b>\nScanning: 🟢 Solana\nAlerts: 🔔 On\nTrading: slippage 5% · cap $100\nLanguage: English\nAVE: connected\n\nUpdated Jan 15 08:00 UTC');
+  assert.equal(connected.text,'<b>⚙️ Settings</b>\nScanning: 🟢 Robinhood\nAlerts: 🔔 On\nTrading: slippage 5% · cap $100\nLanguage: English\nAVE: connected\n\nUpdated Jan 15 08:00 UTC');
   assert.deepEqual(panelRows(connected),[['chains','scan.pause'],['notifications.set'],['wallet','trade_settings'],['language','onboard'],['status','export.create'],['disconnect']]);
-  assert.equal(connected.keyboard[0][0].text,'🔗 Scan chain: Solana');assert.equal(connected.keyboard[3][1].text,'🔑 AVE key');assert.equal(connected.keyboard.at(-2)[0].text,'🔌 Disconnect AVE');
+  assert.equal(connected.keyboard[0][0].text,'🔗 Scan chain: Robinhood');assert.equal(connected.keyboard[3][1].text,'🔑 AVE key');assert.equal(connected.keyboard.at(-2)[0].text,'🔌 Disconnect AVE');
   Object.assign(snapshot.control,{configured:false});delete snapshot.trading;
   const disconnected=renderPanel(snapshot,session('settings'),'en');
-  assert.match(disconnected.text,/Scanning: 🔌 Waiting for AVE · Solana\n.*\nTrading: not enabled on this deployment\n[\s\S]*AVE: not connected/);
+  assert.match(disconnected.text,/Scanning: 🔌 Waiting for AVE · Robinhood\n.*\nTrading: not enabled on this deployment\n[\s\S]*AVE: not connected/);
   assert.ok(!panelRows(disconnected).flat().includes('disconnect'));
   Object.assign(snapshot.control,{configured:true,paused:true});
   const paused=renderPanel(snapshot,session('settings'),'zh');
-  assert.match(paused.text,/扫描: ⏸️ 已暂停 · Solana/);assert.deepEqual(panelRows(paused)[0],['chains','scan.resume']);
+  assert.match(paused.text,/扫描: ⏸️ 已暂停 · Robinhood/);assert.deepEqual(panelRows(paused)[0],['chains','scan.resume']);
 });
 
 test('status links Activity, Sources and Delivery and flags delivery issues',()=>{
   const snapshot=fixture();
   const result=renderPanel(snapshot,session('status'),'en');
-  assert.match(result.text,/^<b>📊 Status<\/b>\n🟢 Scanning · Solana\n/);
+  assert.match(result.text,/^<b>📊 Status<\/b>\n🟢 Scanning · Robinhood\n/);
   assert.deepEqual(panelRows(result),[['events','sources','delivery']]);
   assert.match(result.text,/\nDelivery issues: 0/);
   snapshot.delivery=[{status:'FAILED',purpose:'USER_RESPONSE'}];
@@ -458,7 +458,7 @@ test('a key submission answers with a panel: connected shows the scan, a failure
 
 test('a session notice leads any panel as one escaped warning line',()=>{
   for(const panel of ['radar','audits','settings','wallet','detail']) {
-    const snapshot=fixture(),result=renderPanel(snapshot,session(panel,{selectedToken:{chain:'sol',address:snapshot.candidates[0].address},notice:'Above your <b>$100</b> cap.'}),'en');
+    const snapshot=fixture(),result=renderPanel(snapshot,session(panel,{selectedToken:{chain:'robinhood',address:snapshot.candidates[0].address},notice:'Above your <b>$100</b> cap.'}),'en');
     assert.match(result.text,/^⚠️ Above your &lt;b&gt;\$100&lt;\/b&gt; cap\.\n\n<b>/,panel);
   }
   assert.doesNotMatch(renderPanel(fixture(),session('radar'),'en').text,/⚠️/);

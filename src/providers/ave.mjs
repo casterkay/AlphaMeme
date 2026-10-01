@@ -10,7 +10,7 @@ import { SCAN_CHAINS } from '../chains.mjs';
 // request lane with one request per call: the scheduler owns pacing and the
 // monthly credit budget durably, so nothing here waits, caches or retries.
 export const AVE_LIMITS = Object.freeze({ timeoutMs: 12000, maxBytes: 1048576, detailsTtlMs: 30000 });
-export const AVE_CHAINS = Object.freeze({ bsc: 'bsc', eth: 'eth', base: 'base', sol: 'solana', robinhood: 'robinhood', arc: 'arc' });
+export const AVE_CHAINS = Object.freeze({ bsc: 'bsc', eth: 'eth', base: 'base', robinhood: 'robinhood', arc: 'arc' });
 // Estimated credit units per request, as upstream accounts them.
 export const AVE_CU = Object.freeze({ trending: 5, details: 5, klines: 10 });
 const ORIGIN = 'https://prod.ave-api.com';
@@ -80,10 +80,9 @@ async function errorCategory(response, timeoutMs) {
     throw error;
   } finally { clearTimeout(timer); void reader.cancel().catch(() => {}); }
 }
-const address = normalizeTokenAddress;
 function input(chain, ca) {
-  if (!Object.hasOwn(AVE_CHAINS, chain) || ca !== undefined && !address(chain, ca)) throw fail('INPUT', 400);
-  return ca === undefined ? undefined : address(chain, ca);
+  if (!Object.hasOwn(AVE_CHAINS, chain) || ca !== undefined && !normalizeTokenAddress(ca)) throw fail('INPUT', 400);
+  return ca === undefined ? undefined : normalizeTokenAddress(ca);
 }
 function envelope(raw, trending = false) {
   if (!object(raw)) throw fail('SCHEMA');
@@ -96,9 +95,9 @@ function envelope(raw, trending = false) {
 }
 function checkEcho(row, chain, ca, requireAddress = false) {
   if (!object(row) || row.chain !== AVE_CHAINS[chain]) throw fail('SCHEMA');
-  for (const field of ['token', 'address']) if (Object.hasOwn(row, field) && address(chain, row[field]) !== ca) throw fail('SCHEMA');
+  for (const field of ['token', 'address']) if (Object.hasOwn(row, field) && normalizeTokenAddress(row[field]) !== ca) throw fail('SCHEMA');
   if (Object.hasOwn(row, 'token_id') && row.token_id !== ca + '-' + AVE_CHAINS[chain]) throw fail('SCHEMA');
-  if (requireAddress && address(chain, row.token) !== ca) throw fail('SCHEMA');
+  if (requireAddress && normalizeTokenAddress(row.token) !== ca) throw fail('SCHEMA');
 }
 function tokenRow(row, chain, ca, required = false) {
   checkEcho(row, chain, ca, required);
@@ -135,7 +134,7 @@ function parseTrending(raw, chain) {
   if (!Array.isArray(data.tokens) || data.tokens.length > 100) throw fail('SCHEMA');
   const seen = new Map(), invalid = new Set(), rows = [];
   for (const row of data.tokens) {
-    const ca = address(chain, row?.token);
+    const ca = normalizeTokenAddress(row?.token);
     if (!ca) continue;
     let parsed;
     try { parsed = tokenRow(row, chain, ca, true); }
@@ -152,7 +151,7 @@ function parseTrending(raw, chain) {
     if (invalid.has(ca)) throw fail('SCHEMA');
     const prior = seen.get(ca);
     if (prior) {
-      // AVE's Solana leaderboard can repeat an identical token row. Collapse
+      // AVE's leaderboard can repeat an identical token row. Collapse
       // only an identical validated market identity; conflicting duplicates
       // remain a schema error so one address cannot smuggle two realities.
       if (JSON.stringify(prior) !== JSON.stringify(parsed)) throw fail('SCHEMA');
@@ -171,7 +170,7 @@ function parseDetails(raw, chain, ca) {
 }
 function parseKlines(raw, chain, ca, capturedAt, fromTime, toTime) {
   outerEcho(raw, chain); const data = envelope(raw); outerEcho(data, chain);
-  for (const field of ['address', 'token']) if (data[field] !== undefined && address(chain, data[field]) !== ca) throw fail('SCHEMA');
+  for (const field of ['address', 'token']) if (data[field] !== undefined && normalizeTokenAddress(data[field]) !== ca) throw fail('SCHEMA');
   if (data.token_id !== undefined && data.token_id !== ca + '-' + AVE_CHAINS[chain] || data.interval !== 1 || !Array.isArray(data.points) || data.points.length > 1000) throw fail('SCHEMA');
   const byTime = new Map(), closedAt = Math.min(capturedAt, toTime ?? capturedAt);
   for (const p of data.points) {

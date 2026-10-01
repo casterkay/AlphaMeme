@@ -49,9 +49,8 @@ test('stale, ignored, unknown, failed, future and unaudited-before-enable candid
   assert.equal(tracker.batch({}, now + 10000).length, 0);
 });
 
-test('identity and cross-tab persisted dedupe respect chain and Solana case', () => {
+test('identity and cross-tab persisted dedupe respect chain and ignore address case', () => {
   assert.equal(voiceKey(row('0xAa')), voiceKey(row('0xaa')));
-  assert.notEqual(voiceKey({ chain: 'sol', address: 'Abc' }), voiceKey({ chain: 'sol', address: 'abc' }));
   assert.notEqual(voiceKey(row('same')), voiceKey({ chain: 'arc', address: 'same' }));
   const tracker = new VoiceAlerts(); tracker.reset(now); tracker.ingest(snapshot([]), now);
   const candidate = row('a', now + 1); tracker.ingest(snapshot([candidate]), now + 1);

@@ -356,7 +356,7 @@ test('a blocked active key still lets a candidate key verification run after spa
 test('the scheduler accepts an executor result, advances its checkpoint, and rearms the scan task for free local work', async () => {
   const { scanner } = recoverableScanner();
   const { ave, counter } = emptyTrending();
-  scanner.begin({ cycleId: 'cycle-executor-scheduler', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: NOW + 60_000 });
+  scanner.begin({ cycleId: 'cycle-executor-scheduler', chain: 'robinhood', keyEpoch: 0, controlEpoch: 0, deadlineAt: NOW + 60_000 });
   const { instance, store, alarms } = scheduler({
     store: new MemorySchedulerStore({ tasks: [task('scan:cycle-executor-scheduler', 'scan', NOW, { aveCost: 5 })], runtime: CONFIGURED }),
     handlers: {
@@ -381,7 +381,7 @@ async function runEmptyCycle({ aveBudget }) {
   let clock = NOW;
   const { scanner, store: scanStore } = recoverableScanner({ now: () => clock });
   const { ave, counter } = emptyTrending(undefined, () => clock);
-  scanner.begin({ cycleId: 'cycle-cadence', chain: 'sol', keyEpoch: 0, controlEpoch: 0, deadlineAt: NOW + 60_000 });
+  scanner.begin({ cycleId: 'cycle-cadence', chain: 'robinhood', keyEpoch: 0, controlEpoch: 0, deadlineAt: NOW + 60_000 });
   const { instance, store, alarms } = scheduler({
     now: () => clock,
     aveBudget,
@@ -439,8 +439,8 @@ test('alarm-driven empty discovery spends one trending request and schedules the
     nextDeadlineAt: NOW + scannerSettings.scanIntervalMs + scannerSettings.auditCycleBudgetMs
   });
   assert.equal(scanner.checkpoint(successorId).phase, 'DISCOVER');
-  assert.equal(scanStore.feeds.get('sol').status, 'READY');
-  assert.equal(scanStore.feeds.get('sol').receivedCount, 0);
+  assert.equal(scanStore.feeds.get('robinhood').status, 'READY');
+  assert.equal(scanStore.feeds.get('robinhood').receivedCount, 0);
   assert.deepEqual(store.read().tasks, [{
     id: `scan:${successorId}`, kind: 'scan', dueAt: NOW + scannerSettings.scanIntervalMs, enabled: true, aveCost: 5
   }]);

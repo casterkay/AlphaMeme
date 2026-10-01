@@ -109,12 +109,12 @@ test('an edit, a caption or a command for another bot that holds a key is delete
   for (const result of [edited('/start'), edited('/setkey ave-key-0123456789'), captioned('/start'), foreign('/start@other_bot hello')]) assert.deepEqual(result, { kind: 'ignored' });
 });
 
-test('plain text is classified at the boundary: a contract address becomes a lookup, anything else a text-free receipt', () => {
+test('plain text is classified at the boundary: an EVM contract address becomes a lookup, anything else a text-free receipt', () => {
   for (let round = 0; round < 200; round++) {
-    const evm = '0x' + randomBytes(20).toString('hex'), sol = base58(randomBytes(32));
+    const evm = '0x' + randomBytes(20).toString('hex'), solanaMint = base58(randomBytes(32));
     const mixed = evm.slice(0, 2) + [...evm.slice(2)].map((character, index) => index % 2 ? character.toUpperCase() : character).join('');
     assert.deepEqual(validateTelegramReceipt(parse(`  ${mixed} `).receipt).payload, { family: 'evm', address: evm });
-    if (sol.length >= 32) assert.deepEqual(validateTelegramReceipt(parse(sol).receipt).payload, { family: 'sol', address: sol });
+    assert.equal(parse(solanaMint).receipt.commandType, 'text');
     const words = randomBytes(24).toString('base64');
     const receipt = validateTelegramReceipt(parse(`hello ${words}`).receipt);
     assert.deepEqual([receipt.commandType, receipt.payload], ['text', {}]);

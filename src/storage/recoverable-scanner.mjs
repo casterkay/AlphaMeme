@@ -114,10 +114,7 @@ function stablePart(value) {
   return encodeURIComponent(String(value));
 }
 
-function canonicalAddress(chainName, value) {
-  const address = String(value || '').trim();
-  return chainName === 'sol' ? address : address.toLowerCase();
-}
+const canonicalAddress = value => String(value || '').trim().toLowerCase();
 
 // A deterministic tuple is preferable to a random UUID: retrying the same
 // completed token must address the same durable effects.
@@ -350,14 +347,14 @@ function candidateInput(value, tenantId, chainName) {
   if (typeof value.status !== 'string' || !value.status) {
     throw new RecoverableScannerError('CANDIDATE_INVALID', 'candidate status is required');
   }
-  return { ...json(value, 'candidate'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
+  return { ...json(value, 'candidate'), address: canonicalAddress(value.address), tenantId, chain: chainName };
 }
 
 function queueInput(value, tenantId, chainName) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.address !== 'string' || !value.address) {
     throw new RecoverableScannerError('AUDIT_QUEUE_INVALID', 'audit queue address is required');
   }
-  return { ...json(value, 'audit queue'), address: canonicalAddress(chainName, value.address), tenantId, chain: chainName };
+  return { ...json(value, 'audit queue'), address: canonicalAddress(value.address), tenantId, chain: chainName };
 }
 
 function outcomeInput(value, tenantId, chainName, { allowCrossChain = false } = {}) {
@@ -372,7 +369,7 @@ function outcomeInput(value, tenantId, chainName, { allowCrossChain = false } = 
   if (!allowCrossChain && outcomeChain !== chainName) {
     throw new RecoverableScannerError('OUTCOME_INVALID', 'classification outcomes must remain on the checkpoint chain');
   }
-  return { ...json(value, 'outcome'), address: canonicalAddress(outcomeChain, value.address), tenantId, chain: outcomeChain };
+  return { ...json(value, 'outcome'), address: canonicalAddress(value.address), tenantId, chain: outcomeChain };
 }
 
 function stringOrNull(value) {
@@ -589,10 +586,10 @@ export class SqliteRecoverableScannerStore {
       throw new RecoverableScannerError('SCREEN_COMMIT_INVALID', 'screen commit requires leads, eliminations, events, outcomes, feed and source health');
     }
     const leads = value.leads.map(item => candidateInput(item, this.tenantId, next.chain));
-    const eliminated = [...new Set(value.eliminated.map(address => canonicalAddress(next.chain, address)))];
+    const eliminated = [...new Set(value.eliminated.map(address => canonicalAddress(address)))];
     const outcomes = value.outcomes.map(item => outcomeInput(item, this.tenantId, next.chain));
-    const events = value.events.map(item => ({ address: canonicalAddress(next.chain, item.address),
-      event: eventInput(item, this.tenantId, next.cycleId, next.chain, canonicalAddress(next.chain, item.address), next.updatedAt) }));
+    const events = value.events.map(item => ({ address: canonicalAddress(item.address),
+      event: eventInput(item, this.tenantId, next.cycleId, next.chain, canonicalAddress(item.address), next.updatedAt) }));
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
       assertCurrent(this.storage, this.tenantId, current, expected);
@@ -636,7 +633,7 @@ export class SqliteRecoverableScannerStore {
     const normalizedChain = chain(chainName);
     const row = atMostOne(this.storage.sql.exec(
       'SELECT * FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ?',
-      this.tenantId, normalizedChain, canonicalAddress(normalizedChain, address)
+      this.tenantId, normalizedChain, canonicalAddress(address)
     ).toArray(), 'candidate');
     if (!row) return null;
     return {

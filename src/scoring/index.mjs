@@ -61,15 +61,7 @@ const num = (value, fallback = 0) => optionalNumber(value) ?? fallback;
 const first = (...values) => values.find(value => value !== undefined && value !== null && value !== '');
 const lower = value => String(value ?? '').toLowerCase();
 
-function normalizeAddress(value, chain = 'robinhood') {
-  if (typeof value !== 'string') return '';
-  const normalized = value.trim();
-  return lower(chain) === 'sol' ? normalized : normalized.toLowerCase();
-}
-
-function validAddressForChain(value, chain = 'robinhood') {
-  return validTokenAddress(lower(chain), value);
-}
+const normalizeAddress = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
 
 function normalizeTags(...values) {
   const tags = [];
@@ -91,7 +83,7 @@ function taggedWalletSignals(holders, chain) {
   // Holder tags are a current-position snapshot. General trader rows may be
   // historical and are therefore not promoted to "currently participating".
   for (const row of (Array.isArray(holders) ? holders : [])) {
-    const address = normalizeAddress(row?.address, chain);
+    const address = normalizeAddress(row?.address);
     if (!address) continue;
     const tags = wallets.get(address) || new Set();
     for (const tag of normalizeTags(row.tags, row.maker_token_tags)) tags.add(tag);
@@ -148,7 +140,7 @@ export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
   const ageSec = created !== null && created > 0 ? nowSec - created : 0;
   const mc = mcValue ?? 0, liquidity = liquidityValue ?? 0, volume = optionalNonNegativeNumber(row.volume_5m);
   const reasons = knownRiskReasons(row, { ...config, strictLiquidity: config.minLiquidity });
-  if (row.chain !== chain || !validAddressForChain(row.address, chain) || /^0x(?:0{40}|e{40})$/i.test(row.address || '')) reasons.push('链或代币地址不匹配');
+  if (row.chain !== chain || !validTokenAddress(row.address) || /^0x(?:0{40}|e{40})$/i.test(row.address || '')) reasons.push('链或代币地址不匹配');
   if (!(optionalNumber(row.price) > 0)) reasons.push('价格数据未知');
   const capturedAt = optionalNumber(row.capturedAt), sourceUpdatedAt = optionalNumber(row.sourceUpdatedAt);
   if (row.stale === true || capturedAt === null || sourceUpdatedAt === null || capturedAt <= 0 || sourceUpdatedAt <= 0 ||
@@ -223,7 +215,7 @@ export function discoveryScreen(row, config, nowSec = Date.now() / 1000) {
   const ageSec = created > 0 ? nowSec - created : 0;
   const liquidity = liquidityValue ?? 0;
   const reasons = knownRiskReasons(row, config);
-  if (!validAddressForChain(row.address, config.chain)) reasons.push('地址格式异常');
+  if (!validTokenAddress(row.address)) reasons.push('地址格式异常');
   if (createdValue === null || created <= 0) reasons.push('创建时间未知');
   else if (!(ageSec >= config.minAgeSec)) reasons.push('创建不足5分钟');
   else if (ageSec > config.maxAgeSec) reasons.push('超过观察年龄上限');
@@ -239,10 +231,8 @@ export function discoveryScreen(row, config, nowSec = Date.now() / 1000) {
   else if (insider > 0.30) reasons.push('内幕/老鼠仓占比过高');
   if (wash === null) reasons.push('刷量数据未知');
   else if (wash) reasons.push('检测到刷量');
-  if (lower(config.chain) !== 'sol') {
-    if (honeypot === null) reasons.push('貔貅数据未知');
-    else if (honeypot) reasons.push('检测到貔貅盘');
-  }
+  if (honeypot === null) reasons.push('貔貅数据未知');
+  else if (honeypot) reasons.push('检测到貔貅盘');
   const priorityBand = mc >= config.priorityMinMarketCap && mc <= config.priorityMaxMarketCap;
   const volume = num(first(row.volume_1h, row.volume, row.volume_24h));
   const holders = num(row.holder_count);
@@ -259,7 +249,7 @@ export function discoveryScreen(row, config, nowSec = Date.now() / 1000) {
       bundler === null ? 'bundler' : null,
       insider === null ? 'insider' : null,
       wash === null ? 'wash' : null,
-      lower(config.chain) !== 'sol' && honeypot === null ? 'honeypot' : null
+      honeypot === null ? 'honeypot' : null
     ].filter(Boolean)
   };
 }
@@ -285,9 +275,7 @@ function securityView(source = {}, discovery = {}, info = {}) {
     sniperHold: first(source.top70_sniper_hold_rate, discovery.top70_sniper_hold_rate),
     wash: first(source.is_wash_trading, discovery.is_wash_trading),
     burnStatus: first(source.burn_status, discovery.burn_status),
-    lockRate: first(source.lock_percent, source.locked_ratio, discovery.lock_percent, discovery.locked_ratio, info.locked_ratio),
-    renouncedMint: first(source.renounced_mint, discovery.renounced_mint),
-    renouncedFreezeAccount: first(source.renounced_freeze_account, discovery.renounced_freeze_account)
+    lockRate: first(source.lock_percent, source.locked_ratio, discovery.lock_percent, discovery.locked_ratio, info.locked_ratio)
   };
 }
 
@@ -298,7 +286,7 @@ export function analyzeWallets(holders, config) {
   const grouped = new Map();
   let missingAddressCount = 0;
   for (const row of rows) {
-    const address = normalizeAddress(row?.address, config.chain);
+    const address = normalizeAddress(row?.address);
     if (!address) {
       missingAddressCount += 1;
       continue;
@@ -316,7 +304,7 @@ export function analyzeWallets(holders, config) {
     current.isNewValues.push(optionalBoolean(row.is_new));
     current.suspiciousValues.push(optionalBoolean(row.is_suspicious));
     current.buyTxCounts.push(optionalNumber(row.buy_tx_count_cur));
-    const source = normalizeAddress(first(row.native_transfer?.from_address, row.native_transfer?.address), config.chain);
+    const source = normalizeAddress(first(row.native_transfer?.from_address, row.native_transfer?.address));
     if (source) current.sources.add(source);
     grouped.set(address, current);
   }
@@ -430,7 +418,7 @@ export function marketBehaviorScreen({ discovery = {}, info = {}, holders = [], 
     ? null : Math.abs(swaps5m - txTotal) <= Math.max(2, Math.ceil(swaps5m * 0.05));
   const swapsPerHolder5m = swaps5m !== null && holderCount !== null && holderCount > 0 ? swaps5m / holderCount : null;
   const holderSampleDistinct = new Set((Array.isArray(holders) ? holders : [])
-    .map(row => normalizeAddress(row?.address, config.chain)).filter(Boolean)).size;
+    .map(row => normalizeAddress(row?.address)).filter(Boolean)).size;
   const holderSampleConsistent = holderCount === null || holderSampleDistinct === 0 ? null : holderCount >= holderSampleDistinct;
   const sellBuyRatio = buys5m !== null && sells5m !== null
     ? (buys5m > 0 ? sells5m / buys5m : sells5m === 0 ? 0 : null) : null;
@@ -572,7 +560,7 @@ export function empiricalSellability({ info, discovery, traders, nowSec = Date.n
   const sells24h = optionalNumber(first(price.sells_24h, discovery.sells_24h));
   const unique = new Map();
   for (const row of Array.isArray(traders) ? traders : []) {
-    const address = normalizeAddress(row?.address, chain);
+    const address = normalizeAddress(row?.address);
     if (!address) continue;
     const sellTxCount = optionalNumber(row.sell_tx_count_cur);
     const lastActiveAt = unixSeconds(first(row.last_active_timestamp, row.last_active_at));
@@ -604,11 +592,8 @@ export function empiricalSellability({ info, discovery, traders, nowSec = Date.n
 export function deepScreen({ discovery, audit, nowMs = Date.now() }, config) {
   const info = audit.info || {}, pool = audit.pool || {};
   const sec = securityView(audit.security, discovery, info);
-  const isSol = lower(config.chain) === 'sol';
   const openSource = optionalBoolean(sec.openSource);
   const ownerRenounced = optionalBoolean(sec.ownerRenounced);
-  const renouncedMint = optionalBoolean(sec.renouncedMint);
-  const renouncedFreezeAccount = optionalBoolean(sec.renouncedFreezeAccount);
   const honeypot = optionalBoolean(sec.honeypot);
   const buyTax = optionalRate(sec.buyTax);
   const sellTax = optionalRate(sec.sellTax);
@@ -634,9 +619,9 @@ export function deepScreen({ discovery, audit, nowMs = Date.now() }, config) {
   const explicitHoneypot = honeypot === true;
   const checks = {
     openSource: openSource === true,
-    ownerRenounced: isSol ? renouncedMint === true && renouncedFreezeAccount === true : ownerRenounced === true,
+    ownerRenounced: ownerRenounced === true,
     lpLocked: lpBurned || (lockRate !== null && lockRate >= config.minLpLockedRate),
-    notHoneypot: isSol || exactNotHoneypot || (!explicitHoneypot && sellability.pass),
+    notHoneypot: exactNotHoneypot || (!explicitHoneypot && sellability.pass),
     tax: buyTax !== null && sellTax !== null
       && buyTax <= config.maxBuyTax && sellTax <= config.maxSellTax
       && Math.abs(buyTax - sellTax) <= config.maxTaxAsymmetry,
@@ -655,14 +640,11 @@ export function deepScreen({ discovery, audit, nowMs = Date.now() }, config) {
   };
   const failed = Object.entries(checks).filter(([, ok]) => !ok).map(([name]) => name);
   const chainPass = failed.length === 0;
-  const honeypotEvidence = isSol ? 'SOL不使用EVM貔貅字段；以铸币和冻结权限为安全基线'
-    : exactNotHoneypot ? 'GMGN明确非貔貅' : sellability.pass ? '经验卖出证据' : explicitHoneypot ? '检测到貔貅' : '未验证';
+  const honeypotEvidence = exactNotHoneypot ? 'GMGN明确非貔貅' : sellability.pass ? '经验卖出证据' : explicitHoneypot ? '检测到貔貅' : '未验证';
   const unknownFields = [
     openSource === null ? 'openSource' : null,
-    !isSol && ownerRenounced === null ? 'ownerRenounced' : null,
-    isSol && renouncedMint === null ? 'renouncedMint' : null,
-    isSol && renouncedFreezeAccount === null ? 'renouncedFreezeAccount' : null,
-    !isSol && honeypot === null ? 'honeypot' : null,
+    ownerRenounced === null ? 'ownerRenounced' : null,
+    honeypot === null ? 'honeypot' : null,
     buyTax === null ? 'buyTax' : null,
     sellTax === null ? 'sellTax' : null,
     rugRatio === null ? 'rugRatio' : null,
@@ -677,14 +659,12 @@ export function deepScreen({ discovery, audit, nowMs = Date.now() }, config) {
     ...wallets.unknownFields,
     ...observation.unknownFields,
     ...chartRisk.unknownFields,
-    ...(!isSol && honeypot !== false ? sellability.unknownFields : [])
+    ...(honeypot !== false ? sellability.unknownFields : [])
   ].filter(Boolean);
   const blockingUnknownFields = [
     openSource === null ? 'openSource' : null,
-    !isSol && ownerRenounced === null ? 'ownerRenounced' : null,
-    isSol && renouncedMint === null ? 'renouncedMint' : null,
-    isSol && renouncedFreezeAccount === null ? 'renouncedFreezeAccount' : null,
-    !isSol && honeypot === null && !sellability.pass ? 'honeypot' : null,
+    ownerRenounced === null ? 'ownerRenounced' : null,
+    honeypot === null && !sellability.pass ? 'honeypot' : null,
     buyTax === null ? 'buyTax' : null,
     sellTax === null ? 'sellTax' : null,
     rugRatio === null ? 'rugRatio' : null,
@@ -699,15 +679,14 @@ export function deepScreen({ discovery, audit, nowMs = Date.now() }, config) {
     ...wallets.unknownFields,
     ...(observation.status === 'WAITING' ? observation.unknownFields : []),
     ...chartRisk.unknownFields,
-    ...(!isSol && honeypot === null && !sellability.pass ? sellability.unknownFields : [])
+    ...(honeypot === null && !sellability.pass ? sellability.unknownFields : [])
   ].filter(Boolean);
   return {
     chainPass, failed, checks, wallets, observation, chartRisk, marketBehavior, sellability, honeypotEvidence,
     unknownFields: [...new Set(unknownFields)],
     blockingUnknownFields: [...new Set(blockingUnknownFields)],
     security: {
-      openSource, ownerRenounced: isSol ? renouncedMint === true && renouncedFreezeAccount === true : ownerRenounced,
-      evmOwnerRenounced: ownerRenounced, renouncedMint, renouncedFreezeAccount, honeypot, buyTax, sellTax,
+      openSource, ownerRenounced, honeypot, buyTax, sellTax,
       taxDifference: buyTax !== null && sellTax !== null ? Math.abs(buyTax - sellTax) : null,
       rugRatio, top10, devHold, creatorStatus: normalizedCreatorStatus(sec.creatorStatus),
       insider, bundler, sniperHold, wash, lockRate, lpBurned, liquidity: liquidityValue

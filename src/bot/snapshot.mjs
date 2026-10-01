@@ -5,7 +5,7 @@ import { DEFAULT_SCAN_CHAIN, SCAN_CHAINS } from '../chains.mjs';
 import { readSchedulerStateInTransaction } from '../storage/scheduler-state.mjs';
 import { normalizeTenantId } from '../storage/tenant-id.mjs';
 
-export const tokenIdentity = (chain, address) => `${chain}:${chain === 'sol' ? address : String(address).toLowerCase()}`;
+export const tokenIdentity = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
 const sensitive = /bearer\s|authorization|api[_ -]?key|private[_ -]?key|-----BEGIN .*KEY-----/i;
 
 export function safeTelegramText(value, maximum = 500) {

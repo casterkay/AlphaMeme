@@ -357,20 +357,15 @@ describe('recoverable Radar scanner', () => {
     });
   });
 
-  it('uses canonical EVM lookup keys without changing Solana address case', async () => {
+  it('uses canonical lower-case EVM lookup keys', async () => {
     const tenantId = '19007';
     const radar = env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`));
     const evmAddress = `0x${'a'.repeat(40)}`;
-    const solAddress = 'So11111111111111111111111111111111111111112';
     await runInDurableObject(radar, async (_instance, state) => {
-      for (const [chain, address, revision] of [['bsc', evmAddress, 'revision'], ['sol', solAddress, 'sol-revision']]) {
-        state.storage.sql.exec("INSERT INTO candidates (tenant_id, chain, address, status, review_evidence, review_revision, info_json, deep_json, secondary_json, social_json, audit_health_json, metadata_json) VALUES (?, ?, ?, ?, ?, ?, '{}', '{}', 'null', '{}', '{}', '{}')",
-          tenantId, chain, address, 'LIVE_READY', `${revision}-evidence`, revision);
-      }
+      state.storage.sql.exec("INSERT INTO candidates (tenant_id, chain, address, status, review_evidence, review_revision, info_json, deep_json, secondary_json, social_json, audit_health_json, metadata_json) VALUES (?, ?, ?, ?, ?, ?, '{}', '{}', 'null', '{}', '{}', '{}')",
+        tenantId, 'bsc', evmAddress, 'LIVE_READY', 'revision-evidence', 'revision');
       const store = new SqliteRecoverableScannerStore(state.storage, tenantId);
       expect(store.readCandidate('bsc', `0x${'A'.repeat(40)}`)).toMatchObject({ address: evmAddress, reviewRevision: 'revision', status: 'LIVE_READY' });
-      expect(store.readCandidate('sol', solAddress)).toMatchObject({ address: solAddress, reviewRevision: 'sol-revision' });
-      expect(store.readCandidate('sol', solAddress.toLowerCase())).toBeNull();
     });
   });
 

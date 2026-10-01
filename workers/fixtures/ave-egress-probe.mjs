@@ -7,7 +7,7 @@ const AVE_ORIGIN = 'https://prod.ave-api.com';
 const EGRESS_ECHO_URL = 'https://api.ipify.org?format=json';
 // Mirrors upstream's AVE chain slugs. Arc, the production chain, defaults; AVE's
 // docs list only bsc, eth, base and solana, but a deployed run read Arc trending.
-const AVE_CHAINS = Object.freeze({ bsc: 'bsc', eth: 'eth', base: 'base', sol: 'solana', robinhood: 'robinhood', arc: 'arc' });
+const AVE_CHAINS = Object.freeze({ bsc: 'bsc', eth: 'eth', base: 'base', robinhood: 'robinhood', arc: 'arc' });
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_BODY_BYTES = 1_048_576;
 const BODY_PREFIX_CHARS = 300;

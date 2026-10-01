@@ -11,8 +11,9 @@ uses a separate hot wallet the bot generates for you, and every trade needs a co
 
 ## 工作方式 / How it works
 
-- 一次扫描一条链，默认 **Arc**（可选 BNB Chain、Base、Ethereum、Solana、Robinhood）。
-  One chain is scanned at a time; **Arc** by default.
+- 一次扫描一条链，默认 **Arc**（可选 BNB Chain、Base、Ethereum、Robinhood；只支持 EVM 链）。
+  One chain is scanned at a time; **Arc** by default (BNB Chain, Base, Ethereum and
+  Robinhood are the other choices; only EVM chains are supported).
 - 每轮读取该链的 AVE 热榜（100 条，5 个额度单位），用上游的 AVE 行情筛选（报价新鲜度、市值 1–15 万美元、
   流动性、币龄、5 分钟成交、已知风险字段）。通过筛选的代币立即成为**市场线索**并推送提醒。
   Each cycle reads the chain's AVE hot list and applies upstream's AVE market screen;
@@ -37,9 +38,9 @@ uses a separate hot wallet the bot generates for you, and every trade needs a co
   Token details offer Buy $10/$20/$50/custom and Sell 25%/50%/100%/custom %. The first tap
   fetches a KyberSwap quote and shows a confirm screen; quotes expire after 30 s and an
   expired confirmation re-quotes instead of executing.
-- 支持链：Arc（用 USDC 买入，Gas 也用 USDC）、BNB Chain、Base、Ethereum（用原生币买入）。Solana 与 Robinhood 不支持交易。
+- 支持链：Arc（用 USDC 买入，Gas 也用 USDC）、BNB Chain、Base、Ethereum（用原生币买入）。Robinhood 不支持交易。
   Chains: Arc (buys spend USDC, which also pays gas), BNB Chain, Base and Ethereum (buys
-  spend the native coin). Solana and Robinhood cannot trade.
+  spend the native coin). Robinhood cannot trade.
 - 安全核验否决（GoPlus 致命风险）的代币禁止买入，卖出不受限制。安全核验尚未完成的代币，买入前需先确认「是 / 否」。单笔买入上限默认 $100，滑点默认 5%，可在交易限额中调整。
   A token vetoed by the safety check cannot be bought; selling is never blocked. Buying a
   token the check has not verified yet first asks Yes/No. The per-trade buy cap defaults

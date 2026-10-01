@@ -2,7 +2,7 @@
 // Quote refreshes, page rotation and interrupted playback must never make the
 // same contract sound like a newly discovered coin again.
 export const VOICE_TTL = 7 * 24 * 60 * 60_000;
-export const voiceKey = row => `${row.chain}:${row.chain === 'sol' ? row.address : row.address.toLowerCase()}`;
+export const voiceKey = row => `${row.chain}:${row.address.toLowerCase()}`;
 export function voiceEligible(row, now) {
   const statusReady = row?.source === 'live' ? row.status === 'LIVE_READY' : row?.status === 'X_REVIEW';
   return typeof row?.address === 'string' && typeof row?.chain === 'string'
