@@ -153,7 +153,8 @@ export class TelegramCommands {
    * candidate or hot-list row) opens at once and spends nothing; a watch or note
    * alone does not count. Otherwise, and always for an explicit lookup (Retry or a
    * chain button), a lookup is started (or reused) and bound to the session, which
-   * needs AVE connected. A full lookup queue leaves the panel under a banner.
+   * needs AVE connected. A full lookup queue, or an unreadable earlier record of
+   * the token, leaves the panel under a banner.
    */
   lookupChangesInTransaction(session, token, { explicit = false, retry = false } = {}) {
     const snapshot = this.snapshot(this.storage, this.tenantId, this.now()), key = tokenIdentity(token.chain, token.address);
@@ -163,9 +164,12 @@ export class TelegramCommands {
     }
     if (!known) {
       try { this.lookups.startInTransaction({ ...token, sessionId: session.id, retry }); } catch (error) {
-        if (error?.code !== 'LOOKUP_QUEUE_FULL' || !(error instanceof LookupError)) throw error;
+        if (!(error instanceof LookupError) || !['LOOKUP_QUEUE_FULL', 'LOOKUP_RECORD_CORRUPT'].includes(error.code)) throw error;
         const max = LOOKUP_SETTINGS.pending;
-        return { query: { ...session.query, notice: text(this.language, `已有${max}个查询在等待，请等其中一个完成后再试。`, `${max} lookups are already waiting; try again when one finishes.`) } };
+        // An unreadable record may hold a veto, so it is left as it is rather than replaced.
+        const notice = error.code === 'LOOKUP_QUEUE_FULL' ? [`已有${max}个查询在等待，请等其中一个完成后再试。`, `${max} lookups are already waiting; try again when one finishes.`]
+          : ['此代币之前的查询记录无法读取，已保留原样，未重新查询。', 'The earlier lookup of this token cannot be read, so it was left as it is and not rerun.'];
+        return { query: { ...session.query, notice: text(this.language, ...notice) } };
       }
     }
     return { panel: 'detail', viewChain: token.chain, query: { schemaVersion: 1, page: 0, selectedToken: token } };

@@ -144,7 +144,8 @@ export function readTelegramSnapshot(storage, tenant, now = Date.now()) {
   return storage.transactionSync(() => {
     const read = table => storage.sql.exec(`SELECT * FROM ${table} WHERE tenant_id = ?`, tenantId).toArray();
     const scheduler = readSchedulerStateInTransaction(storage, tenantId);
-    const state = Object.fromEntries(read('scheduler_state').map(row => [row.key, json(row.value_json)]));
+    // Lookups are read through listLookups, which skips an unreadable one.
+    const state = Object.fromEntries(read('scheduler_state').filter(row => !row.key.startsWith('lookup:')).map(row => [row.key, json(row.value_json)]));
     const preferences = Object.fromEntries(read('preferences').map(row => [row.key, json(row.value_json)]));
     const exclusions = Object.fromEntries(read('risk_exclusions').map(row => [tokenIdentity(row.chain, row.address), { version: row.version, codes: json(row.codes_json, []), reasons: json(row.reasons_json, []), at: row.at }]));
     // When each token was last alerted; its alert keeps it findable.

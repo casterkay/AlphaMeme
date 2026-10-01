@@ -80,13 +80,27 @@ function parse(row) {
   return value;
 }
 
-/** Every lookup of the tenant, newest first, including expired ones not yet pruned. */
+// Rows already reported unreadable, so each is logged once per isolate.
+const reportedUnreadable = new Set();
+
+/**
+ * Every readable lookup of the tenant, newest first, including expired ones not
+ * yet pruned. A lookup is regenerable, so an unreadable row (corrupt, or from
+ * another version) is skipped with one log line instead of stalling the tenant;
+ * only safetyState, through readLookup, refuses to guess about one.
+ */
 export function listLookups(storage, tenantId) {
-  return storage.sql.exec("SELECT key,value_json FROM scheduler_state WHERE tenant_id=? AND substr(key,1,7)='lookup:'", tenantId).toArray()
-    .map(parse).sort((left, right) => right.startedAt - left.startedAt || left.address.localeCompare(right.address));
+  return storage.sql.exec("SELECT key,value_json FROM scheduler_state WHERE tenant_id=? AND substr(key,1,7)='lookup:'", tenantId).toArray().flatMap(row => {
+    try { return [parse(row)]; } catch (error) {
+      if (!(error instanceof LookupError)) throw error;
+      const reported = `${tenantId}:${row.key}`;
+      if (!reportedUnreadable.has(reported)) { reportedUnreadable.add(reported); console.log(JSON.stringify({ event: 'lookup_record_unreadable', key: row.key, code: error.code })); }
+      return [];
+    }
+  }).sort((left, right) => right.startedAt - left.startedAt || left.address.localeCompare(right.address));
 }
 
-/** The token's lookup while it is retained, or null. */
+/** The token's lookup while it is retained (a vetoed one always), or null; an unreadable record throws. */
 export function readLookup(storage, tenantId, chain, address, now) {
   const key = lookupKey(chain, address);
   const row = key ? storage.sql.exec('SELECT key,value_json FROM scheduler_state WHERE tenant_id=? AND key=?', tenantId, key).toArray()[0] : null;
