@@ -214,7 +214,7 @@ test('export is all-chain and whitelist-only with original manual revision and s
 
 test('statistics distinguish unavailable from empty and require all three windows for overall readiness',()=>{
   const snapshot=fixture();assert.match(renderPanel(snapshot,session('stats'),'en').text,/unavailable/);
-  snapshot.stats={sol:{tracked:60,completed30m:50,completed1h:1,completed2h:49,completed24h:0,averageReturn30m:null,averageReturn1h:null,averageReturn2h:null,averageReturn24h:null,calibrationReady:false,coverage:{passed:{h6:{eligible:0,completed:0,missing:0,median:null,positiveRate:null}}}}};
+  snapshot.stats={sol:{tracked:60,completed30m:50,completed1h:1,completed2h:49,completed24h:0,calibrationReady:false,coverage:{passed:{h6:{eligible:0,completed:0,missing:0,median:null,positiveRate:null}}}}};
   const summary=renderPanel(snapshot,session('stats'),'en');assert.doesNotMatch(summary.text,/gate/);
   const coverage=renderPanel(snapshot,session('stats',{coverage:true}),'en');assert.match(coverage.text,/30 min Ready · 2 h Not ready · 24 h Not ready/);assert.match(coverage.text,/Overall calibration gate: Not ready/);
   const detail=renderPanel(snapshot,session('stats',{horizon:'h6'}),'en');assert.match(detail.text,/Due 0 · measured 0 · missing 0/);assert.match(detail.text,/No samples/);
@@ -230,27 +230,70 @@ test('evidence pages keep the exact audit time while the detail summary shows it
 const complete={status:'COMPLETE',complete:true,checkedAt:now-120_000,sources:{},market:{pairUrl:'https://dexscreener.com/solana/pair'},security:{complete:true,verdict:'NO_FATAL_FLAGS',fatal:[],unknownFields:[]},conflicts:[]};
 const lead=(changes={})=>candidate(0,{status:'LIVE_READY',deep:{},...changes});
 test('the safety verdict leads the detail and marks each list row, from the recorded check',()=>{
-  const feedRow=projectTelegramFeedRow({address:'F'.repeat(32),symbol:'HOT',pass:true,reasons:[]},'sol');
+  const fatal=(fields,status='HARD_REJECT')=>lead({status,secondary:{...complete,security:{complete:true,verdict:'FATAL',fatal:fields.map(field=>({field})),unknownFields:[]}}});
+  const degraded=security=>lead({secondary:{...complete,status:'DEGRADED',complete:false,...(security?{security}:{})}});
+  const audited=deep=>candidate(0,{secondary:complete,deep:{chartRisk:{version:CHART_RISK_VERSION},chainPass:true,failed:[],unknownFields:[],blockingUnknownFields:[],...deep}});
+  // [scenario, row, detail verdict line, list badge, lead caveat shown]
   const cases=[
-    ['lead before its check',lead(),'⏳ Safety check running','⏳ Checking'],
-    ['candidate waiting for a recheck',candidate(0,{status:'WAIT_RECHECK',secondary:complete}),'⏳ Safety check running','⏳ Checking'],
-    ['complete check without fatal flags',lead({secondary:complete}),'✅ No failures found · checked 2m ago','✅ No failures'],
-    ['incomplete GoPlus fields',lead({secondary:{...complete,status:'DEGRADED',complete:false,security:{complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['buyTax','sellTax']}}}),'⚠️ 2 fields unknown · checked 2m ago','⚠️ Needs review'],
-    ['degraded market source only',lead({secondary:{...complete,status:'DEGRADED',complete:false}}),'⚠️ Check incomplete · checked 2m ago','⚠️ Needs review'],
-    ['blocking unknown and failure on a deep audit',candidate(0,{secondary:complete,deep:{chartRisk:{version:CHART_RISK_VERSION},chainPass:true,failed:['tax'],unknownFields:['top10','devHold','lockRate'],blockingUnknownFields:['top10']}}),'⚠️ 1 failed check, 1 blocking unknown, 2 fields unknown · checked 2m ago','⚠️ Needs review'],
-    ['conflicting sources',lead({secondary:{...complete,conflicts:[{type:'MARKET_MISMATCH',field:'marketCap'}]}}),'⚠️ 1 source conflict · checked 2m ago','⚠️ Needs review'],
-    ['held risk exclusion',applyRiskExclusion(lead({secondary:complete}),{['sol:'+'A'.repeat(32)+'0']:{reasons:['x'],codes:['VERTICAL_PLATEAU']}}),'⛔ Vetoed: Chart risk · checked 2m ago','⛔ Vetoed'],
-    ['secondary veto',lead({status:'HARD_REJECT',secondary:{...complete,security:{complete:true,verdict:'FATAL',fatal:[{field:'isHoneypot'},{field:'hiddenOwner'},{field:'mintable'}],unknownFields:[]}}}),'⛔ Vetoed: Honeypot, Hidden owner +1 · checked 2m ago','⛔ Vetoed']
+    ['lead before its check',lead(),'⏳ Safety check running','⏳ Checking',true],
+    ['candidate waiting for a recheck',candidate(0,{status:'WAIT_RECHECK',secondary:complete}),'⏳ Safety check running','⏳ Checking',false],
+    ['complete check without fatal flags',lead({secondary:complete}),'✅ No failures found · checked 2m ago','✅ No failures',false],
+    ['a website mismatch does not block',lead({secondary:{...complete,conflicts:[{type:'WEBSITE_MISMATCH',field:'website'}]}}),'✅ No failures found · checked 2m ago','✅ No failures',false],
+    ['incomplete GoPlus fields',degraded({complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['buyTax','sellTax']}),'⚠️ 2 fields unknown · checked 2m ago','⚠️ Needs review',true],
+    ['GoPlus check missing',degraded({complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['tokenSecurity']}),'⚠️ GoPlus check unavailable · checked 2m ago','⚠️ Needs review',true],
+    ['degraded market source only',degraded(),'⚠️ Check incomplete · checked 2m ago','⚠️ Needs review',true],
+    ['one failed deep check',audited({failed:['tax']}),'⚠️ 1 failed check · checked 2m ago','⚠️ Needs review',false],
+    ['one blocking unknown',audited({unknownFields:['top10'],blockingUnknownFields:['top10']}),'⚠️ 1 blocking unknown · checked 2m ago','⚠️ Needs review',false],
+    ['failures, blocking and other unknowns together',audited({failed:['tax'],unknownFields:['top10','devHold','lockRate'],blockingUnknownFields:['top10']}),'⚠️ 1 failed check, 1 blocking unknown, 2 fields unknown · checked 2m ago','⚠️ Needs review',false],
+    ['conflicting sources after a complete check',lead({secondary:{...complete,conflicts:[{type:'MARKET_MISMATCH',field:'marketCap'}]}}),'⚠️ 1 source conflict · checked 2m ago','⚠️ Needs review',false],
+    ['secondary veto',fatal(['isHoneypot','hiddenOwner','mintable']),'⛔ Vetoed: Honeypot, Hidden owner +1 · checked 2m ago','⛔ Vetoed',false],
+    ['fatal verdict before the status changes',fatal(['isHoneypot'],'LIVE_READY'),'⛔ Vetoed: Honeypot · checked 2m ago','⛔ Vetoed',false],
+    ['held risk exclusion',applyRiskExclusion(lead({secondary:complete}),{['sol:'+'A'.repeat(32)+'0']:{reasons:['x'],codes:['VERTICAL_PLATEAU']}}),'⛔ Vetoed: Chart risk · checked 2m ago','⛔ Vetoed',false],
+    ['veto reasons are escaped',fatal(['<x>']),'⛔ Vetoed: &lt;x&gt; · checked 2m ago','⛔ Vetoed',false]
   ];
-  for(const [label,row,line,mark] of cases) {
+  for(const [label,row,line,mark,caveat] of cases) {
     const snapshot=fixture();snapshot.candidates=[row];
     const detail=renderPanel(snapshot,session('detail',{selectedToken:row}),'en').text;
     assert.equal(detail.split('\n')[1],line,label);
+    assert.ok(!detail.includes('<x>'),label);
     assert.match(renderPanel(snapshot,session('audits'),'en').text,new RegExp(`<b>1\\. COIN0</b> · ${mark}\n`),label);
-    assert.equal(/Market lead: safety not yet verified/.test(detail),row.status==='LIVE_READY'&&!line.startsWith('✅'),label);
+    assert.equal(/Market lead: safety not yet verified/.test(detail),caveat,label);
   }
+  const feedRow=projectTelegramFeedRow({address:'F'.repeat(32),symbol:'HOT',pass:true,reasons:[]},'sol');
   const snapshot=fixture();snapshot.candidates=[];snapshot.feedByChain.sol={rows:[feedRow]};
   assert.equal(renderPanel(snapshot,session('detail',{selectedToken:feedRow}),'zh').text.split('\n')[1],'⚠️ 未经安全核验','a hot-list row never checked');
+});
+
+test('a hot-list row shows its candidate safety badge, never ✅ for the market screen alone',()=>{
+  const snapshot=fixture(),vetoed={...lead({status:'HARD_REJECT'}),address:'V'.repeat(32),symbol:'RUG'},fresh={...lead(),address:'L'.repeat(32),symbol:'NEWLEAD'};
+  snapshot.candidates=[vetoed,fresh];
+  snapshot.feedByChain.sol={observedAt:now-300_000,status:'READY',rows:[
+    projectTelegramFeedRow({address:vetoed.address,symbol:'RUG',pass:true,priorityBand:true,volume5m:3,reasons:[]},'sol'),
+    projectTelegramFeedRow({address:fresh.address,symbol:'NEWLEAD',pass:true,volume5m:2,reasons:[]},'sol'),
+    projectTelegramFeedRow({address:'S'.repeat(32),symbol:'SCREENED',pass:true,volume5m:1,reasons:[]},'sol'),
+    projectTelegramFeedRow({address:'R'.repeat(32),symbol:'LATE',pass:false,reasons:['上线不足5分钟']},'sol')]};
+  for(const locale of ['en','zh']) assert.ok(!renderPanel(snapshot,session('feed'),locale).text.includes('✅'),locale);
+  const text=renderPanel(snapshot,session('feed'),'en').text;
+  assert.match(text,/<b>1\. RUG<\/b> · ⛔ Vetoed\n/);assert.match(text,/<b>2\. NEWLEAD<\/b> · ⏳ Checking\n/);
+  assert.match(text,/<b>3\. SCREENED<\/b> · passed screen\n/);assert.match(text,/<b>4\. LATE<\/b> · 上线不足5分钟\n/);
+  assert.match(text,/\n\nUpdated [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2} UTC · hot list read 5m ago$/);
+});
+
+test('the detail takes age and 5-minute facts from the hot list when the candidate lacks them',()=>{
+  const snapshot=fixture(),row=lead({holders:undefined,marketCap:120000,liquidity:30000});snapshot.candidates=[row];
+  snapshot.feedByChain.sol={rows:[projectTelegramFeedRow({address:row.address,symbol:'COIN0',holders:2431,createdAt:(now-18*60_000)/1000,volume5m:12000,priceChange5m:.35,reasons:[]},'sol')]};
+  const lines=renderPanel(snapshot,session('detail',{selectedToken:row}),'en').text.split('\n');
+  assert.equal(lines[2],'MC $120K · Liq $30K · 2,431 holders');assert.equal(lines[3],'18m old · 5m +35% · 5m vol $12K');
+});
+
+test('watchlist rows and the detail show watch state, and note-only rows say they were never checked',()=>{
+  const snapshot=fixture(),watched=snapshot.candidates[0],noted={chain:'sol',address:'N'.repeat(32),favorite:false,note:'dev wallet',updatedAt:now-1};
+  snapshot.annotations=[{chain:'sol',address:watched.address,favorite:true,note:'',updatedAt:now},noted];
+  const text=renderPanel(snapshot,session('saved'),'en').text;
+  assert.match(text,/<b>1\. COIN0<\/b> · ⚠️ Needs review\nSolana · ⭐\n/);
+  assert.match(text,/<b>2\. \?<\/b> · ⚠️ Not checked\nSolana · <code>NNNNNNNNNNNN<\/code> · 📝 dev wallet\n/);
+  const label=selected=>renderPanel(snapshot,session('detail',{selectedToken:selected}),'en').keyboard.flat().find(item=>item.action==='favorite.set').text;
+  assert.equal(label(watched),'⭐ Unwatch');assert.equal(label(noted),'⭐ Watch');
 });
 
 test('list headers print only the chain and the state the owner changed',()=>{
@@ -289,6 +332,7 @@ test('selectors lay out two choices per row, time windows three, and only the ch
   const snapshot=fixture(),choices=result=>result.keyboard.slice(0,-1).map(row=>row.length);
   assert.deepEqual(choices(renderPanel(snapshot,session('view_chain',{returnTo:{panel:'saved'}}),'en')),[2,2,2,1]);
   assert.deepEqual(choices(renderPanel(snapshot,session('horizon'),'en')),[3,3,1]);
+  assert.deepEqual(renderPanel(snapshot,session('cohort'),'en').keyboard[0].map(item=>item.text),['✓ Passed the screen','Vetoed control']);
   assert.match(renderPanel(snapshot,session('view_chain'),'en').text,/^<b>[^<]+<\/b>\nViewing a chain does not change what is scanned\.\n\nUpdated/);
   for(const panel of ['filter','sort','language','horizon','cohort']) assert.match(renderPanel(snapshot,session(panel),'en').text,/^<b>[^<]+<\/b>\n\nUpdated/,panel);
 });
@@ -303,7 +347,7 @@ test('activity rows name the token and what happened in plain words',()=>{
 });
 
 test('performance leads with the median return of screen passes in plain words',()=>{
-  const snapshot=fixture(),cell=(median,completed)=>({eligible:completed,completed,missing:0,median,positiveRate:null});
+  const snapshot=fixture(),cell=(median,completed)=>({eligible:completed+3,completed,missing:3,median,positiveRate:null});
   snapshot.stats={sol:{tracked:40,calibrationReady:false,coverage:{passed:{m30:cell(.042,37),h1:cell(-.5,1),h2:cell(null,0),h24:cell(null,0)}}}};
   const text=renderPanel(snapshot,session('stats'),'en').text;
   assert.match(text,/Tokens that passed the screen, 30 min later: median \+4\.2% \(37 tokens\)\n1 h later: median -50% \(1 token\)\n2 h later: no samples yet/);

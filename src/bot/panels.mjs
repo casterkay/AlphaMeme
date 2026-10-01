@@ -65,7 +65,7 @@ export function selectPanelRows(snapshot, session) {
   });
 }
 
-function pagination(total, requested, size, locale, action = 'page.set') {
+function pagination(total, requested, size, action = 'page.set') {
   const page = Math.min(Math.max(0, Number.isSafeInteger(requested) ? requested : 0), Math.max(0, Math.ceil(total / size) - 1));
   return { page, start: page * size, keyboard: [page > 0 ? button(ICONS.previous,action,{page:page - 1}) : null, (page+1)*size < total ? button(ICONS.next,action,{page:page + 1}) : null].filter(Boolean) };
 }
@@ -91,7 +91,9 @@ function safetyVerdict(row) {
   if (backendDisposition(row) === 'waiting' || (!secondary && backendDisposition(row) === 'lead')) return { kind:'checking' };
   const counts = {
     failed:failed.length, blocking:blocking.length,
-    unknown:new Set([...(deep.unknownFields || []).filter(field => !blocking.includes(field)),...(security.unknownFields || [])]).size,
+    // GoPlus records a missing check as the single field 'tokenSecurity'; it is not one unknown field.
+    goPlusMissing:(security.unknownFields || []).includes('tokenSecurity'),
+    unknown:new Set([...(deep.unknownFields || []).filter(field => !blocking.includes(field)),...(security.unknownFields || []).filter(field => field !== 'tokenSecurity')]).size,
     conflicts:(secondary?.conflicts || []).filter(conflict => BLOCKING_CONFLICTS.includes(conflict.type)).length
   };
   const verified = secondary?.status === 'COMPLETE' && security.verdict === 'NO_FATAL_FLAGS';
@@ -109,10 +111,11 @@ function verdictLine(verdict,snapshot,locale) {
     const reasons = [...new Set(verdict.reasons)].map(value => fieldLabels[value] ? L(...fieldLabels[value]) : safeTelegramText(value,48));
     return `${ICONS.vetoed} ${L('已否决','Vetoed')}${reasons.length ? `${L('：',': ')}${userText(reasons.slice(0,2).join(L('、',', ')),120)}${reasons.length > 2 ? ` +${reasons.length-2}` : ''}` : ''}${checked}`;
   }
-  const { failed, blocking, unknown, conflicts } = verdict.counts, plural = (count,one,many) => count === 1 ? one : many;
+  const { failed, blocking, goPlusMissing, unknown, conflicts } = verdict.counts, plural = (count,one,many) => count === 1 ? one : many;
   const parts = [
     failed ? L(`${failed}项检查失败`,`${failed} failed ${plural(failed,'check','checks')}`) : '',
     blocking ? L(`${blocking}项阻断未知`,`${blocking} blocking unknown`) : '',
+    goPlusMissing ? L('GoPlus 检查不可用','GoPlus check unavailable') : '',
     unknown ? L(`${unknown}项字段未知`,`${unknown} ${plural(unknown,'field','fields')} unknown`) : '',
     conflicts ? L(`${conflicts}处来源冲突`,`${conflicts} source ${plural(conflicts,'conflict','conflicts')}`) : ''
   ].filter(Boolean);
@@ -121,7 +124,7 @@ function verdictLine(verdict,snapshot,locale) {
 
 function listPanel(snapshot,session,locale) {
   const L = (zh,en) => localize(locale,zh,en), query = session.query || {};
-  const rows = selectPanelRows(snapshot,session), paging = pagination(rows.length,query.page,5,locale);
+  const rows = selectPanelRows(snapshot,session), paging = pagination(rows.length,query.page,5);
   const shown = rows.slice(paging.start,paging.start+5), isLive = session.panel === 'feed', saved = session.panel === 'saved';
   const feed = snapshot.feedByChain?.[session.viewChain];
   // Only state the owner changed is printed; defaults stay silent.
@@ -140,13 +143,15 @@ function listPanel(snapshot,session,locale) {
   shown.forEach((row,index) => {
     const title = `<b>${paging.start + index + 1}. ${userText(row.symbol || '?',30)}</b>`;
     if (isLive) {
-      blocks.push(`${title} · ${row.pass ? `${ICONS.passed} ${L('通过筛选','passed screen')}` : userText(row.reasons[0] || name('unknown',locale),60)}`);
+      // ✅ is reserved for the safety check; a market-screen pass alone earns no icon.
+      const candidate = snapshot.candidates.find(item => id(item) === id(row));
+      blocks.push(`${title} · ${candidate ? verdictShort(safetyVerdict(candidate),locale) : row.pass ? L('通过筛选','passed screen') : userText(row.reasons[0] || name('unknown',locale),60)}`);
       blocks.push([present(row.marketCap) ? money(row.marketCap,locale) : '', row.createdAt > 0 ? L(`币龄${duration(snapshot.at-row.createdAt*1000,locale)}`,`${duration(snapshot.at-row.createdAt*1000,locale)} old`) : '',
         present(row.volume5m) ? L(`5分钟成交${money(row.volume5m,locale)}`,`5m vol ${money(row.volume5m,locale)}`) : '', present(row.priceChange5m) ? percent(row.priceChange5m,locale,true) : ''].filter(Boolean).join(' · '));
     } else {
       const mark = markFor(snapshot,row), status = row.status && mark ? effectiveStatus(row,mark,snapshot.at) : null;
       const marked = status === 'passed' ? ` · ${ICONS.approve} ${name('passed',locale)}` : mark?.decision === 'ignored' ? ` · ${ICONS.ignore} ${name('ignored',locale)}` : '';
-      blocks.push(`${title}${saved && !row.status ? '' : ` · ${verdictShort(safetyVerdict(row),locale)}`}${marked}`);
+      blocks.push(`${title} · ${verdictShort(safetyVerdict(row),locale)}${marked}`);
       if (saved) blocks.push([chainLabel(row.chain),row.symbol ? '' : `<code>${userText(row.address?.slice(-12),12)}</code>`,row.favorite ? ICONS.saved : '',row.note?.trim() ? `${ICONS.note} ${userText(row.note,60)}` : ''].filter(Boolean).join(' · '));
       else blocks.push([present(row.marketCap) ? L(`市值 ${money(row.marketCap,locale)}`,`${money(row.marketCap,locale)} MC`) : '',present(row.liquidity) ? L(`流动性 ${money(row.liquidity,locale)}`,`${money(row.liquidity,locale)} liq`) : '',relativeTime(row.auditedAt,snapshot.at,locale)].filter(Boolean).join(' · '));
     }
@@ -209,7 +214,7 @@ function detailPanel(snapshot,session,locale) {
       [L('完整备注','Full note'),[annotation?.note || L('无备注','No note')]]
     ];
     const pages = sections.flatMap(([title,lines]) => textPages(lines.filter(Boolean).length ? lines.filter(Boolean) : [L('未知；未视为通过','Unknown; not treated as passed')],1800).map((items,index) => ({ title:`${ICONS.evidence} ${title} · ${index+1}`,items })));
-    const paging = pagination(pages.length,session.query?.detailPage,1,locale), page = pages[paging.page];
+    const paging = pagination(pages.length,session.query?.detailPage,1), page = pages[paging.page];
     return finishPanel(page.title,[...header,counts,'',...page.items.map(value => userText(value,2400)),`${paging.page+1}/${pages.length}`], [paging.keyboard,[button(L('摘要','Summary'),'panel.open',{panel:'detail'},identity)]],snapshot,session,locale,{token:identity,refresh:false});
   }
   const fact = key => row[key] ?? listed?.[key] ?? null, liquidity = deep.security?.liquidity ?? fact('liquidity'), createdAt = fact('createdAt');
@@ -223,7 +228,7 @@ function detailPanel(snapshot,session,locale) {
   if (invalidApproval) blocks.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
   if (!row.auditedAt) blocks.push(L('审计快照已不再保留，或尚未审计。','Audit snapshot no longer retained, or not yet audited.'));
   if (backendDisposition(row) === 'chain') blocks.push(L('链上硬门通过；请人工查看X社区评论与回复。','On-chain gates passed; review X community comments and replies.'));
-  if (backendDisposition(row) === 'lead' && ['checking','review'].includes(verdict.kind)) blocks.push(L('市场线索：安全性尚未核验。','Market lead: safety not yet verified.'));
+  if (backendDisposition(row) === 'lead' && verdict.kind !== 'vetoed' && row.secondary?.status !== 'COMPLETE') blocks.push(L('市场线索：安全性尚未核验。','Market lead: safety not yet verified.'));
   const trading = tokenTradeControls(snapshot,row,locale,identity);
   blocks.push(...trading.blocks);
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };
@@ -244,7 +249,7 @@ function selectorPanel(snapshot,session,locale) {
   else if (session.panel === 'language') { choices=['zh','en'];action='language.set';selected=locale; }
   else if (session.panel === 'horizon') { choices=['m5','m15','m30','h1','h2','h6','h24'];action='horizon.set';selected=query.horizon || 'm30'; }
   else { choices=['passed','rejected','compare'];action='cohort.set';selected=query.cohort || 'passed'; }
-  const labels = { zh:'中文',en:'English',passed:L('通过筛选组','Passed screen'),rejected:L('排除对照组','Rejected control'),compare:L('对比','Compare'),m5:'5m',m15:'15m',m30:'30m',h1:'1h',h2:'2h',h6:'6h',h24:'24h' };
+  const labels = { zh:'中文',en:'English',passed:L('通过筛选组','Passed the screen'),rejected:L('否决对照组','Vetoed control'),compare:L('对比','Compare'),m5:'5m',m15:'15m',m30:'30m',h1:'1h',h2:'2h',h6:'6h',h24:'24h' };
   const keyboard = rowsOf(choices.map(value => button(`${selected === value ? '✓ ' : ''}${SCAN_CHAINS.includes(value) ? chainLabel(value) : labels[value] || name(value,locale)}`,action,{value})),session.panel === 'horizon' ? 3 : 2);
   const blocks = session.panel === 'view_chain' ? [L('查看某条链不会改变扫描的链。','Viewing a chain does not change what is scanned.')] : [];
   return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale,{refresh:false});
@@ -267,7 +272,7 @@ function eventsPanel(snapshot,session,locale) {
     }
     if(page.length) logical.push(page);
   }
-  const paging=pagination(logical.length,query.page,1,locale), shown=logical[paging.page] || [];
+  const paging=pagination(logical.length,query.page,1), shown=logical[paging.page] || [];
   const keyboard=rowsOf(shown.filter(({row}) => row.address && SCAN_CHAINS.includes(row.chain) && (snapshot.candidates.some(candidate => id(candidate) === id(row)) || snapshot.annotations.some(annotation => id(annotation) === id(row)))).map(({row,index}) => detailButton({...row,symbol:symbolFor(row)},index,locale)),2);
   keyboard.push([selectorButton('view_chain',locale),selectorButton('filter',locale)],paging.keyboard,[open('status',locale)]);
   return finishPanel(name('events',locale),shown.length ? [...shown.map(({text,index}) => `${index+1}. ${userText(text,1000)}`),rangeText(shown[0].index+1,shown.at(-1).index+1,rows.length,locale)] : [L('尚无事件','No events yet')],keyboard,snapshot,session,locale);
@@ -303,11 +308,11 @@ function statusPanel(snapshot,session,locale) {
   if(session.panel === 'sources') {
     const lines=evidenceLines(snapshot.sourceHealth || {},locale);
     const pages=textPages(lines.length ? lines : [L('尚无来源记录','No source records')]);
-    const paging=pagination(pages.length,session.query?.page,1,locale);
+    const paging=pagination(pages.length,session.query?.page,1);
     blocks=pages[paging.page].map(value=>userText(value,2400));keyboard=[paging.keyboard];
   } else if(session.panel === 'delivery') {
     const pages=textPages((snapshot.delivery || []).map(row=>`${row.purpose === 'ACTION_REQUIRED' ? L('需处理的提醒','Action-required notice') : row.purpose === 'PANEL_UPDATE' ? L('面板更新','Panel update') : L('请求回复','Requested response')}: ${row.status === 'UNKNOWN' ? L('发送结果不确定，请核对','Delivery unconfirmed; check it') : L('发送失败','Delivery failed')}`));
-    const paging=pagination(pages.length,session.query?.page,1,locale);
+    const paging=pagination(pages.length,session.query?.page,1);
     blocks=(snapshot.delivery || []).length ? pages[paging.page].map(value=>userText(value,2400)) : [L('没有待核对的投递问题','No delivery issues to check')];
     keyboard=[paging.keyboard,(snapshot.delivery || []).length ? [button(L('已核对并清除','Acknowledge and clear'),'delivery.acknowledge')] : []];
   } else {
@@ -411,7 +416,7 @@ export function renderPanel(snapshot,session,locale='zh') {
       [`<b>${L('菜单命令','Menu commands')}</b>`,...commands(MENU_COMMANDS),'',`<b>${L('更多命令','More commands')}</b>`,...commands(MORE_COMMANDS)],
       [keySafetyCopy(locale),L('热钱包只存放你愿意承担风险的小额资金；导出的私钥请离线保存。','Keep only small amounts you can afford to lose in the hot wallet, and store its exported key offline.'),L('线索只通过了AVE行情筛选；未核验不代表安全，交易前请自行核查。','Leads passed the AVE market screen only; unverified does not mean safe, so check before any trade.'),L('人工通过不会改变筛选结果，也不会执行交易。暂停扫描与关闭提醒互不影响。','Manual approval does not change screening results or execute trades. Pausing scanning and muting alerts are independent.'),L('非投资建议。','Not investment advice.')]
     ];
-    const paging=pagination(pages.length,query.page,1,locale);blocks=pages[paging.page];keyboard=[paging.keyboard,[open('onboard',locale)]];
+    const paging=pagination(pages.length,query.page,1);blocks=pages[paging.page];keyboard=[paging.keyboard,[open('onboard',locale)]];
   }
   return finishPanel(title,blocks,keyboard,snapshot,session,locale,{refresh:!['chains','disconnect','help'].includes(session.panel)});
 }
