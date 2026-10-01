@@ -1,8 +1,9 @@
 import { backendDisposition, effectiveStatus } from '../scoring/manual-review.mjs';
 import { SCAN_CHAINS } from '../chains.mjs';
+import { scannerSettings } from '../scanner-settings.mjs';
 import { tokenIdentity, safeTelegramText } from './snapshot.mjs';
 import { TRADING_PANELS, TRADING_PANEL_NAMES, tokenTradeControls, renderTradingPanel } from './trading-panels.mjs';
-import { localize, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, ICONS } from '../render/telegram.mjs';
+import { localize, escapeHtml, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, ICONS } from '../render/telegram.mjs';
 
 export const PANEL_NAMES = Object.freeze(['radar','feed','audits','saved','events','status','sources','delivery','settings','chains','onboard','help','detail','evidence','view_chain','filter','sort','language','disconnect','stats','horizon','cohort',...TRADING_PANELS]);
 export const AUDIT_FILTERS = Object.freeze(['all','lead','chain','waiting','passed','ignored','rejected','fresh','favorite']);
@@ -10,7 +11,7 @@ export const AUDIT_SORTS = Object.freeze(['audit_desc','score_desc','market_desc
 export const FEED_SORTS = Object.freeze(['priority','volume']);
 const AVE_KEY_URL = 'https://cloud.ave.ai/login';
 const names = {
-  radar:['雷达总览','Radar overview'], feed:['AVE热榜','AVE hot list'], audits:['近30分钟线索与核验','Leads and checks, last 30 min'], saved:['收藏与备注','Favorites and notes'], events:['雷达事件','Radar events'], status:['运行状态','Service status'], sources:['来源详情','Source details'], delivery:['投递问题','Delivery issues'], settings:['设置','Settings'], chains:['选择扫描链','Choose scan chain'], onboard:['连接AVE','Connect AVE'], help:['帮助与密钥安全','Help and key safety'], detail:['代币详情','Token detail'], evidence:['检查证据','Evidence'], view_chain:['查看链','View chain'], filter:['筛选','Filter'], sort:['排序','Order'], language:['语言','Language'], disconnect:['断开连接','Disconnect'], stats:['筛选后表现验证','Post-screen performance'], horizon:['观察窗口','Window'], cohort:['样本组别','Cohort'],
+  radar:['雷达','Radar'], feed:['热榜','Hot list'], audits:['线索','Leads'], saved:['自选','Watchlist'], events:['动态','Activity'], status:['状态','Status'], sources:['来源','Sources'], delivery:['投递','Delivery'], settings:['设置','Settings'], chains:['扫描链','Scan chain'], onboard:['AVE密钥','AVE key'], help:['帮助','Help'], detail:['代币详情','Token detail'], evidence:['检查证据','Evidence'], view_chain:['查看链','View chain'], filter:['筛选','Filter'], sort:['排序','Order'], language:['语言','Language'], disconnect:['断开AVE','Disconnect AVE'], stats:['表现','Performance'], horizon:['观察窗口','Window'], cohort:['样本组别','Cohort'],
   all:['全部','All'], lead:['市场线索，安全待核验','Market lead; security unverified'], chain:['链上候选，待人工看X','On-chain candidate; review X'], waiting:['等待复查','Waiting for recheck'], passed:['人工通过','Manually approved'], ignored:['已忽略','Ignored'], rejected:['已排除','Rejected'], fresh:['5分钟内审计','Audited within 5 min'], favorite:['收藏','Favorites'], notes:['有备注','With notes'],
   audit_desc:['最新审计','Newest audit'], score_desc:['发现评分','Discovery score'], market_desc:['市值↓','Market cap ↓'], market_asc:['市值↑','Market cap ↑'], liquidity_desc:['流动性↓','Liquidity ↓'], priority:['通过筛选优先','Screen passes first'], volume:['5分钟成交额','5-minute volume'],
   candidates:['候选事件','Candidates'], risk:['风险变化','Risk changes'], service:['服务事件','Service'], unknown:['未知','Unknown'],
@@ -23,7 +24,10 @@ const markFor = (snapshot, row) => (snapshot.marks || []).find(mark => id(mark) 
 const annotationFor = (snapshot, row) => (snapshot.annotations || []).find(mark => id(mark) === id(row));
 const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
 const searchMatches = (row, search) => !search || [row.symbol,row.name,row.address].join(' ').toLowerCase().includes(search.trim().toLowerCase());
-const open = (panel, locale, params = {}) => button(ICONS[panel] ? `${ICONS[panel]} ${name(panel, locale)}` : name(panel, locale), 'panel.open', { panel, ...params });
+const heading = (panel, locale) => ICONS[panel] ? `${ICONS[panel]} ${name(panel, locale)}` : name(panel, locale);
+const open = (panel, locale, params = {}) => button(heading(panel, locale), 'panel.open', { panel, ...params });
+const scanState = (control, locale) => !control.configured ? `${ICONS.disconnected} ${localize(locale,'未连接AVE','Not connected')}` : control.paused ? `${ICONS.paused} ${localize(locale,'已暂停','Paused')}` : `${ICONS.scanning} ${localize(locale,'扫描中','Scanning')}`;
+const alertState = (control, locale) => control.notifications ? `${ICONS.alertsOn} ${localize(locale,'提醒开启','Alerts on')}` : `${ICONS.alertsOff} ${localize(locale,'提醒关闭','Alerts off')}`;
 const state = (snapshot, row, locale) => row.auditedAt ? name(effectiveStatus(row, markFor(snapshot,row), snapshot.at), locale) : localize(locale,'未审计','Not audited');
 
 export function selectPanelRows(snapshot, session) {
@@ -201,10 +205,19 @@ function eventsPanel(snapshot,session,locale) {
   return finishPanel(name('events',locale),shown.length ? [...shown.map(({text,index}) => `${index+1}. ${userText(text,1000)}`),`${shown[0].index+1}–${shown.at(-1).index+1} / ${rows.length}`] : [L('尚无事件','No events yet')],keyboard,snapshot,session,locale);
 }
 
-const HELP_COMMANDS = [
-  ['start','雷达总览','Radar overview'],['radar','雷达总览','Radar overview'],['help','帮助与密钥安全','Help and key safety'],['status','运行状态','Service status'],['settings','设置','Settings'],['chains','选择扫描链','Choose scan chain'],['feed','AVE热榜','AVE hot list'],['audits','近30分钟线索与核验','Leads and checks, last 30 min'],['candidates','近30分钟线索与核验','Leads and checks, last 30 min'],['saved','收藏与备注','Favorites and notes'],['events','雷达事件','Radar events'],['stats','筛选后表现','Post-screen performance'],['note','编辑代币备注','Edit a token note'],['export','导出记录','Export records'],['onboard','连接AVE','Connect AVE'],['setkey','提交AVE密钥','Submit AVE key'],['pause','暂停扫描','Pause scanning'],['resume','恢复扫描','Resume scanning'],['disconnect','断开并删除密钥','Disconnect and delete key'],['mute','开关提醒','Turn alerts on or off'],['lang','选择语言','Choose language'],['cancel','取消输入','Cancel input'],['wallet','交易钱包','Trading wallet']
+// The registered command menu, in order of use. Rarer commands work but stay out of
+// the menu; Help lists both.
+const MENU_COMMANDS = [
+  ['radar','雷达：首页与最新线索','Radar: home and newest leads'],['leads','线索：近30分钟的线索与安全核验','Leads: the last 30 min and their safety checks'],['hot','热榜：雷达读取的AVE热榜','Hot list: the AVE hot list the radar reads'],['watchlist','自选：收藏与备注','Watchlist: favorites and notes'],
+  ['wallet','钱包：交易热钱包与余额','Wallet: your trading hot wallet and balances'],['performance','表现：通过筛选的代币之后的涨跌','Performance: how screened tokens moved afterwards'],['settings','设置：扫描链、提醒、交易与语言','Settings: scan chain, alerts, trading and language'],['help','帮助：用法、命令与安全','Help: how it works, commands and safety']
 ];
-export function telegramCommandDescriptions(locale='zh') { return HELP_COMMANDS.map(([command,zh,en]) => ({command,description:localize(locale,zh,en)})); }
+const MORE_COMMANDS = [
+  ['start','打开雷达','Open the radar'],['activity','动态：雷达事件','Activity: radar events'],['status','状态：扫描、AVE额度与投递','Status: scanning, AVE credits and delivery'],['chains','选择扫描链（查看其他链不改变扫描）','Choose the scan chain (viewing another chain does not change it)'],
+  ['pause','暂停扫描','Pause scanning'],['resume','恢复扫描','Resume scanning'],['mute','开关提醒','Turn alerts on or off'],['lang','选择语言：/lang zh 或 /lang en','Choose language: /lang zh or /lang en'],['note','编辑备注：/note <简称或CA>','Edit a note: /note <symbol or CA>'],['cancel','取消输入','Cancel input'],
+  ['export','导出记录','Export records'],['onboard','连接AVE','Connect AVE'],['setkey','提交AVE密钥：/setkey <key>','Submit your AVE key: /setkey <key>'],['disconnect','断开AVE并删除密钥','Disconnect AVE and delete the key']
+];
+export const HELP_COMMAND_NAMES = Object.freeze([...MENU_COMMANDS,...MORE_COMMANDS].map(([command]) => command));
+export function telegramCommandDescriptions(locale='zh') { return MENU_COMMANDS.map(([command,zh,en]) => ({command,description:localize(locale,zh,en)})); }
 export function keySafetyCopy(locale='zh') {
   return localize(locale,'API Key明文会经过Telegram并可能留在聊天记录中。我们会尝试删除含Key消息，但无法保证删除。请自行检查并删除。服务端只保存加密Key，从不回显。AVE Key只读，不能交易。','Your plaintext key passes through Telegram and may remain in chat history. We try to delete the message but cannot guarantee deletion; check and delete it yourself. The service stores the key encrypted and never displays it. The AVE key is read-only; it cannot trade.');
 }
@@ -223,12 +236,12 @@ function statusPanel(snapshot,session,locale) {
     blocks=(snapshot.delivery || []).length ? pages[paging.page].map(value=>userText(value,2400)) : [L('没有待核对的投递问题','No delivery issues to check')];
     keyboard=[paging.keyboard,(snapshot.delivery || []).length ? [button(L('已核对并清除','Acknowledge and clear'),'delivery.acknowledge')] : []];
   } else {
-    const feed=snapshot.feedByChain?.[control.scanChain];
-    blocks=[`${L('扫描','Scanning')}: ${control.paused ? L('已暂停','Paused') : control.configured ? L('运行中','Running') : L('等待连接','Waiting for connection')}`,`${L('扫描链','Scan chain')}: ${chainLabel(control.scanChain)}`,`${L('上次尝试','Last attempt')}: ${relativeTime(metrics.lastAttemptAt,snapshot.at,locale)}`,`${L('上次成功','Last success')}: ${relativeTime(metrics.lastSuccessAt,snapshot.at,locale)}`,`${L('下轮计划','Next scheduled')}: ${metrics.nextCycleAt ? clockTime(metrics.nextCycleAt,locale,{reference:snapshot.at,seconds:true}) : L('未安排','Not scheduled')}`,`${L('审计队列/到期','Audit queue/due')}: ${snapshot.queue?.length ?? 0}/${snapshot.queue?.filter(row=>row.nextAuditAt !== null && row.nextAuditAt<=snapshot.at).length ?? 0}`,`${L('上次读取热榜','Last hot-list read')}: ${relativeTime(feed?.observedAt,snapshot.at,locale)}`,`${L('本期AVE额度已用','AVE credits used this period')}: ${numberText(ave.cuUsed,locale)}${snapshot.aveBudget ? ' / ' + numberText(snapshot.aveBudget.monthlyCu,locale) : ''}${L('（本地估算）',' (local estimate)')}`,`${L('下次AVE请求最早','Next AVE request at')}: ${ave.readyAt > snapshot.at ? clockTime(ave.readyAt,locale,{reference:snapshot.at,seconds:true}) : L('现在','Now')}`,`${L('投递需核对','Delivery issues')}: ${snapshot.delivery?.length ?? 0}`];
-    if(ave.blockedUntil>snapshot.at) blocks.push(`${ave.blockReason === 'RATE_LIMITED' ? L('AVE限流，等待至','AVE rate limited; waiting until') : ave.blockReason === 'QUOTA' ? L('AVE报告额度用完，等待至','AVE reports credits exhausted; waiting until') : L('已达本期额度估算上限，等待至','Estimated allowance reached; waiting until')} ${clockTime(ave.blockedUntil,locale,{reference:snapshot.at})}`);
-    keyboard=[[open('sources',locale),open('delivery',locale)],[open('settings',locale)]];
+    const feed=snapshot.feedByChain?.[control.scanChain],issues=snapshot.delivery?.length ?? 0;
+    blocks=[`${scanState(control,locale)} · ${chainLabel(control.scanChain)}`,`${L('上次尝试','Last attempt')}: ${relativeTime(metrics.lastAttemptAt,snapshot.at,locale)} · ${L('上次成功','last success')}: ${relativeTime(metrics.lastSuccessAt,snapshot.at,locale)}`,`${L('下轮扫描','Next scan')}: ${metrics.nextCycleAt ? clockTime(metrics.nextCycleAt,locale,{reference:snapshot.at,seconds:true}) : L('未安排','Not scheduled')}`,`${L('累计成功扫描','Successful scans')}: ${numberText(metrics.scanCount,locale)}`,`${L('本轮发现/初筛通过','Last cycle discovered/prefilter passed')}: ${numberText(metrics.discoveredCount,locale)}/${numberText(metrics.prequalifiedCount,locale)}`,`${L('审计队列/到期','Audit queue/due')}: ${numberText(snapshot.queue?.length ?? 0,locale)}/${numberText(snapshot.queue?.filter(row=>row.nextAuditAt !== null && row.nextAuditAt<=snapshot.at).length ?? 0,locale)}`,`${L('上次读取热榜','Last hot-list read')}: ${relativeTime(feed?.observedAt,snapshot.at,locale)}`,`${L('本期AVE额度已用','AVE credits used this period')}: ${numberText(ave.cuUsed,locale)}${snapshot.aveBudget ? ' / ' + numberText(snapshot.aveBudget.monthlyCu,locale) : ''}${L('（本地估算）',' (local estimate)')}`,`${L('下次AVE请求','Next AVE request')}: ${ave.readyAt > snapshot.at ? clockTime(ave.readyAt,locale,{reference:snapshot.at,seconds:true}) : L('现在','now')}`,`${issues ? `${ICONS.unknown} ` : ''}${L('投递需核对','Delivery issues')}: ${numberText(issues,locale)}`];
+    if(ave.blockedUntil>snapshot.at) blocks.push(`${ICONS.unknown} ${ave.blockReason === 'RATE_LIMITED' ? L('AVE限流，等待至','AVE rate limited; waiting until') : ave.blockReason === 'QUOTA' ? L('AVE报告额度用完，等待至','AVE reports credits exhausted; waiting until') : L('已达本期额度估算上限，等待至','Estimated allowance reached; waiting until')} ${clockTime(ave.blockedUntil,locale,{reference:snapshot.at})}`);
+    keyboard=[[open('events',locale),open('sources',locale),open('delivery',locale)]];
   }
-  return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale);
+  return finishPanel(heading(session.panel,locale),blocks,keyboard,snapshot,session,locale);
 }
 
 export function renderStatisticsPanel(snapshot,session,locale='zh') {
@@ -265,20 +278,39 @@ export function renderPanel(snapshot,session,locale='zh') {
   if(session.panel === 'stats') return renderStatisticsPanel(snapshot,session,locale);
   if(session.panel === 'events') return eventsPanel(snapshot,session,locale);
   if(TRADING_PANELS.includes(session.panel)) return renderTradingPanel(snapshot,session,locale);
-  let blocks=[],keyboard=[];
+  let blocks=[],keyboard=[],title=heading(session.panel,locale);
   if(session.panel === 'radar') {
     if(!control.configured && !snapshot.candidates.length) {
       blocks=[L('连接 AVE 后开始扫描。AVE仅用于只读研究；交易使用独立的热钱包（/wallet），每笔需你确认。','Connect AVE to start scanning. AVE is used for read-only research; trading uses a separate hot wallet (/wallet) and needs your confirmation for each trade.')];
       keyboard=[[open('onboard',locale)],[open('language',locale),open('help',locale)],[open('saved',locale),open('status',locale)]];
     } else {
-      const recent=snapshot.candidates.filter(row=>row.chain === session.viewChain && row.auditedAt>=snapshot.at-1_800_000),metrics=snapshot.metrics || {},queue=snapshot.queue.filter(row=>row.chain === session.viewChain);
-      blocks=[chainLabel(session.viewChain),`${control.paused ? `${ICONS.paused} ${L('扫描已暂停','Scanning paused')}` : `${ICONS.scanning} ${L('扫描运行中','Scanning running')}`} · ${control.configured ? L('AVE已连接','AVE connected') : `${ICONS.disconnected} ${L('AVE未连接，显示历史数据','AVE disconnected; historical data')}`} · ${control.notifications ? `${ICONS.alertsOn} ${L('提醒已开启','Alerts on')}` : `${ICONS.alertsOff} ${L('提醒已关闭','Alerts off')}`}`,`${L('累计成功扫描','Successful scans')}: ${numberText(metrics.scanCount,locale)}`,`${L('本轮发现/初筛通过','Cycle discovered/prefilter passed')}: ${numberText(metrics.discoveredCount,locale)}/${numberText(metrics.prequalifiedCount,locale)}`,`${L('近30分钟线索/已否决','Last 30m leads/vetoed')}: ${recent.filter(row=>backendDisposition(row)==='lead').length}/${recent.filter(row=>row.status==='HARD_REJECT').length}`,`${L('队列/到期','Queue/due')}: ${queue.length}/${queue.filter(row=>row.nextAuditAt!==null && row.nextAuditAt<=snapshot.at).length}`,L('研究雷达；交易需在代币详情中确认报价（/wallet）。','Research radar; trades run only after you confirm a quote on a token detail (/wallet).')];
-      keyboard=[[open('feed',locale),open('audits',locale)],[open('stats',locale),open('saved',locale)],[open('events',locale),open('status',locale)],[open('view_chain',locale),open('settings',locale)]];
+      // Radar answers "is there anything for me?": the newest leads on the scan chain, vetoed last.
+      const chain=control.scanChain,feed=snapshot.feedByChain?.[chain]?.rows || [];
+      const recent=snapshot.candidates.filter(row=>row.chain === chain && row.auditedAt>=snapshot.at-1_800_000).sort((a,b)=>number(b.auditedAt)-number(a.auditedAt));
+      const leads=recent.filter(row=>backendDisposition(row)==='lead'),vetoed=recent.filter(row=>row.status==='HARD_REJECT'),shown=[...leads,...vetoed].slice(0,3);
+      const leadLine=(row,index)=>{
+        const symbol=userText(row.symbol || '?',30);
+        if(row.status==='HARD_REJECT') return `${index+1}. ${ICONS.vetoed} ${symbol} · ${L('已否决','vetoed')}`;
+        const change=feed.find(item=>id(item)===id(row))?.priceChange5m;
+        const facts=[Number.isFinite(row.marketCap) ? money(row.marketCap,locale) : null,Number.isFinite(row.createdAt) ? L(`币龄${duration(snapshot.at-row.createdAt*1000,locale)}`,`${duration(snapshot.at-row.createdAt*1000,locale)} old`) : null,Number.isFinite(change) ? percent(change,locale,true) : null].filter(Boolean);
+        return `${index+1}. <b>${symbol}</b>${facts.length ? ` · ${facts.join(' · ')}` : ''}`;
+      };
+      title=`${heading('radar',locale)} · ${chainLabel(chain)}`;
+      blocks=[`${scanState(control,locale)} · ${alertState(control,locale)}`,''];
+      if(shown.length) blocks.push(L(`近30分钟：${leads.length} 条线索 · ${vetoed.length} 条已否决`,`Last 30 min: ${leads.length} ${leads.length === 1 ? 'lead' : 'leads'} · ${vetoed.length} vetoed`),...shown.map(leadLine));
+      else blocks.push(L(`近30分钟没有线索。雷达约每${duration(scannerSettings.scanIntervalMs,locale)}读取一次热榜。`,`No leads in the last 30 min. The radar checks the hot list every ~${duration(scannerSettings.scanIntervalMs,locale)}.`));
+      keyboard=[shown.map((row,index)=>detailButton(row,index,locale)),[open('audits',locale),open('feed',locale)],[open('saved',locale),open('stats',locale)],[open('wallet',locale),open('settings',locale)]];
     }
   } else if(session.panel === 'settings') {
-    blocks=[`${L('扫描链','Scan chain')}: ${chainLabel(control.scanChain)}`,control.configured ? L('AVE已连接','AVE connected') : `${ICONS.disconnected} ${L('尚未连接AVE','AVE not connected')}`,`${L('扫描','Scanning')}: ${control.paused ? `${ICONS.paused} ${L('已暂停','Paused')}` : `${ICONS.scanning} ${L('运行中','Running')}`}`,`${L('提醒','Alerts')}: ${control.notifications ? `${ICONS.alertsOn} ${L('已开启','On')}` : `${ICONS.alertsOff} ${L('已关闭','Off')}`}`,`${L('语言','Language')}: ${locale==='en' ? 'English' : '中文'}`];
-    keyboard=[[open('chains',locale),open('onboard',locale)],[button(control.paused ? `${ICONS.scanning} ${L('恢复扫描','Resume scanning')}` : `${ICONS.paused} ${L('暂停扫描','Pause scanning')}`,control.paused ? 'scan.resume' : 'scan.pause'),button(control.notifications ? `${ICONS.alertsOff} ${L('关闭提醒','Mute alerts')}` : `${ICONS.alertsOn} ${L('开启提醒','Enable alerts')}`,'notifications.set',{value:!control.notifications})],[open('language',locale),button(L('导出记录','Export records'),'export.create')],[open('wallet',locale),open('trade_settings',locale)],[open('status',locale)]];
-    if(control.configured) keyboard.push([open('disconnect',locale)]);
+    const chain=chainLabel(control.scanChain),trading=snapshot.trading;
+    blocks=[`${L('扫描','Scanning')}: ${!control.configured ? `${ICONS.disconnected} ${L('等待连接AVE','Waiting for AVE')} · ${chain}` : control.paused ? `${ICONS.paused} ${L('已暂停','Paused')} · ${chain}` : `${ICONS.scanning} ${chain}`}`,
+      `${L('提醒','Alerts')}: ${control.notifications ? `${ICONS.alertsOn} ${L('已开启','On')}` : `${ICONS.alertsOff} ${L('已关闭','Off')}`}`,
+      `${L('交易','Trading')}: ${trading?.chains?.length ? L(`滑点 ${trading.settings.slippageBps/100}% · 上限 ${money(trading.settings.capUsd,locale)}`,`slippage ${trading.settings.slippageBps/100}% · cap ${money(trading.settings.capUsd,locale)}`) : L('本部署未启用','not enabled on this deployment')}`,
+      `${L('语言','Language')}: ${locale==='en' ? 'English' : '中文'}`,`AVE: ${control.configured ? L('已连接','connected') : L('未连接','not connected')}`];
+    keyboard=[[button(`${heading('chains',locale)}: ${chain}`,'panel.open',{panel:'chains'}),button(control.paused ? `${ICONS.scanning} ${L('恢复扫描','Resume scanning')}` : `${ICONS.paused} ${L('暂停扫描','Pause scanning')}`,control.paused ? 'scan.resume' : 'scan.pause')],
+      [button(control.notifications ? `${ICONS.alertsOff} ${L('关闭提醒','Mute alerts')}` : `${ICONS.alertsOn} ${L('开启提醒','Enable alerts')}`,'notifications.set',{value:!control.notifications})],
+      [open('wallet',locale),open('trade_settings',locale)],[open('language',locale),open('onboard',locale)],[open('status',locale),button(`${ICONS.export} ${L('导出记录','Export')}`,'export.create')],
+      control.configured ? [open('disconnect',locale)] : []];
   } else if(session.panel === 'chains') {
     blocks=[L('一次扫描一条链。切换后旧链的研究记录保留，扫描立即转到新链。','One chain is scanned at a time. Switching keeps the old chain\'s records and moves scanning to the new chain.')];
     keyboard=SCAN_CHAINS.map(value=>[button(`${control.scanChain===value?'✓ ':''}${chainLabel(value)}`,'chains.set',{value})]);
@@ -293,8 +325,13 @@ export function renderPanel(snapshot,session,locale='zh') {
     if(control.configured) keyboard.push([open('chains',locale),open('feed',locale)],[!control.notifications?button(`${ICONS.alertsOn} ${L('开启提醒','Enable alerts')}`,'notifications.set',{value:true}):null]);
     keyboard.push([open('status',locale),open('settings',locale)]);
   } else if(session.panel === 'help') {
-    const pages=[HELP_COMMANDS.slice(0,12).map(([command,zh,en])=>`/${command} — ${L(zh,en)}`),HELP_COMMANDS.slice(12).map(([command,zh,en])=>`/${command} — ${L(zh,en)}`),[L('AVE只读研究；交易仅通过 /wallet 的热钱包，每笔需确认报价；非投资建议。','AVE research is read-only; trading uses only the /wallet hot wallet and needs each quote confirmed. Not investment advice.'),keySafetyCopy(locale),L('/chains 选择扫描链；查看链不改变扫描。/lang [zh|en] 设置语言。/note <简称或CA> 编辑备注；/cancel 取消输入。','/chains picks the scan chain; viewing a chain does not change it. /lang [zh|en] sets language. /note <symbol or CA> edits a note; /cancel cancels input.'),L('线索仅通过AVE行情筛选，不代表安全；交易前请自行核查。安全核验否决的代币禁止买入，仍可卖出。暂停扫描和关闭提醒是独立控制。历史消息不是实时状态，请刷新。','Leads passed the AVE market screen only and are not proven safe; check before any trade. Tokens vetoed by the safety check cannot be bought but can still be sold. Pause and mute are independent controls. Historical messages are not live state; refresh them.')]];
+    const commands=list=>list.map(([command,zh,en])=>escapeHtml(`/${command} — ${L(zh,en)}`));
+    const pages=[
+      [L('雷达读取扫描链上的AVE热榜，把通过行情筛选的新代币作为线索提醒你。','The radar reads the AVE hot list on your scan chain and alerts you to new tokens that pass its market screen: these are leads.'),L('随后GoPlus与DexScreener核验每条线索的安全性；未通过的线索被否决，不能买入，仍可卖出。','GoPlus and DexScreener then check each lead\'s safety; a lead that fails is vetoed and cannot be bought, though it can still be sold.'),L('交易可选：使用独立的热钱包（/wallet），每笔交易都需你确认报价。','Trading is optional: it uses a separate hot wallet (/wallet), and every trade waits for you to confirm its quote.')],
+      [`<b>${L('菜单命令','Menu commands')}</b>`,...commands(MENU_COMMANDS),'',`<b>${L('更多命令','More commands')}</b>`,...commands(MORE_COMMANDS)],
+      [keySafetyCopy(locale),L('热钱包只存放你愿意承担风险的小额资金；导出的私钥请离线保存。','Keep only small amounts you can afford to lose in the hot wallet, and store its exported key offline.'),L('线索只通过了AVE行情筛选；未核验不代表安全，交易前请自行核查。','Leads passed the AVE market screen only; unverified does not mean safe, so check before any trade.'),L('人工通过不会改变筛选结果，也不会执行交易。暂停扫描与关闭提醒互不影响。','Manual approval does not change screening results or execute trades. Pausing scanning and muting alerts are independent.'),L('非投资建议。','Not investment advice.')]
+    ];
     const paging=pagination(pages.length,query.page,1,locale);blocks=pages[paging.page];keyboard=[paging.keyboard,[open('onboard',locale)]];
   }
-  return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale,{refresh:!['chains','disconnect','help'].includes(session.panel)});
+  return finishPanel(title,blocks,keyboard,snapshot,session,locale,{refresh:!['chains','disconnect','help'].includes(session.panel)});
 }

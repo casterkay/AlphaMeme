@@ -8,8 +8,11 @@ import { TRADING_SETTINGS } from '../trading/config.mjs';
 import { parseUsdCents, parsePercent } from '../trading/amounts.mjs';
 import { saveTradingWalletInTransaction, removeTradingWalletInTransaction, tradingWalletEnvelope, readTradingWallet } from '../trading/wallet.mjs';
 
-const ROOTS = new Set(['start','radar','help','status','settings','chains','feed','audits','candidates','saved','events','stats','onboard','wallet']);
-const CONCRETE_CHAIN_PANELS = new Set(['radar','feed','audits','stats']);
+// Typed commands that open a panel. Retired slugs are deliberately absent: an
+// unknown command opens Help, which lists the current names.
+const COMMAND_PANELS = new Map(Object.entries({ start: 'radar', radar: 'radar', leads: 'audits', hot: 'feed', watchlist: 'saved', wallet: 'wallet', performance: 'stats', settings: 'settings', help: 'help', activity: 'events', status: 'status', chains: 'chains', onboard: 'onboard' }));
+const ALL_CHAIN_PANELS = new Set(['saved','events']);
+const CONCRETE_CHAIN_PANELS = new Set(['feed','audits','stats']);
 const CONTROL = new Set(['pause','resume','disconnect','mute']);
 const text = (lang, zh, en) => lang === 'en' ? en : zh;
 const INPUT_KINDS = new Set(['search','note','note_target','trade_usd','trade_percent']);
@@ -139,12 +142,12 @@ export class TelegramCommands {
       if (args) return this.resolveNoteInTransaction(session, args);
       return this.beginInputInTransaction(session, 'note_target');
     }
-    if (!ROOTS.has(command)) return this.renderInTransaction(this.sessions.createInTransaction('help', chain));
+    const panel = COMMAND_PANELS.get(command);
+    if (!panel) return this.renderInTransaction(this.sessions.createInTransaction('help', chain));
     if (args) return this.noticeInTransaction(row.update_id, `/${command}`);
-    const panel = command === 'start' ? 'radar' : command === 'candidates' ? 'audits' : command;
     if (command === 'start') this.controls.initializeNotificationBaseline?.();
-    const session = this.sessions.createInTransaction(panel, command === 'saved' || command === 'events' ? 'all' : chain);
-    if (command === 'wallet') this.trading?.requestBalancesInTransaction(session.id);
+    const session = this.sessions.createInTransaction(panel, ALL_CHAIN_PANELS.has(panel) ? 'all' : chain);
+    if (panel === 'wallet') this.trading?.requestBalancesInTransaction(session.id);
     this.renderInTransaction(session);
   }
 
@@ -165,8 +168,8 @@ export class TelegramCommands {
       const viewChain = CONCRETE_CHAIN_PANELS.has(panel) && !CHAINS.includes(session.viewChain)
         ? (CHAINS.includes(control.activeChain) ? control.activeChain : DEFAULT_SCAN_CHAIN)
         : session.viewChain;
-      // Radar is the root: Home starts navigation afresh instead of stacking a path back.
-      changes = panel === 'radar' ? { panel, viewChain, query: { schemaVersion: 1, page: 0 } }
+      // Radar is the root: Home starts navigation afresh, on the scan chain, instead of stacking a path back.
+      changes = panel === 'radar' ? { panel, viewChain: CHAINS.includes(control.activeChain) ? control.activeChain : DEFAULT_SCAN_CHAIN, query: { schemaVersion: 1, page: 0 } }
         : { panel, viewChain, query: { ...session.query, schemaVersion: 1, page: 0, pendingInput: undefined, ...(params.query ?? {}), returnTo, ...(token ? { selectedToken: token } : {}) } };
     } else if (action === 'panel.back') {
       const origin = session.query.returnTo;
@@ -214,7 +217,7 @@ export class TelegramCommands {
 
   refuseInTransaction(updateId, refusal) {
     const cap = this.tradingSettings().capUsd;
-    const message = refusal.code === 'OVER_CAP' ? [`超过单笔买入上限 $${cap}，已拒绝。可在交易设置中调整。`, `Above your per-trade buy cap of $${cap}; refused. Adjust it in trade settings.`] : REFUSALS[refusal.code] ?? REFUSALS.STATE_CHANGED;
+    const message = refusal.code === 'OVER_CAP' ? [`超过单笔买入上限 $${cap}，已拒绝。可在交易限额中调整。`, `Above your per-trade buy cap of $${cap}; refused. Adjust it in Trade limits.`] : REFUSALS[refusal.code] ?? REFUSALS.STATE_CHANGED;
     this.noticeInTransaction(updateId, text(this.language, ...message));
   }
 
