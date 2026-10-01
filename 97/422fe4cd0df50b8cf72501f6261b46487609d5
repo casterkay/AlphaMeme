@@ -1,0 +1,27 @@
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_6295713717bc33::t_cb710e47409163 98-99
+docs/TELEGRAM-UX-PLAN.md
+  s_6295713717bc33::t_172026dbb83c63 387-390
+src/telegram-intake.mjs
+  s_6295713717bc33::t_01cdd37e057170 68-72
+test/telegram-intake.test.mjs
+  s_6295713717bc33::t_ad02fb5ed0f120 52-57,65-68
+workers/telegram-intake.runtime.mjs
+  s_6295713717bc33::t_d7e2724d059eaf 6,259-265,285-287,299-303,305,307-308,313,317-327
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "97422fe4cd0df50b8cf72501f6261b46487609d5",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
