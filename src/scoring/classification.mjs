@@ -1,8 +1,8 @@
-import { blockingConflicts } from './safety.mjs';
+import { blockingConflicts, blockingUnknownFields } from './safety.mjs';
 
 export function classifyDeepResult(deep, auditMeta = {}) {
   const failed = new Set(deep?.failed || []);
-  const unknown = new Set(deep?.blockingUnknownFields || deep?.unknownFields || []);
+  const unknown = new Set(blockingUnknownFields(deep));
   const unknownCheck = name => {
     const prefixes = {
       openSource: ['openSource'], ownerRenounced: ['ownerRenounced', 'renouncedMint', 'renouncedFreezeAccount'],

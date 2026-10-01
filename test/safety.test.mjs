@@ -38,6 +38,7 @@ for (const [name, input, expected] of [
   ['a hard reject with no check', { status: 'HARD_REJECT', secondary: null }, 'VETOED'],
   ['a passed check whose deep audit has a waiting failure', { status: 'X_REVIEW', secondary: PASSED, deep: { failed: ['notHoneypot'], blockingUnknownFields: [] } }, 'INCOMPLETE'],
   ['a passed check whose deep audit has a blocking unknown field', { status: 'X_REVIEW', secondary: PASSED, deep: { failed: [], blockingUnknownFields: ['buyTax'] } }, 'INCOMPLETE'],
+  ['a passed check whose legacy deep audit has only unknownFields', { status: 'X_REVIEW', secondary: PASSED, deep: { failed: [], unknownFields: ['top10'] } }, 'INCOMPLETE'],
   ['a passed check whose deep audit has only non-blocking unknowns', { status: 'X_REVIEW', secondary: PASSED, deep: { failed: [], blockingUnknownFields: [], unknownFields: ['top10'] } }, 'PASSED'],
   ['a risk exclusion, which fails chartRisk in the deep audit', { status: 'HARD_REJECT', secondary: PASSED, deep: { failed: ['chartRisk'], blockingUnknownFields: [] } }, 'VETOED'],
   ['an open deep audit before any check', { status: 'X_REVIEW', secondary: null, deep: { failed: ['notHoneypot'], blockingUnknownFields: [] } }, 'PENDING']
@@ -59,6 +60,10 @@ test('the Telegram projection keeps every fact the verdict reads, including a ri
   assert.equal(verdict(projectTelegramCandidate({ ...source, secondary: SECURITY_CONFLICT })), 'INCOMPLETE');
   assert.equal(verdict(projectTelegramCandidate({ ...source, deep: { ...source.deep, failed: ['notHoneypot'] } })), 'INCOMPLETE');
   assert.equal(verdict(projectTelegramCandidate({ ...source, deep: { ...source.deep, blockingUnknownFields: ['buyTax'] } })), 'INCOMPLETE');
+  // Recorded before the blocking split: no blockingUnknownFields at all.
+  const legacy = { chainPass: true, chartRisk: source.deep.chartRisk, checks: {}, failed: [], unknownFields: ['top10'] };
+  assert.equal(safetyVerdict({ status: source.status, secondary: PASSED, deep: legacy }), 'INCOMPLETE');
+  assert.equal(verdict(projectTelegramCandidate({ ...source, deep: legacy })), 'INCOMPLETE', 'a legacy audit cannot show as passed once projected');
   const excluded = applyRiskExclusion(source, { [`bsc:${source.address}`]: { version: 1, codes: ['X'], reasons: ['excluded'], at: 1 } });
   assert.equal(verdict(projectTelegramCandidate(excluded)), 'VETOED');
 });
