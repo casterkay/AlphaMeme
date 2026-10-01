@@ -1,6 +1,6 @@
 import { renderPanel } from './panels.mjs';
 import { readTelegramSnapshot } from './snapshot.mjs';
-import { TelegramSessions } from './sessions.mjs';
+import { NOTIFICATION_PANELS, TelegramSessions } from './sessions.mjs';
 import { annotateInTransaction, ReviewConflict, setManualMarkInTransaction, reviewProjectionRevision } from './review.mjs';
 import { DEFAULT_SCAN_CHAIN, SCAN_CHAINS as CHAINS } from '../chains.mjs';
 import { TradeRefusal } from '../trading/engine.mjs';
@@ -199,18 +199,20 @@ export class TelegramCommands {
     const binding = this.sessions.resolveInTransaction({ tenantId: this.tenantId, actorUserId: row.actor_user_id, sourceMessageId: row.source_message_id, payload });
     let { session, action, params, token } = binding;
     const control = this.controls.snapshot();
-    if (/^(scan\.|chains\.set|notifications\.)/.test(action) && binding.expectedControlEpoch !== control.controlEpoch) throw new ReviewConflict('control_changed');
+    // A notification stays as sent, keeping its buttons; whatever they open arrives as a new message with no way back to it.
+    const fromAlert = NOTIFICATION_PANELS.has(session.panel);
+    // Muting from a days-old alert means "alerts off now", whatever changed since, so it skips the staleness checks.
+    const muteFromAlert = fromAlert && action === 'notifications.set' && params.value === false;
+    if (/^(scan\.|chains\.set|notifications\.)/.test(action) && !muteFromAlert && binding.expectedControlEpoch !== control.controlEpoch) throw new ReviewConflict('control_changed');
     if (/^connection\./.test(action) && binding.expectedConnectionGeneration !== control.connectionGeneration) throw new ReviewConflict('connection_changed');
-    if (action === 'notifications.set' && params.expectedPreferenceVersion !== this.preference('notificationsVersion', 0)) throw new ReviewConflict('settings_changed');
+    if (action === 'notifications.set' && !muteFromAlert && params.expectedPreferenceVersion !== this.preference('notificationsVersion', 0)) throw new ReviewConflict('settings_changed');
     let changes = {};
     const scanChain = CHAINS.includes(control.activeChain) ? control.activeChain : DEFAULT_SCAN_CHAIN;
     // Radar is the root: Home starts navigation afresh, on the scan chain, instead of stacking a path back.
     const home = { panel: 'radar', viewChain: scanChain, query: { schemaVersion: 1, page: 0 } };
-    // An alert stays as sent, keeping its buttons; whatever they open arrives as a new message with no way back to the alert.
-    const fromAlert = session.panel === 'alert';
     if (action === 'panel.open') {
       const panel = params.panel;
-      if (typeof panel !== 'string' || panel === 'alert') throw new ReviewConflict('invalid_panel');
+      if (typeof panel !== 'string' || NOTIFICATION_PANELS.has(panel)) throw new ReviewConflict('invalid_panel');
       const returnTo = structuredClone({ panel: session.panel, viewChain: session.viewChain, query: { ...session.query, pendingInput: undefined } });
       let ancestor = returnTo;
       for (let depth = 1; ancestor?.query?.returnTo; depth++) { if (depth >= 4) { delete ancestor.query.returnTo; break; } ancestor = ancestor.query.returnTo; }

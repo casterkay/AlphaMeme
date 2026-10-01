@@ -332,7 +332,8 @@ export class TelegramRuntime {
       if (this.outbox.has(notification.id)) continue;
       const scanChain = this.control.snapshot().activeChain ?? DEFAULT_SCAN_CHAIN, member = notification.members[0];
       const token = member && { chain: member.chain, address: member.address };
-      const session = this.commands.sessions.createInTransaction('alert', token?.chain ?? scanChain, token ? { selectedToken: token } : {}, { ttl: ALERT_SESSION_TTL });
+      const panel = notification.actionReason === 'CANDIDATE_NEW' ? 'alert' : 'notice';
+      const session = this.commands.sessions.createInTransaction(panel, token?.chain ?? scanChain, token ? { selectedToken: token } : {}, { ttl: ALERT_SESSION_TTL });
       let rendered, params = {};
       if (notification.actionReason === 'CANDIDATE_NEW') {
         rendered = renderPanel(snapshot, session, this.commands.language);
@@ -368,18 +369,25 @@ export class TelegramRuntime {
     let nextAt = null;
     for (const map of maps) {
       const token = { chain: map.chain, address: map.address };
-      const fingerprint = reviewProjectionRevision(this.storage, this.tenantId, token, this.now());
-      const rendered = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, `telegram.rendered:${map.message_id}`).toArray()[0];
       const session = map.ui_session_id ? this.commands.sessions.get(map.ui_session_id) : null;
       if (!session || !['alert','detail','evidence'].includes(session.panel) || session.query.selectedToken?.address !== map.address || session.query.selectedToken?.chain !== map.chain) continue;
       // An alert keeps the last facts it showed once its token is no longer stored.
       if (session.panel === 'alert' && !this.storage.sql.exec('SELECT 1 FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, map.chain, map.address).toArray().length) continue;
+      const fingerprint = reviewProjectionRevision(this.storage, this.tenantId, token, this.now());
+      const rendered = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, `telegram.rendered:${map.message_id}`).toArray()[0];
       if (!rendered || JSON.parse(rendered.value_json) !== fingerprint) {
         const pending = this.outbox.correctionRows(session.id).some(row => this.outbox.payload(row)?.projectionRevision === fingerprint);
         if (!pending) {
+          // An unreadable record skips this correction, logged, rather than stopping every reconcile.
+          let snapshot;
+          try { snapshot = this.commands.snapshot(this.storage, this.tenantId, this.now()); } catch (error) {
+            if (!(error instanceof SyntaxError)) throw error;
+            console.log(JSON.stringify({ event: 'card_correction_skipped', chain: map.chain, address: map.address, reason: 'record_unreadable' }));
+            continue;
+          }
           const next = { ...session, version: session.version + 1, snapshotAt: this.now() };
           this.commands.sessions.saveInTransaction(next);
-          this.commands.renderInTransaction(next, { deliveryClass: 'PANEL_UPDATE' });
+          this.commands.renderInTransaction(next, { deliveryClass: 'PANEL_UPDATE', snapshot });
         }
       }
       const expiry = nextReviewExpiry(this.storage, this.tenantId, token, this.now());

@@ -5,6 +5,9 @@ import { readSchedulerStateInTransaction } from '../storage/scheduler-state.mjs'
 
 const STATE_KEY = 'notification.baseline';
 const EVENT_TTL = 30 * 60_000;
+// New-lead alerts awaiting delivery at once. A burst beyond it waits for earlier alerts to send, so Telegram's
+// rate limit cannot exhaust their retries and drop them.
+const MAX_PENDING_ALERTS = 10;
 const ISSUE_REASONS = new Set(['KEY_UNUSABLE', 'UNRECOVERABLE_STATE', 'DELIVERY_UNCERTAIN']);
 const decode = value => value == null ? null : JSON.parse(value);
 // The last hold reason logged per lead, per Durable Object storage, so a steady state logs once, not on every reconcile.
@@ -142,19 +145,21 @@ export class NotificationPolicy {
     const candidatePending = new Set(state.pending.filter(item => item.actionReason === 'CANDIDATE_NEW').flatMap(item => item.members.map(voiceKey)));
     const alerted = key => candidatePending.has(key) || (Number.isFinite(state.notified[key]) && now - state.notified[key] < VOICE_TTL)
       || Object.hasOwn(state.eventDedup, `CANDIDATE_NEW:${key}`);
-    // Every new lead gets its own alert at once.
+    // Every new lead gets its own alert at once, unless a burst is still being delivered.
     const newLeads = controls.enabled ? eligibleRows.filter(row => !Object.hasOwn(state.quiet, voiceKey(row)) && !alerted(voiceKey(row))) : [];
-    const enqueued = new Set(newLeads.map(voiceKey));
+    const sending = newLeads.slice(0, Math.max(0, MAX_PENDING_ALERTS - candidatePending.size));
+    const enqueued = new Set(sending.map(voiceKey));
     const eligibleKeys = new Set(eligibleRows.map(voiceKey));
     this.logHolds(rows.filter(row => row.status === 'LIVE_READY' || eligibleKeys.has(voiceKey(row))), row => {
       const key = voiceKey(row);
       if (!eligibleKeys.has(key)) return { reason: this.leadIneligibleReason(row, controls.chains) };
       if (!controls.enabled) return { reason: 'alerts_off' };
       if (enqueued.has(key) || alerted(key)) return { reason: 'alerted' };
+      if (newLeads.some(item => voiceKey(item) === key)) return { reason: 'alert_burst' };
       return { reason: firstChains.includes(row.chain) ? 'quiet_first_chain' : row.auditedAt <= state.at ? 'quiet_before_baseline' : 'quiet_carried', baselineAt: state.at };
     });
     if (controls.enabled) {
-      for (const row of newLeads) {
+      for (const row of sending) {
         const descriptor = enqueue('CANDIDATE_NEW', [{ chain: row.chain, address: row.address, revision: row.revision }]);
         console.log(JSON.stringify({ event: 'notification_enqueued', id: descriptor.id, actionReason: 'CANDIDATE_NEW', addresses: [row.address] }));
       }
