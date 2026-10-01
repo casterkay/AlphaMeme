@@ -238,6 +238,29 @@ test('verifyAveApiKey rejects a key AVE refuses', async () => {
   await rejectsWith(verifyAveApiKey('candidate-key-123', { fetchImpl, now: () => NOW }), 'AVE_AUTH');
 });
 
+test('details reads one token on its chain and returns its row', async () => {
+  const { ave, calls } = client(() => Response.json({ status: 1, data: { token: tokenRow(BSC_TOKEN), pairs: [] } }));
+  const { token, capturedAt } = await ave.details('bsc', BSC_TOKEN);
+  assert.equal(calls[0].url, `https://prod.ave-api.com/v2/tokens/${BSC_TOKEN}-bsc`);
+  assert.deepEqual([token.symbol, token.market_cap, token.main_pair_tvl, token.holders, capturedAt], ['TEST', 50_000, 20_000, 150, NOW]);
+});
+
+// Only a successful answer that holds no token and no pairs means "not indexed";
+// a refusal or a malformed answer must not read as "no such token".
+for (const [scenario, body, code] of [
+  ['no token and no pairs', { status: 1, data: { pairs: [] } }, 'AVE_NOT_FOUND'],
+  ['a null token and no pairs', { status: 1, data: { token: null, pairs: [] } }, 'AVE_NOT_FOUND'],
+  ['an empty token and no pairs', { status: 1, data: { token: {}, pairs: [] } }, 'AVE_NOT_FOUND'],
+  ['an empty token beside pairs', { status: 1, data: { token: {}, pairs: [{ pair: 'x' }] } }, 'AVE_SCHEMA'],
+  ['a failed status envelope', { status: 0, msg: 'api key banned', data: null }, 'AVE_SCHEMA'],
+  ['a token without a price', { status: 1, data: { token: { token: BSC_TOKEN, chain: 'bsc' }, pairs: [] } }, 'AVE_SCHEMA']
+]) {
+  test(`details with ${scenario} is ${code}`, async () => {
+    const { ave } = client(() => Response.json(body));
+    await rejectsWith(ave.details('bsc', BSC_TOKEN), code);
+  });
+}
+
 function candle(time, close) {
   return { time: time / 1000, open: close, high: close * 1.01, low: close * 0.99, close, volume: 10 };
 }

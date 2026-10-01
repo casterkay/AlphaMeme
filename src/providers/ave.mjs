@@ -25,7 +25,7 @@ const messages = {
   ABORTED: 'AVE 行情请求已取消', TIMEOUT: 'AVE 行情响应超时',
   NETWORK: 'AVE 行情连接失败', SCHEMA: 'AVE 行情格式或链标识不匹配', SIZE: 'AVE 行情响应过大',
   AUTH: 'AVE 行情凭证或权限未通过', QUOTA: 'AVE 配额不足，已停止请求；不会自动购买',
-  RATE_LIMITED: 'AVE 行情限流，已进入冷却', UPSTREAM: 'AVE 行情请求未成功'
+  RATE_LIMITED: 'AVE 行情限流，已进入冷却', UPSTREAM: 'AVE 行情请求未成功', NOT_FOUND: 'AVE 在此链上没有该代币'
 };
 export class AveError extends Error {
   constructor(kind, status = 502, retryAt = null) {
@@ -165,6 +165,8 @@ function parseTrending(raw, chain) {
 }
 function parseDetails(raw, chain, ca) {
   outerEcho(raw, chain); const data = envelope(raw); outerEcho(data, chain);
+  // A successful answer holding no token and no pairs: AVE has not indexed this address on the chain.
+  if ((data.token == null || (object(data.token) && !Object.keys(data.token).length)) && Array.isArray(data.pairs) && !data.pairs.length) throw fail('NOT_FOUND', 404);
   if (!object(data.token) || !Array.isArray(data.pairs) || data.pairs.length > 100) throw fail('SCHEMA');
   return { token: tokenRow(data.token, chain, ca) };
 }
