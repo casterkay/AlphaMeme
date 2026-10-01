@@ -29,6 +29,12 @@ const REFUSALS = {
   TRADES_OPEN: ['仍有进行中或结果未知的交易，暂不能移除钱包。请打开钱包点击刷新，待回执确认结果后再试。', 'A trade is still open or its outcome unknown, so the wallet cannot be removed yet. Refresh the wallet until the receipts resolve it, then try again.'],
   EXPORT_FIRST: ['钱包仍有余额且私钥从未导出，请先导出私钥。', 'The wallet still holds funds and its key was never exported; export it first.']
 };
+/** How a prompt names a token: "PEPE (Arc)", or its address when no symbol is recorded. */
+function tokenName(snapshot, token) {
+  const rows = [...(snapshot.candidates ?? []), ...(snapshot.feedByChain?.[token.chain]?.rows ?? []), ...(snapshot.annotations ?? [])];
+  const symbol = rows.find(row => row.chain === token.chain && row.address === token.address && row.symbol && row.symbol !== '?')?.symbol;
+  return `${symbol ?? token.address} (${chainLabel(token.chain)})`;
+}
 const tradeView = (tradeId, returnTo) => ({ panel: 'trade', query: { schemaVersion: 1, page: 0, tradeId, returnTo } });
 // An unverified buy waits for the owner's Yes; the session holds exactly the buy the engine refused.
 const unverifiedQuestion = (request, returnTo) => ({ panel: 'trade_unverified', query: { schemaVersion: 1, page: 0, unverifiedBuy: request, returnTo } });
@@ -50,12 +56,11 @@ export class TelegramCommands {
 
   get language() { return this.preference('language', 'zh'); }
 
-  noticeInTransaction(updateId, message, suffix = 'notice') {
-    this.outbox.enqueueInTransaction({ id: `${suffix}:${updateId}`, chatId: this.tenantId, method: 'sendMessage', params: { text: message, link_preview_options: { is_disabled: true } }, expiresAt: this.now() + 900_000 });
+  noticeInTransaction(updateId, message) {
+    this.outbox.enqueueInTransaction({ id: `notice:${updateId}`, chatId: this.tenantId, method: 'sendMessage', params: { text: message, link_preview_options: { is_disabled: true } }, expiresAt: this.now() + 900_000 });
   }
 
-  renderInTransaction(session, { deliveryClass = 'USER_RESPONSE' } = {}) {
-    const snapshot = this.snapshot(this.storage, this.tenantId, this.now());
+  renderInTransaction(session, { deliveryClass = 'USER_RESPONSE', snapshot = this.snapshot(this.storage, this.tenantId, this.now()) } = {}) {
     const rendered = renderPanel(snapshot, session, this.language);
     // A notice is shown by exactly one render.
     if (session.query.notice !== undefined) {
@@ -115,7 +120,6 @@ export class TelegramCommands {
     try {
       if (row.command_type === 'callback') this.callbackInTransaction(row, payload, prepared);
       else if (row.command_type === 'reply') this.replyInTransaction(payload);
-      else if (row.command_type === 'secret_warning') this.secretWarningInTransaction(row);
       else if (row.command_type === 'lookup') this.lookupInTransaction(row, payload);
       else if (row.command_type === 'text') this.hintInTransaction(row);
       else this.commandInTransaction(row, payload);
@@ -346,21 +350,14 @@ export class TelegramCommands {
     if (!INPUT_KINDS.has(kind)) throw new ReviewConflict('invalid_input');
     const outboxId = `prompt:${session.id}:${session.version + 1}`;
     const next = this.sessions.advanceInTransaction(session, { query: { ...session.query, pendingInput: { kind, target: token, expectedVersion, outboxId, promptMessageId: null, expiresAt: Math.min(this.now() + 300_000, session.expiresAt) } } });
-    this.renderInTransaction(next);
-    const cap = this.tradingSettings().capUsd, name = token ? this.tokenName(token) : null;
+    const snapshot = this.snapshot(this.storage, this.tenantId, this.now());
+    this.renderInTransaction(next, { snapshot });
+    const cap = this.tradingSettings().capUsd, name = token ? tokenName(snapshot, token) : null;
     const instruction = kind === 'note' ? text(this.language, `请回复 ${name} 的备注，最多500字符。/cancel 取消。`, `Reply with a note for ${name}, max 500 characters. /cancel to stop.`)
       : kind === 'trade_usd' ? text(this.language, `请回复买入 ${name} 的美元金额，最多2位小数，上限 $${cap}。/cancel 取消。`, `Reply with the USD amount of ${name} to buy, up to 2 decimals, cap $${cap}. /cancel to stop.`)
         : kind === 'trade_percent' ? text(this.language, `请回复卖出 ${name} 的比例，1–100的整数。/cancel 取消。`, `Reply with the percentage of ${name} to sell, a whole number 1–100. /cancel to stop.`)
           : text(this.language, '请回复名称、简称或CA，最多128字符。/cancel 取消。', 'Reply with a name, symbol or contract address, max 128 characters. /cancel to stop.');
     this.outbox.enqueueInTransaction({ id: outboxId, chatId: this.tenantId, method: 'sendMessage', params: { text: instruction, reply_markup: { force_reply: true, selective: true } }, purpose: 'prompt', sessionId: next.id, sessionVersion: next.version, expiresAt: next.query.pendingInput.expiresAt });
-  }
-
-  /** How a prompt names a token: "PEPE (Arc)", or its address when no symbol is recorded. */
-  tokenName(token) {
-    const snapshot = this.snapshot(this.storage, this.tenantId, this.now());
-    const rows = [...(snapshot.candidates ?? []), ...(snapshot.feedByChain?.[token.chain]?.rows ?? []), ...(snapshot.annotations ?? [])];
-    const symbol = rows.find(row => row.chain === token.chain && row.address === token.address && row.symbol && row.symbol !== '?')?.symbol;
-    return `${symbol ?? token.address} (${chainLabel(token.chain)})`;
   }
 
   replyInTransaction(payload) {
