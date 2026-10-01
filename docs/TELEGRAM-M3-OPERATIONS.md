@@ -95,8 +95,8 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   is never stored. Any message that holds a private key (a 64-character hex
   string, a base58 Solana secret key or a PEM block, anywhere in the message) is
   deleted with a warning saying why, and its text is never stored, logged or sent
-  anywhere. A transaction hash has the same shape and is deleted too. On
-  `/setkey` only a PEM block counts, because an AVE key has no fixed shape.
+  anywhere, `/setkey` included (an AVE key has neither shape). A transaction
+  hash has the same shape and is deleted too.
 - An uncertain Telegram send gets at most one automatic uncertain retry over its
   entire lifetime. A second uncertainty suspends it; `/status` exposes it. The
   system does not promise external exactly-once or guaranteed delivery.

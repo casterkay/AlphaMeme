@@ -49,8 +49,12 @@ test('private command receipts derive the tenant from chat and from while retain
   assert.equal(validateTelegramReceipt(result.receipt).payload.arguments, 'secret-argument');
 });
 
-test('setkey arguments use only transient protected handoff, unless they hold a PEM private key', () => {
-  for (const text of ['/setkey ave-private-value-0123', '/setkey invalid', `/setkey ${'ab'.repeat(32)}`]) {
+const ALPHANUMERIC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+// The shape of a real AVE key: 64 mixed-case alphanumerics. Synthetic, never a real key.
+const aveShapedKey = () => [...randomBytes(64)].map(byte => ALPHANUMERIC[byte % ALPHANUMERIC.length]).join('');
+
+test('setkey arguments use only transient protected handoff, unless they hold a private key', () => {
+  for (const text of ['/setkey ave-private-value-0123', '/setkey invalid', ...Array.from({ length: 200 }, () => `/setkey ${aveShapedKey()}`)]) {
     const result = parse(text);
     assert.equal(result.kind, 'credential');
     assert.equal(result.credentialText, text);
@@ -58,8 +62,10 @@ test('setkey arguments use only transient protected handoff, unless they hold a 
     assert.equal(JSON.stringify(result.receipt).includes(text.slice(8)), false);
   }
   assert.equal(parse('/setkey').receipt.commandType, 'command:setkey');
-  const pem = parse('/setkey -----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----');
-  assert.deepEqual([pem.kind, pem.receipt.commandType, pem.receipt.payload, pem.credentialText], ['accepted', 'secret_warning', {}, undefined]);
+  for (const key of ['ab'.repeat(32), '0x' + randomBytes(32).toString('hex'), base58(randomBytes(64)), '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----']) {
+    const result = parse(`/setkey ${key}`);
+    assert.deepEqual([result.kind, result.receipt.commandType, result.receipt.payload, result.credentialText], ['accepted', 'secret_warning', {}, undefined], key);
+  }
 });
 
 test('the receipt carries the sender\'s Telegram language: Chinese for zh clients, English for every other', () => {

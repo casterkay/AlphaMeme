@@ -384,9 +384,10 @@ requests. Fuzz tests cover the classifier (§6).
 Amended in slice 6 (#67): the secret check covers **every** inbound message, not
 only plain text. A private key sent as a prompt reply or a command argument would
 otherwise be stored as a note, a search or an argument. A key-shaped word anywhere
-in the message counts. `/setkey` is the one exemption: an AVE key has no fixed
-shape and might be 64 hex characters, so there only a PEM block is flagged. A
-transaction hash has the same shape as an EVM key and is deleted too; the warning
+in the message counts, `/setkey` included: an AVE key is 64 mixed-case
+alphanumerics, which is neither 64 hex characters nor base58 of 64 bytes (64 base58
+characters decode to about 47 bytes), so a key shape there is a wallet key that
+verification would send to AVE. A transaction hash has the same shape as an EVM key and is deleted too; the warning
 says why, so the owner can tell. The receipt type is `secret_warning`, not
 `command:secret_warning`, so a typed `/secret_warning` cannot pose as one. Until
 slice 7, a `lookup` receipt gets the step 3 hint, and that hint reads "I only act on

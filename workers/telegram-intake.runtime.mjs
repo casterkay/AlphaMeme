@@ -3,6 +3,7 @@ import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it, vi } from 'vitest';
 import worker from '../src/worker.mjs';
 import { TelegramRuntime } from '../src/bot/runtime.mjs';
+import { readSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 
 function receipt({ tenantId = '18100', updateId = '1', commandType = 'command:start' } = {}) {
   return {
@@ -255,6 +256,13 @@ describe('Telegram text that is not a command', () => {
   async function deliver(tenantId, message) {
     const logged = [];
     const spies = ['log', 'info', 'warn', 'error', 'debug'].map(level => vi.spyOn(console, level).mockImplementation((...values) => { logged.push(values); }));
+    // Every outbound request in this isolate, including any another tenant's alarm makes.
+    const fetched = [];
+    spies.push(vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      fetched.push({ url: request.url, headers: [...request.headers], body: await request.text() });
+      return new Response('{}', { status: 500 });
+    }));
     try {
       const update = { update_id: 1, message: { message_id: 77, date: Math.floor(Date.now() / 1000), chat: { id: Number(tenantId), type: 'private' }, from: { id: Number(tenantId), language_code: 'en' }, ...message } };
       expect(await (await worker.fetch(webhookRequest(update), webhookEnv)).json()).toEqual({ accepted: true });
@@ -274,7 +282,9 @@ describe('Telegram text that is not a command', () => {
           await runtime.outbox.deliverOne(task.id.slice('outbox:'.length), { request: operation => operation({ signal: new AbortController().signal, timeoutMs: 1000 }) });
         }
         const inbox = storage.sql.exec('SELECT command_type, payload_json, status FROM inbox').one();
-        return { inbox, requests, stored: storedAtIntake + await everythingStored(storage), logged: JSON.stringify(logged) };
+        const verifications = readSchedulerStateInTransaction(storage, tenantId).tasks.filter(task => task.kind === 'credential');
+        const keys = storage.sql.exec('SELECT name FROM keys').toArray().map(row => row.name);
+        return { inbox, requests, verifications, keys, fetched: JSON.stringify(fetched), stored: storedAtIntake + await everythingStored(storage), logged: JSON.stringify(logged) };
       });
     } finally {
       for (const spy of spies) spy.mockRestore();
@@ -286,17 +296,33 @@ describe('Telegram text that is not a command', () => {
     ['plain text', '23612', () => base58(random(64)), secret => ({ text: `here is my wallet ${secret} thanks` })],
     ['a prompt reply', '23613', () => hex(random(32)), secret => ({ text: secret, reply_to_message: { message_id: 5 } })],
     ['a command argument', '23614', () => base58(random(64)), secret => ({ text: `/note ${secret}` })],
-    ['a /setkey PEM block', '23615', pem, secret => ({ text: `/setkey ${secret}` })]
-  ])('deletes a private key sent as %s and keeps it out of storage, logs and every request', async (_path, tenantId, secret, message) => {
+    ['a /setkey PEM block', '23615', pem, secret => ({ text: `/setkey ${secret}` })],
+    ['a /setkey EVM key', '23617', () => hex(random(32)), secret => ({ text: `/setkey ${secret}` })],
+    ['a /setkey 0x EVM key', '23618', () => '0x' + hex(random(32)), secret => ({ text: `/setkey ${secret}` })],
+    ['a /setkey Solana secret key', '23619', () => base58(random(64)), secret => ({ text: `/setkey ${secret}` })]
+  ])('deletes a private key sent as %s and keeps it out of storage, logs, AVE and every request', async (_path, tenantId, secret, message) => {
     const value = secret();
-    const { inbox, requests, stored, logged } = await deliver(tenantId, message(value));
+    const { inbox, requests, verifications, keys, fetched, stored, logged } = await deliver(tenantId, message(value));
     expect(inbox).toEqual({ command_type: 'secret_warning', payload_json: '{}', status: 'DONE' });
+    // No verification is scheduled and no key kept, so nothing can reach AVE.
+    expect([verifications, keys]).toEqual([[], []]);
     expect(requests.map(request => request.method)).toEqual(expect.arrayContaining(['deleteMessage', 'sendMessage']));
     expect(requests.find(request => request.method === 'deleteMessage').params.message_id).toBe('77');
     expect(requests.find(request => request.method === 'sendMessage').params.text).toMatch(/^I tried to delete your message because it looked like it held a private key .* If it was only a transaction hash, nothing else is needed\./);
     for (const piece of value.split(/[^0-9A-Za-z]+/).filter(word => word.length >= 16)) {
-      for (const [where, text] of [['storage', stored], ['logs', logged], ['requests', JSON.stringify(requests)]]) expect(text.includes(piece), where).toBe(false);
+      for (const [where, text] of [['storage', stored], ['logs', logged], ['requests', JSON.stringify(requests)], ['fetches', fetched]]) expect(text.includes(piece), where).toBe(false);
     }
+  });
+
+  it('accepts a key of the real AVE shape on /setkey, encrypted and scheduled for verification', async () => {
+    const ALPHANUMERIC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    // Synthetic: 64 mixed-case alphanumerics like a real AVE key, never a real one.
+    const key = [...random(64)].map(byte => ALPHANUMERIC[byte % ALPHANUMERIC.length]).join('');
+    const { inbox, verifications, keys, stored, logged } = await deliver('23621', { text: `/setkey ${key}` });
+    expect(inbox).toMatchObject({ command_type: 'credential', payload_json: '{"source":"message"}' });
+    expect(verifications).toHaveLength(1);
+    expect(keys).toEqual(['ave-pending-api-key']);
+    for (const text of [stored, logged]) expect(text.includes(key)).toBe(false);
   });
 
   it('answers unrecognized text with the hint in the sender\'s language and stores none of it', async () => {
