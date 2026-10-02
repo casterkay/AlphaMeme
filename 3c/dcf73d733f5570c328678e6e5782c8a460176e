@@ -1,0 +1,21 @@
+src/providers/chain-logs.mjs
+  s_c497d5c9be8144::t_179b875dea6653 95-97,99
+test/chain-logs.test.mjs
+  s_c497d5c9be8144::t_c793419aadc89a 57-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3cdcf73d733f5570c328678e6e5782c8a460176e",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
