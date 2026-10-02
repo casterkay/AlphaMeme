@@ -1,0 +1,39 @@
+workers/telegram-e2e.runtime.mjs
+  s_c497d5c9be8144::t_56c5c8b4a85097 318-339
+  s_70e2d2032303f6::t_b5af8ffa5ef4e6 265-266
+workers/trading.runtime.mjs
+  s_c497d5c9be8144::t_56c5c8b4a85097 249,254-258,261-262,265-269
+  s_70e2d2032303f6::t_b31ca4a6ba85db 234,242-246
+src/bot/commands.mjs
+  s_70e2d2032303f6::t_5eb58e987df14e 73,300
+src/bot/panels.mjs
+  s_70e2d2032303f6::t_0b7d4a6a3349eb 453-454
+src/bot/runtime.mjs
+  s_70e2d2032303f6::t_a265bd149f9bb7 322
+src/bot/sessions.mjs
+  s_70e2d2032303f6::t_ef8a5209d74b85 20,33-37,90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e611a12582f0f37b6cb3653469c8286b1b344333",
+  "prompts": {},
+  "sessions": {
+    "s_70e2d2032303f6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fb1d-c6b0-7463-807e-6df93d8bc45e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
