@@ -1,0 +1,54 @@
+src/providers/chain-logs.mjs
+  s_c497d5c9be8144::t_b2ccb6823354a4 78-82
+  s_c497d5c9be8144::t_86a963e3cf5da5 2-3,16,70,84-85,87,90,96,121-123,128
+  s_c497d5c9be8144::t_fa93c5a575f690 29-31,42-44,46-47,109-110
+workers/storage-writes.runtime.mjs
+  s_c497d5c9be8144::t_2784e532b14b72 69
+README.md
+  s_c497d5c9be8144::t_63807e9d668f93 21-28,98-102,107
+src/bot/runtime.mjs
+  s_c497d5c9be8144::t_b2ccb6823354a4 16,24,269
+test/radar-agent.test.mjs
+  s_c497d5c9be8144::t_00c694ac227d3b 7
+  s_c497d5c9be8144::t_fd60e536eb28e8 119,346-397
+  s_c497d5c9be8144::t_4516abd9b32b79 398
+test/onchain-watch.test.mjs
+  s_c497d5c9be8144::t_a3fd914913099c 10,19,31,34-35,50,55
+src/providers/secondary.mjs
+  s_c497d5c9be8144::t_b2ccb6823354a4 8
+src/trading/config.mjs
+  s_c497d5c9be8144::t_86a963e3cf5da5 61-71,75-77
+wrangler.jsonc
+  s_c497d5c9be8144::t_63807e9d668f93 19-20
+src/recoverable-scan-executor.mjs
+  s_c497d5c9be8144::t_fba8e44813b549 47
+vitest.workers.config.mjs
+  s_c497d5c9be8144::t_2784e532b14b72 9
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_c497d5c9be8144::t_63807e9d668f93 15,23-27
+src/recoverable-scanner.mjs
+  s_c497d5c9be8144::t_f29851b53a30e7 22,233-234,237,306-311,464,466-469,471,473,475
+src/onchain-watch.mjs
+  s_c497d5c9be8144::t_f29851b53a30e7 13,15-16,37-38,40,44,52-56,62
+test/chain-logs.test.mjs
+  s_c497d5c9be8144::t_a3fd914913099c 67
+  s_c497d5c9be8144::t_ce6ea0bd7775a3 3,13-14,26,41-48,51-54,57-58,64-66,73-74,76,81
+src/radar-agent.mjs
+  s_c497d5c9be8144::t_b2ccb6823354a4 6-7,310,380
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c2a0ca901e5eb648aa3ca0d1023e0be1b25ad422",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
