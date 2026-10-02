@@ -484,7 +484,7 @@ export function renderPanel(snapshot,session,locale='zh') {
       `${L('交易','Trading')}: ${trading?.chains?.length ? L(`滑点 ${trading.settings.slippageBps/100}% · 上限 ${money(trading.settings.capUsd,locale)}`,`slippage ${trading.settings.slippageBps/100}% · cap ${money(trading.settings.capUsd,locale)}`) : L('本部署未启用','not enabled on this deployment')}`,
       `${L('语言','Language')}: ${locale==='en' ? 'English' : '中文'}`,`AVE: ${control.configured ? L('已连接','connected') : L('未连接','not connected')}`];
     keyboard=[[button(`${heading('chains',locale)}: ${chain}`,'panel.open',{panel:'chains'})],
-      [button(control.notifications ? `${ICONS.alertsOff} ${L('静音','Mute')}` : `${ICONS.alertsOn} ${L('取消静音','Unmute')}`,'notifications.set',{value:!control.notifications}),
+      [button(control.notifications ? `${ICONS.alertsOff} ${L('关闭提醒','Mute')}` : `${ICONS.alertsOn} ${L('开启提醒','Unmute')}`,'notifications.set',{value:!control.notifications}),
         button(control.paused ? `${ICONS.scanning} ${L('恢复','Resume')}` : `${ICONS.paused} ${L('暂停','Pause')}`,control.paused ? 'scan.resume' : 'scan.pause')],
       [open('trade_settings',locale),open('language',locale)],[open('onboard',locale),button(`${ICONS.export} ${L('导出记录','Export')}`,'export.create')]];
   } else if(session.panel === 'chains') {

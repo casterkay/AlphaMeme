@@ -447,7 +447,7 @@ test('settings groups state first and its own actions below; Status sits on Rada
   assert.match(disconnected.text,/Scanning: 🔌 Waiting for AVE · Robinhood\n.*\nTrading: not enabled on this deployment\n[\s\S]*AVE: not connected/);
   Object.assign(snapshot.control,{configured:true,paused:true});
   const paused=renderPanel(snapshot,session('settings'),'zh');
-  assert.match(paused.text,/扫描: ⏸️ 已暂停 · Robinhood/);assert.deepEqual(panelRows(paused)[1],['notifications.set','scan.resume']);assert.deepEqual(paused.keyboard[1].map(item=>item.text),['🔕 静音','🟢 恢复']);
+  assert.match(paused.text,/扫描: ⏸️ 已暂停 · Robinhood/);assert.deepEqual(panelRows(paused)[1],['notifications.set','scan.resume']);assert.deepEqual(paused.keyboard[1].map(item=>item.text),['🔕 关闭提醒','🟢 恢复']);
 });
 
 test('status links Activity, Sources and Delivery and flags delivery issues',()=>{
