@@ -20,10 +20,10 @@ const tradeActions = result => buttons(result).filter(item => /^trade\./.test(it
 
 test('a tradable token detail offers buys up to the cap and sells', () => {
   assert.deepEqual(tradeActions(detail(snapshot())), [
-    ['trade.buy', { usd: 10 }], ['trade.buy', { usd: 20 }], ['trade.buy', { usd: 50 }], ['trade.input', { side: 'buy' }],
+    ['trade.buy', { usd: 1 }], ['trade.buy', { usd: 2 }], ['trade.buy', { usd: 5 }], ['trade.input', { side: 'buy' }],
     ['trade.sell', { percent: 25 }], ['trade.sell', { percent: 50 }], ['trade.sell', { percent: 100 }], ['trade.input', { side: 'sell' }]]);
-  assert.deepEqual(tradeActions(detail(snapshot({ settings: { slippageBps: 500, capUsd: 20 } }))).filter(([action]) => action === 'trade.buy').map(([, params]) => params.usd), [10, 20]);
-  assert.deepEqual(detail(snapshot()).keyboard.slice(0, 2).map(row => row.map(item => item.text)), [['Buy $10', 'Buy $20', 'Buy $50', 'Buy …'], ['Sell 25%', 'Sell 50%', 'Sell 100%', 'Sell …']]);
+  assert.deepEqual(tradeActions(detail(snapshot({ settings: { slippageBps: 500, capUsd: 2 } }))).filter(([action]) => action === 'trade.buy').map(([, params]) => params.usd), [1, 2]);
+  assert.deepEqual(detail(snapshot()).keyboard.slice(0, 2).map(row => row.map(item => item.text)), [['Buy $1', 'Buy $2', 'Buy $5', 'Buy …'], ['Sell 25%', 'Sell 50%', 'Sell 100%', 'Sell …']]);
 });
 
 test('a safety veto hides the buy row with a reason and keeps selling', () => {
@@ -78,7 +78,7 @@ test('the unverified-buy question names the token and amount and offers Yes then
   const question = (locale, rows = [candidate()]) => renderPanel(snapshot({}, rows), { panel: 'trade_unverified', viewChain: 'bsc', query: { unverifiedBuy: { chain: 'bsc', token: TOKEN, usdCents: 2550 }, returnTo: origin }, version: 1 }, locale);
   const en = question('en');
   for (const line of ['Safety check not finished', 'MEME · BNB Chain — buy $25.50?', 'have not verified this token yet', 'honeypot']) assert.ok(en.text.includes(line), line);
-  assert.deepEqual(en.keyboard[0].map(item => [item.text, item.action]), [['Yes', 'trade.acknowledge_unverified'], ['No', 'trade.decline_unverified']]);
+  assert.deepEqual(en.keyboard[0].map(item => [item.text, item.action]), [['✅ Yes', 'trade.acknowledge_unverified'], ['❌ No', 'trade.decline_unverified']]);
   assert.deepEqual(en.keyboard.at(-1).map(item => item.action), ['panel.back', 'panel.open']);
   assert.ok(!buttons(en).some(item => item.action === 'panel.refresh'));
   assert.match(question('zh').text, /安全核验未完成[\s\S]*买入 \$25\.50？/);

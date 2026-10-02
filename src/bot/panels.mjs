@@ -69,9 +69,9 @@ export function selectPanelRows(snapshot, session) {
   });
 }
 
-function pagination(total, requested, size, action = 'page.set') {
+function pagination(total, requested, size, locale, action = 'page.set') {
   const page = Math.min(Math.max(0, Number.isSafeInteger(requested) ? requested : 0), Math.max(0, Math.ceil(total / size) - 1));
-  return { page, start: page * size, keyboard: [page > 0 ? button(ICONS.previous,action,{page:page - 1}) : null, (page+1)*size < total ? button(ICONS.next,action,{page:page + 1}) : null].filter(Boolean) };
+  return { page, start: page * size, label: localize(locale, `第 ${page + 1}/${Math.max(1, Math.ceil(total / size))} 页`, `Page ${page + 1}/${Math.max(1, Math.ceil(total / size))}`), keyboard: [page > 0 ? button(`${ICONS.previous} ${localize(locale, '上一页', 'Previous')}`,action,{page:page - 1}) : null, (page+1)*size < total ? button(`${ICONS.next} ${localize(locale, '下一页', 'Next')}`,action,{page:page + 1}) : null].filter(Boolean) };
 }
 const detailButton = (row,index,locale) => button(`${index + 1} ${safeTelegramText(row.symbol || row.address?.slice(-8) || '?',30)}`, 'panel.open', { panel:'detail' },token(row));
 const rowsOf = (items,size) => Array.from({length:Math.ceil(items.length/size)}, (_,index) => items.slice(index*size,index*size+size));
@@ -132,7 +132,7 @@ function safetyLine(safety,snapshot,locale) {
 
 function listPanel(snapshot,session,locale) {
   const L = (zh,en) => localize(locale,zh,en), query = session.query || {};
-  const rows = selectPanelRows(snapshot,session), paging = pagination(rows.length,query.page,5);
+  const rows = selectPanelRows(snapshot,session), paging = pagination(rows.length,query.page,5,locale);
   const shown = rows.slice(paging.start,paging.start+5), isLive = session.panel === 'feed', saved = session.panel === 'saved';
   const feed = snapshot.feedByChain?.[session.viewChain];
   // Only state the owner changed is printed; defaults stay silent.
@@ -166,7 +166,7 @@ function listPanel(snapshot,session,locale) {
     blocks.push('');
   });
   if (!shown.length) blocks.push(L('没有符合条件的记录','No matching records'));
-  else blocks.push(rangeText(paging.start+1,paging.start+shown.length,rows.length,locale));
+  else blocks.push(rangeText(paging.start+1,paging.start+shown.length,rows.length,locale),paging.label);
   if (isLive && feed?.observedAt) blocks.push(`${L('本次读取','This read')}: ${numberText(feed.receivedCount,locale)} · ${L('线索','leads')}: ${numberText(feed.leadCount,locale)}`);
   const keyboard = rowsOf(shown.map((row,index) => session.query?.noteTargetMatches ? button(`${paging.start + index + 1} ${safeTelegramText(row.symbol || row.address.slice(-8),30)}`, 'note.select', {}, token(row)) : detailButton(row,paging.start+index,locale)),2);
   keyboard.push([selectorButton('view_chain',locale),isLive ? null : selectorButton('filter',locale),saved ? null : selectorButton('sort',locale)]);
@@ -250,7 +250,7 @@ function lookupDetail(snapshot,session,locale,lookup,listed) {
   const trading = tokenTradeControls(snapshot,lookup,locale,identity,lookup.verdict === 'VETOED');
   blocks.push(...trading.blocks);
   const keyboard = [...trading.keyboard,
-    [urlButton(`${ICONS.site} ${L('官网','Site')}`,lookup.secondary?.market?.websites?.[0]),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,lookup.secondary?.market?.pairUrl),urlButton(`${ICONS.ave} AVE`,aveTokenUrl(lookup.chain,lookup.address))],
+    [urlButton(`${ICONS.site} ${L('官网','Site')}`,lookup.secondary?.market?.websites?.[0]),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,lookup.secondary?.market?.pairUrl),urlButton(`${ICONS.ave} ${L('资料','Profile')}`,aveTokenUrl(lookup.chain,lookup.address))],
     [button(`${ICONS.saved} ${annotation?.favorite ? L('取消自选','Unwatch') : L('自选','Watch')}`,'favorite.set',{value:annotation?.favorite !== true},identity),button(`${ICONS.note} ${L('备注','Note')}`,'note.begin',{},identity),annotation?.note ? button(`${ICONS.clear} ${L('清空备注','Clear note')}`,'note.clear',{},identity) : null],
     lookup.state === 'FAILED' ? [button(`${ICONS.refresh} ${L('重试','Retry')}`,'lookup.start',{retry:true},identity)] : [],
     // Until AVE confirms the token here, the likely cause of a miss is the wrong chain, whichever way AVE says it.
@@ -278,8 +278,8 @@ function detailPanel(snapshot,session,locale) {
       [L('完整备注','Full note'),[annotation?.note || L('无备注','No note')]]
     ];
     const pages = sections.flatMap(([title,lines]) => textPages(lines.filter(Boolean).length ? lines.filter(Boolean) : [L('未知；未视为通过','Unknown; not treated as passed')],1800).map((items,index) => ({ title:`${ICONS.evidence} ${title} · ${index+1}`,items })));
-    const paging = pagination(pages.length,session.query?.detailPage,1), page = pages[paging.page];
-    return finishPanel(page.title,[...header,counts,'',...page.items.map(value => userText(value,2400)),`${paging.page+1}/${pages.length}`], [paging.keyboard,[button(L('摘要','Summary'),'panel.open',{panel:'detail'},identity)]],snapshot,session,locale,{token:identity,refresh:false});
+    const paging = pagination(pages.length,session.query?.detailPage,1,locale), page = pages[paging.page];
+    return finishPanel(page.title,[...header,counts,'',...page.items.map(value => userText(value,2400)),paging.label], [paging.keyboard,[button(L('摘要','Summary'),'panel.open',{panel:'detail'},identity)]],snapshot,session,locale,{token:identity,refresh:false});
   }
   const fact = key => row[key] ?? listed?.[key] ?? null, liquidity = deep.security?.liquidity ?? fact('liquidity'), createdAt = fact('createdAt');
   const blocks = [safetyLine(safety,snapshot,locale),liveState(row,snapshot,locale,{ reason:true }) || null,
@@ -300,7 +300,7 @@ function detailPanel(snapshot,session,locale) {
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };
   const eligible = !mark?.decision && row.reviewRevision && backendDisposition(row) === 'chain' && row.auditedAt && snapshot.at-row.auditedAt <= 600_000;
   const keyboard = [...trading.keyboard,
-    [urlButton(ICONS.x,officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter)),urlButton(`${ICONS.site} ${L('官网','Site')}`,row.info?.website),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,row.secondary?.market?.pairUrl),urlButton(`${ICONS.ave} AVE`,aveTokenUrl(row.chain,row.address)),button(`${ICONS.evidence} ${L('证据','Evidence')}`,'panel.open',{panel:'evidence'},identity)],
+    [urlButton(ICONS.x,officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter)),urlButton(`${ICONS.site} ${L('官网','Site')}`,row.info?.website),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,row.secondary?.market?.pairUrl),urlButton(`${ICONS.ave} ${L('资料','Profile')}`,aveTokenUrl(row.chain,row.address)),button(`${ICONS.evidence} ${L('证据','Evidence')}`,'panel.open',{panel:'evidence'},identity)],
     [button(`${ICONS.saved} ${annotation?.favorite ? L('取消自选','Unwatch') : L('自选','Watch')}`,'favorite.set',{value:annotation?.favorite !== true},identity),button(`${ICONS.note} ${L('备注','Note')}`,'note.begin',{},identity),mark?.decision === 'ignored' ? null : button(`${ICONS.ignore} ${L('忽略','Ignore')}`,'mark.set_ignored',binding,identity)],
     [mark?.decision ? button(mark.decision === 'passed' ? L('撤销人工通过','Undo approval') : L('取消忽略','Stop ignoring'),'mark.clear',binding,identity) : eligible ? button(`${ICONS.approve} ${L('人工通过','Approve')}`,'mark.set_passed',binding,identity) : null,annotation?.note ? button(`${ICONS.clear} ${L('清空备注','Clear note')}`,'note.clear',{},identity) : null]];
   return finishPanel(`${safeTelegramText(row.symbol || '?',30)} · ${chainLabel(row.chain)}`,blocks.filter(value => value !== ''),keyboard,snapshot,session,locale,{token:identity});
@@ -338,10 +338,10 @@ function eventsPanel(snapshot,session,locale) {
     }
     if(page.length) logical.push(page);
   }
-  const paging=pagination(logical.length,query.page,1), shown=logical[paging.page] || [];
+  const paging=pagination(logical.length,query.page,1,locale), shown=logical[paging.page] || [];
   const keyboard=rowsOf(shown.filter(({row}) => row.address && SCAN_CHAINS.includes(row.chain) && (snapshot.candidates.some(candidate => id(candidate) === id(row)) || snapshot.annotations.some(annotation => id(annotation) === id(row)))).map(({row,index}) => detailButton({...row,symbol:symbolFor(row)},index,locale)),2);
   keyboard.push([selectorButton('view_chain',locale),selectorButton('filter',locale)],paging.keyboard);
-  return finishPanel(name('events',locale),shown.length ? [...shown.map(({text,index}) => `${index+1}. ${userText(text,1000)}`),rangeText(shown[0].index+1,shown.at(-1).index+1,rows.length,locale)] : [L('尚无事件','No events yet')],keyboard,snapshot,session,locale);
+  return finishPanel(name('events',locale),shown.length ? [...shown.map(({text,index}) => `${index+1}. ${userText(text,1000)}`),rangeText(shown[0].index+1,shown.at(-1).index+1,rows.length,locale),paging.label] : [L('尚无事件','No events yet')],keyboard,snapshot,session,locale);
 }
 
 // The registered command menu, in order of use. Rarer commands work but stay out of
@@ -388,8 +388,8 @@ function statusPanel(snapshot,session,locale) {
     keyboard=[];
   } else if(session.panel === 'delivery') {
     const pages=textPages((snapshot.delivery || []).map(row=>`${row.purpose === 'ACTION_REQUIRED' ? L('需处理的提醒','Action-required notice') : row.purpose === 'PANEL_UPDATE' ? L('面板更新','Panel update') : L('请求回复','Requested response')}: ${row.status === 'UNKNOWN' ? L('发送结果不确定，请核对','Delivery unconfirmed; check it') : L('发送失败','Delivery failed')}`));
-    const paging=pagination(pages.length,session.query?.page,1);
-    blocks=(snapshot.delivery || []).length ? pages[paging.page].map(value=>userText(value,2400)) : [L('没有待核对的投递问题','No delivery issues to check')];
+    const paging=pagination(pages.length,session.query?.page,1,locale);
+    blocks=(snapshot.delivery || []).length ? [...pages[paging.page].map(value=>userText(value,2400)),paging.label] : [L('没有待核对的投递问题','No delivery issues to check')];
     keyboard=[paging.keyboard,(snapshot.delivery || []).length ? [button(L('已核对并清除','Acknowledge and clear'),'delivery.acknowledge')] : []];
   } else {
     const feed=snapshot.feedByChain?.[control.scanChain],issues=snapshot.delivery?.length ?? 0;
@@ -450,7 +450,8 @@ function alertPanel(snapshot,session,locale) {
   const blocks = [facts.length ? userText(facts.join(' · ')) : null, safetyLine(safety,snapshot,locale), `<code>${userText(selected.address,80)}</code>`, closing].filter(Boolean);
   const keyboard = [[button(L(`打开 ${safeTelegramText(shortName,30)}`,`Open ${safeTelegramText(shortName,30)}`),'panel.open',{ panel:'detail' },token(selected))],
     [button(`${ICONS.audits} ${L('全部线索','All leads')}`,'panel.open',{ panel:'audits' }),button(`${ICONS.alertsOff} ${L('关闭提醒','Mute alerts')}`,'notifications.set',{ value:false })]];
-  return { text:`<b>${title}</b>\n${blocks.join('\n')}\n\n${L('更新于','Updated')} ${clockTime(snapshot.at,locale)}`, keyboard, version:session.version, token:token(selected) };
+  const controls = session.query.tokenControls ? detailPanel(snapshot,{ ...session, panel:'detail' },locale).keyboard : keyboard;
+  return { text:`<b>${title}</b>\n${blocks.join('\n')}\n\n${L('更新于','Updated')} ${clockTime(snapshot.at,locale)}`, keyboard:controls, version:session.version, token:token(selected) };
 }
 
 export function renderPanel(snapshot,session,locale='zh') {
@@ -543,7 +544,7 @@ export function renderPanel(snapshot,session,locale='zh') {
       [`<b>${L('菜单命令','Menu commands')}</b>`,...commands(MENU_COMMANDS),'',`<b>${L('更多命令','More commands')}</b>`,...commands(MORE_COMMANDS)],
       [keySafetyCopy(locale),L('热钱包只存放你愿意承担风险的小额资金；导出的私钥请离线保存。','Keep only small amounts you can afford to lose in the hot wallet, and store its exported key offline.'),L('线索只通过了AVE行情筛选；未核验不代表安全，交易前请自行核查。','Leads passed the AVE market screen only; unverified does not mean safe, so check before any trade.'),L('人工通过不会改变筛选结果，也不会执行交易。暂停扫描与关闭提醒互不影响。','Manual approval does not change screening results or execute trades. Pausing scanning and muting alerts are independent.'),L('非投资建议。','Not investment advice.')]
     ];
-    const paging=pagination(pages.length,query.page,1);blocks=pages[paging.page];keyboard=[paging.keyboard,control.configured ? [] : [open('onboard',locale)]];
+    const paging=pagination(pages.length,query.page,1,locale);blocks=[...pages[paging.page],paging.label];keyboard=[paging.keyboard,control.configured ? [] : [open('onboard',locale)]];
   }
   // Radar's footer leads with Settings, left of Refresh, once AVE is connected.
   const footerStart=session.panel === 'radar' && (control.configured || snapshot.candidates.length) ? [open('settings',locale)] : [];

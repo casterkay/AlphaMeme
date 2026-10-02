@@ -59,9 +59,13 @@ export class TelegramSessions {
     if (!session || session.ownerUserId !== receipt.actorUserId || session.chatId !== receipt.tenantId
       || !session.messageId || session.messageId !== receipt.sourceMessageId || link.origin_message_id !== receipt.sourceMessageId) throw new ReviewConflict('callback_owner_mismatch');
     if (session.expiresAt <= this.now() || link.expires_at <= this.now()) throw new ReviewConflict('callback_expired');
-    // A notification's buttons never depend on its rendered state (they open new messages), so an in-place edit must not void the ones on screen.
-    if (session.version !== link.expected_ui_version && !NOTIFICATION_PANELS.has(session.panel)) throw new ReviewConflict('session_changed');
-    return { session, action: link.action, params: JSON.parse(link.params_json), token: link.chain && link.address ? { chain: link.chain, address: link.address } : null, reviewRevision: link.review_revision, expectedMarkVersion: link.expected_mark_version, expectedControlEpoch: link.expected_control_epoch, expectedConnectionGeneration: link.expected_connection_generation };
+    // Safety corrections keep the original alert's navigation and mute buttons usable.
+    // Token controls depend on the shown state and must reject stale callbacks.
+    const params = JSON.parse(link.params_json);
+    const notificationAction = (link.action === 'panel.open' && (session.panel === 'notice' || ['detail','audits'].includes(params.panel)))
+      || (link.action === 'notifications.set' && params.value === false);
+    if (session.version !== link.expected_ui_version && !(NOTIFICATION_PANELS.has(session.panel) && !session.query.tokenControls && notificationAction)) throw new ReviewConflict('session_changed');
+    return { session, action: link.action, params, token: link.chain && link.address ? { chain: link.chain, address: link.address } : null, reviewRevision: link.review_revision, expectedMarkVersion: link.expected_mark_version, expectedControlEpoch: link.expected_control_epoch, expectedConnectionGeneration: link.expected_connection_generation };
   }
 
   promptSession(replyToMessageId) {

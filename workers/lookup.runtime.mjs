@@ -126,7 +126,7 @@ describe('pasted contract-address lookup', () => {
         `https://api.gopluslabs.io/api/v1/token_security/5042?contract_addresses=${TOKEN}`]);
       expect(lastText()).toMatch(/\n✅ No failures found · checked just now\n/);
       const buttons = sent.at(-1).params.reply_markup.inline_keyboard.flat();
-      expect(buttons.filter(button => button.url).map(button => [button.text, button.url])).toEqual([['🌐 Site', 'https://look.example/'], ['📊 Chart', 'https://dexscreener.com/arc/pair'], ['🔭 AVE', `https://ave.ai/token/${TOKEN}-arc`]]);
+      expect(buttons.filter(button => button.url).map(button => [button.text, button.url])).toEqual([['🌐 Site', 'https://look.example/'], ['📊 Chart', 'https://dexscreener.com/arc/pair'], ['🔭 Profile', `https://ave.ai/token/${TOKEN}-arc`]]);
       expect(tasks()).toEqual([]);
       expect(runtime().lookups.read('arc', TOKEN).secondary).toMatchObject({ status: 'COMPLETE', security: { verdict: 'NO_FATAL_FLAGS' }, conflicts: [] });
     });

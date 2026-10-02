@@ -229,7 +229,7 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it('sends each new lead its own alert at once, and its button opens the lead in a new message without touching the alert',async()=>{
+  it('opens token controls and restores the alert keyboard in place without replacing the alert text',async()=>{
     await withRuntime('22941',async({runtime,storage,tenantId,sent,sessions,link,click,drain})=>{
       runtime.commands.setPreference('language','en');
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
@@ -243,12 +243,32 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(alerts.map(row=>row.params.text.split('\n').slice(0,2))).toEqual([['<b>🆕 New lead · PEPE · Arc</b>','$120K MC · $30.1K liq · 4m old · 5m +35%'],['<b>🆕 New lead · BARE · Arc</b>','⏳ Checking']]);
       expect(alerts[0].params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['Open PEPE'],['🎯 All leads','🔕 Mute alerts']]);
       const alert=sessions().find(session=>session.panel==='alert'&&session.query.selectedToken.address===pepe),before=sent.length;
+      const projectionKey=`telegram.rendered:${alert.messageId}`;
+      const projectionBefore=storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?',tenantId,projectionKey).one().value_json;
+      storage.sql.exec("UPDATE candidates SET review_revision='lead-clean',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify({status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]},conflicts:[]}),tenantId,pepe);
       await click(link(alert,'panel.open',(params,row)=>params.panel==='detail'&&row.address===pepe));
-      expect(sent.slice(before).map(row=>row.method).filter(method=>method!=='answerCallbackQuery')).toEqual(['sendMessage']);
-      expect(runtime.commands.sessions.get(alert.id)).toMatchObject({panel:'alert',version:alert.version});
-      const detail=sessions().at(-1);
-      expect(detail).toMatchObject({panel:'detail',query:{selectedToken:{chain:'arc',address:pepe}}});
-      expect(detail.query.returnTo).toBeUndefined();
+      expect(storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?',tenantId,projectionKey).one().value_json).toBe(projectionBefore);
+      expect(sent.slice(before).map(row=>row.method).filter(method=>method!=='answerCallbackQuery')).toEqual(['editMessageReplyMarkup']);
+      const controls=sent.at(-1);
+      expect(controls.params).toMatchObject({message_id:alert.messageId});
+      expect(controls.params.text).toBeUndefined();
+      const detail=runtime.commands.sessions.get(alert.id);
+      expect(detail).toMatchObject({panel:'alert',version:alert.version+1,query:{tokenControls:true,selectedToken:{chain:'arc',address:pepe},returnTo:{panel:'alert'}}});
+      expect(sessions()).toHaveLength(2);
+      const oldFavorite=link(detail,'favorite.set');
+      storage.sql.exec("UPDATE candidates SET review_revision='lead-veto',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify({status:'COMPLETE',security:{verdict:'FATAL',fatal:['HONEYPOT']},conflicts:[]}),tenantId,pepe);
+      storage.transactionSync(()=>runtime.reconcileCardsInTransaction());await drain();
+      expect(sent.at(-1)).toMatchObject({method:'editMessageText',params:{message_id:alert.messageId}});
+      expect(sent.at(-1).params.text).toContain('PEPE failed the safety check');
+      expect(sent.at(-1).params.reply_markup.inline_keyboard.flat().some(button=>button.text==='⬅️ Back')).toBe(true);
+      await click(link(runtime.commands.sessions.get(alert.id),'panel.back'));
+      expect(sent.at(-1)).toMatchObject({method:'editMessageReplyMarkup',params:{message_id:alert.messageId}});
+      expect(sent.at(-1).params.text).toBeUndefined();
+      expect(sent.at(-1).params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['Open PEPE'],['🎯 All leads','🔕 Mute alerts']]);
+      expect(runtime.commands.sessions.get(alert.id).query.tokenControls).toBeUndefined();
+      const stale=await click(oldFavorite);
+      expect(runtime.inbox.get(stale.updateId)).toMatchObject({status:'FAILED'});
+      expect(storage.sql.exec('SELECT COUNT(*) AS n FROM annotations WHERE tenant_id=?',tenantId).one().n).toBe(0);
     });
   });
 
@@ -311,7 +331,7 @@ describe('Telegram complete command and delivery flows',()=>{
       storage.transactionSync(()=>runtime.commands.sessions.pruneInTransaction());
       const opened=await click(open);
       expect(runtime.inbox.get(opened.updateId).status).toBe('DONE');
-      expect(sessions().at(-1)).toMatchObject({panel:'detail',query:{selectedToken:{chain:'arc',address}}});
+      expect(runtime.commands.sessions.get(alert.id)).toMatchObject({panel:'alert',query:{tokenControls:true,selectedToken:{chain:'arc',address}}});
       clock.now=at+7*24*60*60_000+1;
       storage.transactionSync(()=>runtime.commands.sessions.pruneInTransaction());
       expect(storage.sql.exec('SELECT COUNT(*) AS n FROM message_map WHERE tenant_id=? AND ui_session_id=?',tenantId,alert.id).one().n).toBe(0);

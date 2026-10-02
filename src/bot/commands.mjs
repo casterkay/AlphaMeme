@@ -61,7 +61,7 @@ export class TelegramCommands {
     this.outbox.enqueueInTransaction({ id: `notice:${updateId}`, chatId: this.tenantId, method: 'sendMessage', params: { text: message, link_preview_options: { is_disabled: true } }, expiresAt: this.now() + 900_000 });
   }
 
-  renderInTransaction(session, { deliveryClass = 'USER_RESPONSE', snapshot = this.snapshot(this.storage, this.tenantId, this.now()) } = {}) {
+  renderInTransaction(session, { deliveryClass = 'USER_RESPONSE', snapshot = this.snapshot(this.storage, this.tenantId, this.now()), keyboardOnly = false } = {}) {
     const rendered = renderPanel(snapshot, session, this.language);
     // A notice is shown by exactly one render.
     if (session.query.notice !== undefined) {
@@ -73,7 +73,7 @@ export class TelegramCommands {
     const token = rendered.token ?? (['detail','evidence'].includes(session.panel) ? session.query.selectedToken : null);
     const revision = token ? this.storage.sql.exec('SELECT review_revision FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, token.chain, token.address).toArray()[0]?.review_revision ?? null : null;
     this.outbox.enqueueInTransaction({ id: `panel:${session.id}:${session.version}`, chatId: this.tenantId,
-      method: session.messageId ? 'editMessageText' : 'sendMessage', params: { ...(session.messageId ? { message_id: session.messageId } : {}), text: rendered.text, parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard }, link_preview_options: { is_disabled: true } },
+      method: session.messageId ? keyboardOnly ? 'editMessageReplyMarkup' : 'editMessageText' : 'sendMessage', params: { ...(session.messageId ? { message_id: session.messageId } : {}), ...(!keyboardOnly ? { text: rendered.text, parse_mode: 'HTML', link_preview_options: { is_disabled: true } } : {}), reply_markup: { inline_keyboard: keyboard } },
       sessionId: session.id, sessionVersion: session.version, desiredRevision: revision, token, projectionRevision: token ? reviewProjectionRevision(this.storage, this.tenantId, token, this.now()) : null, deliveryClass, expiresAt: deliveryClass === 'PANEL_UPDATE' ? this.now() + 900_000 : session.expiresAt });
     return session;
   }
@@ -230,8 +230,10 @@ export class TelegramCommands {
     const binding = this.sessions.resolveInTransaction({ tenantId: this.tenantId, actorUserId: row.actor_user_id, sourceMessageId: row.source_message_id, payload });
     let { session, action, params, token } = binding;
     const control = this.controls.snapshot();
-    // A notification stays as sent, keeping its buttons; whatever they open arrives as a new message with no way back to it.
-    const fromAlert = NOTIFICATION_PANELS.has(session.panel);
+    // Expanded alerts keep their token controls in the original message.
+    const fromAlert = NOTIFICATION_PANELS.has(session.panel) && !session.query.tokenControls;
+    const openAlertControls = session.panel === 'alert' && !session.query.tokenControls && action === 'panel.open' && params.panel === 'detail';
+    const closeAlertControls = session.panel === 'alert' && session.query.tokenControls && action === 'panel.back';
     // Muting from a days-old alert means "alerts off now", whatever changed since, so it skips the staleness checks.
     const muteFromAlert = fromAlert && action === 'notifications.set' && params.value === false;
     if (/^(scan\.|chains\.set|notifications\.)/.test(action) && !muteFromAlert && binding.expectedControlEpoch !== control.controlEpoch) throw new ReviewConflict('control_changed');
@@ -249,7 +251,7 @@ export class TelegramCommands {
       for (let depth = 1; ancestor?.query?.returnTo; depth++) { if (depth >= 4) { delete ancestor.query.returnTo; break; } ancestor = ancestor.query.returnTo; }
       // A button opens the same scope as its command: the Watchlist and Activity span every chain.
       const viewChain = ALL_CHAIN_PANELS.has(panel) ? 'all' : CONCRETE_CHAIN_PANELS.has(panel) && !CHAINS.includes(session.viewChain) ? scanChain : session.viewChain;
-      changes = panel === 'radar' ? home
+      changes = openAlertControls ? { query: { ...session.query, tokenControls: true, returnTo } } : panel === 'radar' ? home
         : { panel, viewChain, query: { ...(fromAlert ? {} : session.query), schemaVersion: 1, page: 0, pendingInput: undefined, ...(params.query ?? {}), ...(fromAlert ? {} : { returnTo }), ...(token ? { selectedToken: token } : {}) } };
     } else if (action === 'panel.back') {
       const origin = session.query.returnTo;
@@ -291,12 +293,12 @@ export class TelegramCommands {
       if (changes === null) return;
     }
     else throw new ReviewConflict('unsupported_action');
-    if (fromAlert) {
+    if (fromAlert && !openAlertControls) {
       const target = changes.panel ? changes : { panel: 'settings', viewChain: scanChain, query: {} };
       return this.renderInTransaction(this.sessions.createInTransaction(target.panel, target.viewChain ?? session.viewChain, target.query));
     }
     session = this.sessions.advanceInTransaction(session, changes);
-    this.renderInTransaction(session);
+    this.renderInTransaction(session, { keyboardOnly: openAlertControls || closeAlertControls });
   }
 
   tradingSettings() {
