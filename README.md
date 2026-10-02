@@ -30,9 +30,12 @@ uses a separate hot wallet the bot generates for you, and every trade needs a co
   貔貅、异常税率等一票否决会撤销线索并推送“风险恶化”。
   Leads are then checked on GoPlus; a fatal finding vetoes the lead and sends a
   "risk worsened" follow-up.
-- AVE 不提供持有人、交易者或合约安全数据，因此线索只是行情观察，**安全性未核验不代表安全**。
-  AVE has no holder, trader or contract-security data: a lead is a market
-  observation, and unverified does not mean safe.
+- 热榜筛选会直接剔除 AVE 已标出的高税代币（买/卖税超过 5% 或税差超过 2%），不等 GoPlus。
+  The hot-list screen drops tokens whose AVE-listed tax exceeds 5% buy or sell, or
+  differs between buy and sell by over 2%, without waiting for GoPlus.
+- 除交易税外，AVE 不提供持有人、交易者或合约安全数据（包括貔貅），因此线索只是行情观察，**安全性未核验不代表安全**。
+  Beyond taxes, AVE has no holder, trader or contract-security data (honeypots
+  included): a lead is a market observation, and unverified does not mean safe.
 
 ## 一键交易 / One-tap trading
 

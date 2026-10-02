@@ -46,6 +46,7 @@ const text = (value, limit) => typeof value === 'string' ? value.replace(/[\u000
 const webUrl = value => URL.canParse(text(value, 2048)) && ['http:', 'https:'].includes(new URL(text(value, 2048)).protocol) ? new URL(text(value, 2048)).href : '';
 const numeric = value => (typeof value === 'number' || typeof value === 'string' && /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
 const signedNumeric = value => (typeof value === 'number' || typeof value === 'string' && /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) && Number.isFinite(Number(value)) ? Number(value) : null;
+const taxRate = value => value == null || value === '' ? null : numeric(value) / 100;
 const seconds = value => Number.isSafeInteger(value) && value > 0 && value < 100000000000 ? value : null;
 const upstreamTime = value => seconds(value) === null ? null : value * 1000;
 
@@ -124,12 +125,15 @@ function tokenRow(row, chain, ca, required = false) {
     if (row[field] != null && row[field] !== 0 && seconds(row[field]) === null) throw fail('SCHEMA');
   }
   if (row.token_price_change_5m != null && signedNumeric(row.token_price_change_5m) === null) throw fail('SCHEMA');
+  // AVE states taxes in percent ("3.5" is 3.5%); a blank tax is unknown, never zero.
+  for (const field of ['buy_tax', 'sell_tax']) if (row[field] != null && row[field] !== '' && !(numeric(row[field]) <= 100)) throw fail('SCHEMA');
   return { token: ca, chain, apiChain: AVE_CHAINS[chain], name: text(row.name, 100), symbol: text(row.symbol, 40),
     current_price_usd: price, market_cap: numeric(row.market_cap), holders: numeric(row.holders), tvl: numeric(row.tvl),
     main_pair_tvl: numeric(row.main_pair_tvl), token_tx_volume_usd_5m: numeric(row.token_tx_volume_usd_5m),
     token_buy_volume_u_5m: numeric(row.token_buy_volume_u_5m), token_sell_volume_u_5m: numeric(row.token_sell_volume_u_5m),
     token_tx_count_5m: numeric(row.token_tx_count_5m), token_buy_tx_count_5m: numeric(row.token_buy_tx_count_5m),
     token_sell_tx_count_5m: numeric(row.token_sell_tx_count_5m), token_price_change_5m: signedNumeric(row.token_price_change_5m),
+    buy_tax: taxRate(row.buy_tax), sell_tax: taxRate(row.sell_tax),
     launch_at: seconds(row.launch_at), created_at: seconds(row.created_at), website: webUrl(row.website),
     updated_at: row.updated_at ?? null, sourceUpdatedAt: upstreamTime(row.updated_at),
     identityBasis: row.token === undefined && row.address === undefined ? 'request_path' : 'response' };
@@ -216,6 +220,8 @@ function marketRow(row, capturedAt, now) {
     sell_volume_5m: row.token_sell_volume_u_5m, swaps_5m: row.token_tx_count_5m,
     buys_5m: row.token_buy_tx_count_5m, sells_5m: row.token_sell_tx_count_5m,
     price_change_percent5m: row.token_price_change_5m === null ? null : row.token_price_change_5m / 100,
+    // AVE's own tax reading lets the screen drop high-tax tokens before any alert; GoPlus rechecks it later.
+    buy_tax: row.buy_tax, sell_tax: row.sell_tax,
     rug_ratio: null, bundler_rate: null, rat_trader_amount_rate: null, is_wash_trading: null, is_honeypot: null,
     capturedAt, sourceUpdatedAt: sampledAt, sampledAt, expiresAt,
     stale: sampledAt === null || sampledAt > capturedAt + 30000 || now >= expiresAt,

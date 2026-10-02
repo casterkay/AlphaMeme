@@ -12,8 +12,8 @@ import { nextWatchState, promotions, watchTargets } from './onchain-watch.mjs';
 // On a chain with pinned pool factories it also reads the new pools its logs
 // created, watches them on DexScreener, and reads AVE's market row for up to
 // two that trade enough, so they are screened alongside the hot list.
-// Leads then get the free GoPlus check; a fatal security finding vetoes the lead. No AVE token audit runs: AVE has no holder, trader
-// or contract-security data, so an AVE audit could never pass (upstream v0.1.10).
+// Leads then get the free GoPlus check; a fatal security finding vetoes the lead. No AVE token audit runs: beyond taxes, AVE has no
+// holder, trader or contract-security data, so an AVE audit could never pass (upstream v0.1.10).
 // The discovery requests for a cycle; the AVE market reads follow from what the watch found.
 // A cycle reads new pools only when it began with the on-chain source configured.
 function discoveryEndpoints(chain, partial) {

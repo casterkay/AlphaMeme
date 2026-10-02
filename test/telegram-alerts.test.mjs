@@ -85,6 +85,12 @@ test('a risk alert names the token, the recorded fatal findings and that only bu
   assert.equal(zh, ['<b>⛔ PEPE 未通过安全检查 · Arc</b>', 'GoPlus 标记：貔貅风险：是 · 开源：否', '已禁止买入；仍可卖出。'].join('\n'));
 });
 
+test('a risk alert states a vetoing tax as a percentage', () => {
+  const vetoed = lead('PEPE', { fatal: [{ field: 'sellTax', value: 0.3 }] });
+  const { text } = alertCard({ actionReason: 'RISK_WORSENED', members: [] }, [vetoed], { locale: 'en' });
+  assert.equal(text.split('\n')[1], 'GoPlus flagged: Sell tax: 30%');
+});
+
 test('a risk alert without readable findings still names the token and the blocked buy', () => {
   const { text, keyboard } = alertCard({ actionReason: 'RISK_WORSENED', members: [] }, [lead('PEPE')], { locale: 'en' });
   assert.equal(text, ['<b>⛔ PEPE failed the safety check · Arc</b>', 'Buying is blocked; selling still works.'].join('\n'));
