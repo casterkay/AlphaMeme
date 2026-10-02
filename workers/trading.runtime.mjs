@@ -263,6 +263,9 @@ describe('one-tap trading', () => {
       expect(sent.at(-1).params.reply_markup.inline_keyboard[0][0].text).toBe('Open MEME');
       expect(trades()).toEqual([]);
       await click(link(current(),'panel.open',params=>params.panel==='detail'));
+      // Wallet retains Home; model the wallet-setup destination in this existing-wallet fixture.
+      storage.transactionSync(()=>commands.renderInTransaction(commands.sessions.advanceInTransaction(current(),{panel:'wallet',query:{returnTo:{panel:'alert',viewChain:'arc',query:current().query}}})));
+      await drain();
       await click(link(current(),'panel.open',params=>params.panel==='radar'));
       expect(current().panel).toBe('radar');
       expect(current().query.returnTo).toBeUndefined();

@@ -119,20 +119,24 @@ export function textPages(blocks, budget = 2100) {
   return pages;
 }
 
+const BACK_ONLY_PANELS = new Set(['detail','evidence','view_chain','filter','sort','language','horizon','cohort','sources','delivery','chains','onboard','disconnect','trade_settings','wallet_export','wallet_remove','trade','trade_unverified']);
+
 /**
  * Wrap a panel with its title, an "Updated" footer line and the standard
  * navigation row: [Refresh] [Back] [Home]. Back appears only with somewhere to
- * return to; the Radar root shows neither Back nor Home. A `footnote` joins the
- * "Updated" line when the panel's data has its own, older read time. A session
+ * return to; secondary views use Back alone when available. The Radar root shows
+ * neither Back nor Home. A `footnote` joins the "Updated" line when the panel's
+ * data has its own, older read time. A session
  * `notice` (a refusal or an invalid reply) leads the panel as a one-line banner.
  */
 export function finishPanel(title, blocks, keyboard, snapshot, session, locale, { token = null, refresh = true, footnote = null, footerStart = [] } = {}) {
   const root = session.panel === 'radar';
+  const hasBack = !root && session.panel !== 'settings' && Boolean(session.query?.returnTo);
   const footer = [
     ...footerStart,
     refresh ? button(`${ICONS.refresh} ${localize(locale, '刷新', 'Refresh')}`, 'panel.refresh') : null,
-    !root && session.panel !== 'settings' && session.query?.returnTo ? button(`${ICONS.back} ${localize(locale, '返回', 'Back')}`, 'panel.back') : null,
-    root ? null : button(`${ICONS.home} ${localize(locale, '首页', 'Home')}`, 'panel.open', { panel: 'radar' })
+    hasBack ? button(`${ICONS.back} ${localize(locale, '返回', 'Back')}`, 'panel.back') : null,
+    root || (hasBack && BACK_ONLY_PANELS.has(session.panel)) ? null : button(`${ICONS.home} ${localize(locale, '首页', 'Home')}`, 'panel.open', { panel: 'radar' })
   ];
   const body = blocks.filter(value => value !== undefined && value !== null);
   const notice = session.query?.notice;
