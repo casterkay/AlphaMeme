@@ -24,8 +24,8 @@
   "vars": {
     "AVE_MONTHLY_CU": "1000000",
     "AVE_CU_RESET_DAY": "1",
-    "KYBER_CLIENT_ID": "",
-    "ARC_RPC_URL": "",
+    "KYBER_CLIENT_ID": "AlphaMeme",
+    "ARC_RPC_URL": "https://rpc.mainnet.arc.io",
     "BSC_RPC_URL": "",
     "BASE_RPC_URL": "",
     "ETH_RPC_URL": "",
