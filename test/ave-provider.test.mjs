@@ -89,10 +89,9 @@ test('trending drops a single malformed row and keeps the valid ones', async () 
 test('trending reads AVE percent taxes as rates so the screen drops only high-tax tokens before any alert', async () => {
   const cases = [
     { buy_tax: '1.0', sell_tax: '1.0', rates: [0.01, 0.01], rejected: false },
-    { buy_tax: '3.0', sell_tax: '5.0', rates: [0.03, 0.05], rejected: false },
     { buy_tax: '0.0', sell_tax: '100.0', rates: [0, 1], rejected: true },
     { buy_tax: '0', sell_tax: '5.5', rates: [0, 0.055], rejected: true },
-    { buy_tax: '0.5', sell_tax: '3.0', rates: [0.005, 0.03], rejected: true },
+    { buy_tax: '0.0', sell_tax: '5.0', rates: [0, 0.05], rejected: false },
     { buy_tax: '', rates: [null, null], rejected: false }
   ].map((fields, index) => ({ ...fields, address: `0x${String(index + 1).repeat(40)}` }));
   const { ave } = client(() => envelope(cases.map(({ address, rates, rejected, ...fields }) => tokenRow(address, 'bsc', fields))));

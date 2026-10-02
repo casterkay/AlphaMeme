@@ -39,7 +39,6 @@ export const scannerSettings = Object.freeze({
   maxLinkedHoldRate: 0.10,
   maxBuyTax: 0.05,
   maxSellTax: 0.05,
-  maxTaxAsymmetry: 0.02,
   minLpLockedRate: 0.80,
   minOrdinaryWallets: 8,
   dynamicRecheckMs: 2 * 60_000,

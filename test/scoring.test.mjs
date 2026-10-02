@@ -237,7 +237,7 @@ test('deep screen rejects malformed taxes instead of coercing them to zero', () 
   assert.equal(result.security.sellTax, .05);
 });
 
-test('deep screen rejects materially asymmetric buy and sell taxes', () => {
+test('deep screen accepts unequal buy and sell taxes within their limits', () => {
   const result = deepScreen({
     discovery: {
       address, market_cap: 50_000, liquidity: 10_000, sells_24h: 20, rug_ratio: .1,
@@ -253,8 +253,7 @@ test('deep screen rejects materially asymmetric buy and sell taxes', () => {
     },
     nowMs: nowSec * 1000
   }, config);
-  assert.equal(result.checks.tax, false);
-  assert.ok(result.security.taxDifference > config.maxTaxAsymmetry);
+  assert.equal(result.checks.tax, true);
 });
 
 

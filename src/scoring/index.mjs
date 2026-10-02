@@ -622,9 +622,7 @@ export function deepScreen({ discovery, audit, nowMs = Date.now() }, config) {
     ownerRenounced: ownerRenounced === true,
     lpLocked: lpBurned || (lockRate !== null && lockRate >= config.minLpLockedRate),
     notHoneypot: exactNotHoneypot || (!explicitHoneypot && sellability.pass),
-    tax: buyTax !== null && sellTax !== null
-      && buyTax <= config.maxBuyTax && sellTax <= config.maxSellTax
-      && Math.abs(buyTax - sellTax) <= config.maxTaxAsymmetry,
+    tax: buyTax !== null && sellTax !== null && !taxBreaches(buyTax, sellTax, config).length,
     rug: rugRatio !== null && rugRatio <= config.maxRugRatio,
     concentration: top10 !== null && top10 <= config.maxTop10Rate,
     dev: devHold !== null && devHold <= 0.01,

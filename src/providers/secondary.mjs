@@ -349,7 +349,7 @@ const EVM_SECURITY_RULES = Object.freeze([
   ['tradingCooldown', 'trading_cooldown', true, false, '合约包含交易冷却限制']
 ]);
 
-const TAX_BREACH_REASONS = Object.freeze({ buyTax: '买入税超过风险门槛', sellTax: '卖出税超过风险门槛', taxDifference: '买卖税差超过风险门槛' });
+const TAX_BREACH_REASONS = Object.freeze({ buyTax: '买入税超过风险门槛', sellTax: '卖出税超过风险门槛' });
 
 function findGoPlusRecord(payload, tokenAddress) {
   if (!payload || Array.isArray(payload) || typeof payload !== 'object') return null;
@@ -402,7 +402,6 @@ function parseGoPlus(payload, { tokenAddress }) {
   }
   fields.buyTax = buyTax;
   fields.sellTax = sellTax;
-  fields.taxDifference = buyTax !== null && sellTax !== null ? Math.abs(buyTax - sellTax) : null;
   for (const field of taxBreaches(buyTax, sellTax, scannerSettings)) fatal.push({ field, reason: TAX_BREACH_REASONS[field] });
   // An omitted risk flag is not evidence of safety. Keep the source incomplete
   // so callers can recheck instead of treating an unknown field as a clean bill.
