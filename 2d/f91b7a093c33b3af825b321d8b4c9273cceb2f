@@ -1,0 +1,27 @@
+src/render/telegram.mjs
+  s_70e2d2032303f6::t_12fd53a4b8120f 122-123,127-129,134,138-139
+test/telegram-panels.test.mjs
+  s_70e2d2032303f6::t_90178d8cb412a5 67,82
+test/trading-panels.test.mjs
+  s_70e2d2032303f6::t_de19f0600df4f4 70,82
+workers/telegram-e2e.runtime.mjs
+  s_70e2d2032303f6::t_5862c303f32b93 329-334,424,428-430
+workers/trading.runtime.mjs
+  s_70e2d2032303f6::t_eef3ce39f26da9 266-268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2df91b7a093c33b3af825b321d8b4c9273cceb2f",
+  "prompts": {},
+  "sessions": {
+    "s_70e2d2032303f6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0fb1d-c6b0-7463-807e-6df93d8bc45e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
