@@ -64,6 +64,7 @@ test('help is three pages: what the radar does, commands, then safety',()=>{
 const STATIC_PANELS=new Set(['view_chain','filter','sort','language','horizon','cohort','chains','disconnect','help','connection','evidence','trade','trade_unverified','wallet','wallet_export','wallet_remove','trade_settings']);
 // An alert is a message, not a place to navigate: it has no footer (its own tests cover it).
 const NAVIGABLE_PANELS=PANEL_NAMES.filter(panel=>panel!=='alert');
+const BACK_ONLY_PANELS=new Set(['detail','evidence','view_chain','filter','sort','language','horizon','cohort','sources','delivery','chains','onboard','disconnect','trade_settings','wallet_export','wallet_remove','trade','trade_unverified']);
 test('every panel ends with the standard footer and keeps navigation out of its body',()=>{
   const home=item=>item.action==='panel.open'&&item.params.panel==='radar';
   const nav=item=>item.action==='panel.refresh'||item.action==='panel.back'||home(item);
@@ -78,7 +79,7 @@ test('every panel ends with the standard footer and keeps navigation out of its 
     const order=footer.map(item=>item.action==='panel.refresh'?0:item.action==='panel.back'?1:2);
     assert.deepEqual(order,[...order].sort(),label);
     assert.equal(footer.some(item=>item.action==='panel.back'),returning&&panel!=='radar'&&panel!=='settings',label);
-    assert.equal(footer.some(home),panel!=='radar',label);
+    assert.equal(footer.some(home),panel!=='radar'&&!(returning&&BACK_ONLY_PANELS.has(panel)),label);
     assert.equal(footer.some(item=>item.action==='panel.refresh'),!STATIC_PANELS.has(panel),label);
     assert.match(result.text,locale==='en'?/\n\nUpdated [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2} UTC$/:/\n\n更新于 \d{1,2}月\d{1,2}日 \d{2}:\d{2} UTC$/,label);
   }

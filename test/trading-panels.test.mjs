@@ -67,7 +67,7 @@ test('a live trade offers Refresh and Back to its origin; the wallet refreshes b
   const origin = { panel: 'detail', viewChain: 'bsc', query: { selectedToken: { chain: 'bsc', address: TOKEN } } };
   const trade = { id: 't1', chain: 'bsc', token: TOKEN, side: 'sell', percent: 50, state: 'QUOTING', tokenMeta: { symbol: 'MEME', decimals: 18 }, createdAt: now };
   const footer = result => result.keyboard.at(-1).map(item => item.action);
-  assert.deepEqual(footer(renderPanel(snapshot({ trades: [trade] }), { panel: 'trade', viewChain: 'bsc', query: { tradeId: 't1', returnTo: origin }, version: 1 }, 'en')), ['panel.refresh', 'panel.back', 'panel.open']);
+  assert.deepEqual(footer(renderPanel(snapshot({ trades: [trade] }), { panel: 'trade', viewChain: 'bsc', query: { tradeId: 't1', returnTo: origin }, version: 1 }, 'en')), ['panel.refresh', 'panel.back']);
   const wallet = renderPanel(snapshot(), { panel: 'wallet', viewChain: 'bsc', query: {}, version: 1 }, 'en');
   assert.deepEqual(footer(wallet), ['panel.open']);
   assert.ok(buttons(wallet).some(item => item.action === 'wallet.refresh'));
@@ -79,7 +79,7 @@ test('the unverified-buy question names the token and amount and offers Yes then
   const en = question('en');
   for (const line of ['Safety check not finished', 'MEME · BNB Chain — buy $25.50?', 'have not verified this token yet', 'honeypot']) assert.ok(en.text.includes(line), line);
   assert.deepEqual(en.keyboard[0].map(item => [item.text, item.action]), [['✅ Yes', 'trade.acknowledge_unverified'], ['❌ No', 'trade.decline_unverified']]);
-  assert.deepEqual(en.keyboard.at(-1).map(item => item.action), ['panel.back', 'panel.open']);
+  assert.deepEqual(en.keyboard.at(-1).map(item => item.action), ['panel.back']);
   assert.ok(!buttons(en).some(item => item.action === 'panel.refresh'));
   assert.match(question('zh').text, /安全核验未完成[\s\S]*买入 \$25\.50？/);
   assert.ok(question('en', []).text.includes(`<code>${TOKEN}</code>`), 'an unknown symbol falls back to the contract address');

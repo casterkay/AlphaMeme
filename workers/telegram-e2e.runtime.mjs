@@ -326,7 +326,12 @@ describe('Telegram complete command and delivery flows',()=>{
       const current=()=>runtime.commands.sessions.get(alert.id);
       await click(link(current(),'panel.open',params=>params.panel==='detail'));
       await click(link(current(),'panel.open',params=>params.panel==='evidence'));
-      if(destination==='radar') await click(link(current(),'panel.open',params=>params.panel==='radar'));
+      if(destination==='radar') {
+        // Wallet retains Home when it is opened from alert token controls for setup.
+        storage.transactionSync(()=>runtime.commands.renderInTransaction(runtime.commands.sessions.advanceInTransaction(current(),{panel:'wallet',query:{returnTo:{panel:'alert',viewChain:'arc',query:alert.query}}})));
+        await drain();
+        await click(link(current(),'panel.open',params=>params.panel==='radar'));
+      }
       expect(current().panel).toBe(destination);
       const fatal={status:'COMPLETE',security:{verdict:'FATAL',fatal:[{field:'isHoneypot'}],fields:{isHoneypot:true}},conflicts:[]};
       storage.sql.exec("UPDATE candidates SET status='HARD_REJECT',review_revision='veto-1',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify(fatal),tenantId,address);
@@ -416,10 +421,13 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it('Home returns to the Radar root without a stale path back',async()=>{
+  it('token detail uses Back, and the list Home returns to Radar without a stale path back',async()=>{
     await withRuntime('22931',async({runtime,command,sessions,link,click,seed})=>{
       seed(3);await command('leads');const root=sessions()[0];
       await click(link(root,'panel.open',params=>params.panel==='detail'));
+      expect(()=>link(runtime.commands.sessions.get(root.id),'panel.open',params=>params.panel==='radar')).toThrow();
+      await click(link(runtime.commands.sessions.get(root.id),'panel.back'));
+      expect(runtime.commands.sessions.get(root.id).panel).toBe('audits');
       await click(link(runtime.commands.sessions.get(root.id),'panel.open',params=>params.panel==='radar'));
       const home=runtime.commands.sessions.get(root.id);expect(home.panel).toBe('radar');expect(home.query.returnTo).toBeUndefined();
       expect(()=>link(home,'panel.back')).toThrow();
