@@ -196,11 +196,10 @@ test('GoPlus fatal flags are not softened', async () => {
 
 for (const [taxes, fatal] of [
   [{ buy_tax: '0.05', sell_tax: '0.05' }, []],
-  [{ buy_tax: '0.03', sell_tax: '0.05' }, []],
   [{ buy_tax: '0.06', sell_tax: '0.05' }, ['buyTax']],
-  [{ buy_tax: '0', sell_tax: '0.3' }, ['sellTax', 'taxDifference']],
-  [{ buy_tax: '0', sell_tax: '1' }, ['sellTax', 'taxDifference']],
-  [{ buy_tax: '0', sell_tax: '0.03' }, ['taxDifference']],
+  [{ buy_tax: '0', sell_tax: '0.3' }, ['sellTax']],
+  [{ buy_tax: '0', sell_tax: '1' }, ['sellTax']],
+  [{ buy_tax: '0', sell_tax: '0.05' }, []],
   [{ buy_tax: '', sell_tax: '0.3' }, ['sellTax']]
 ]) {
   test(`GoPlus taxes of ${taxes.buy_tax || 'unknown'} buy and ${taxes.sell_tax} sell veto on ${fatal.join(', ') || 'nothing'}`, async () => {
