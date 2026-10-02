@@ -210,6 +210,22 @@ const LOOKUP_FAILURES = {
   AVE_CREDENTIAL_MISSING:['AVE未连接','AVE is not connected'], AVE_CREDENTIAL_CORRUPT:['AVE密钥不可用，请重新连接','AVE key unavailable; reconnect']
 };
 
+// A failing source's code in words; a code with no wording yet is shown as received.
+const SOURCE_PROBLEMS = {
+  ONCHAIN_NOT_CONFIGURED:['未配置此链的RPC','No RPC configured for this chain'], ONCHAIN_UNSUPPORTED:['此链暂无链上发现','No on-chain discovery for this chain'],
+  ONCHAIN_NETWORK:['无法连接RPC','RPC unreachable'], ONCHAIN_TIMEOUT:['RPC响应超时','RPC timed out'], ONCHAIN_SCHEMA:['RPC返回了无法识别的结果','RPC answer unreadable'], ONCHAIN_FAILED:['RPC读取失败','RPC read failed'],
+  TIMEOUT:['响应超时','Timed out'], REQUEST_FAILED:['请求失败','Request failed'], UPSTREAM_REJECTED:['拒绝了请求','Rejected the request'], RESPONSE_TOO_LARGE:['响应过大','Answer too large'],
+  INVALID_JSON:['返回了无法识别的结果','Answer unreadable'], INVALID_JSON_SHAPE:['返回了无法识别的结果','Answer unreadable'], INVALID_CONTENT_TYPE:['返回了无法识别的结果','Answer unreadable'], INVALID_RESPONSE:['返回了无法识别的结果','Answer unreadable'], NORMALIZATION_MISSING:['返回了无法识别的结果','Answer unreadable'],
+  INVALID_ADDRESS:['代币地址无效','Invalid token address']
+};
+function sourceProblem(code,locale) {
+  const L=(zh,en)=>localize(locale,zh,en),http=/^(?:ONCHAIN_)?HTTP_(\d+)$/.exec(code || ''),rpc=/^ONCHAIN_RPC(?:_(\d+))?$/.exec(code || '');
+  if(http) return http[1] === '429' ? L('请求受限 (429)','Rate limited (429)') : L(`请求被拒绝 (HTTP ${http[1]})`,`Request refused (HTTP ${http[1]})`);
+  if(rpc) return L('RPC返回错误','RPC returned an error')+(rpc[1] ? ` ${rpc[1]}` : '');
+  const known=SOURCE_PROBLEMS[code] || LOOKUP_FAILURES[code] || reasonLabels[code];
+  return known ? L(...known) : code ? safeTelegramText(code,48) : name('unknown',locale);
+}
+
 const LOOKUP_CHECK_FAILURES = { DEXSCREENER:['DexScreener 检查未完成','the DexScreener check did not finish'], GOPLUS:['GoPlus 检查未完成','the GoPlus check did not finish'] };
 
 // A pasted token's lookup (§4): progress while it runs, then AVE's market facts and the shared verdict.
@@ -361,10 +377,14 @@ function statusPanel(snapshot,session,locale) {
   const L=(zh,en)=>localize(locale,zh,en),control=snapshot.control || {},metrics=snapshot.metrics || {},ave=snapshot.ave || {};
   let blocks,keyboard;
   if(session.panel === 'sources') {
-    const lines=evidenceLines(snapshot.sourceHealth || {},locale);
-    const pages=textPages(lines.length ? lines : [L('尚无来源记录','No source records')]);
-    const paging=pagination(pages.length,session.query?.page,1);
-    blocks=pages[paging.page].map(value=>userText(value,2400));keyboard=[paging.keyboard];
+    const {discovery,lastSecondary}=snapshot.sourceHealth || {},section=(title,row)=>`<b>${title}</b> · ${relativeTime(row.checkedAt,snapshot.at,locale)}`;
+    const line=(label,row)=>row.ok === false || row.status === 'ERROR' ? `${ICONS.unknown} ${label}: ${sourceProblem(row.code,locale)}`
+      : `${ICONS.passed} ${label}${row.count !== null ? `: ${numberText(row.count,locale)}` : row.status && row.status !== 'OK' ? `: ${sourceProblem(row.status,locale)}` : ''}`;
+    blocks=[];
+    if(discovery) blocks.push(section(L('发现来源','Discovery'),discovery),...['trending','newPools','watch','promoted'].filter(field=>discovery[field]).map(field=>line(L(...fieldLabels[field]),discovery[field])));
+    if(lastSecondary) blocks.push(...(blocks.length ? [''] : []),section(L('最近代币核验','Last token check'),lastSecondary),...Object.entries({dexScreener:'DexScreener',goPlus:'GoPlus'}).filter(([field])=>lastSecondary.sources[field]).map(([field,label])=>line(label,lastSecondary.sources[field])));
+    if(!blocks.length) blocks=[L('尚无来源记录','No source records')];
+    keyboard=[];
   } else if(session.panel === 'delivery') {
     const pages=textPages((snapshot.delivery || []).map(row=>`${row.purpose === 'ACTION_REQUIRED' ? L('需处理的提醒','Action-required notice') : row.purpose === 'PANEL_UPDATE' ? L('面板更新','Panel update') : L('请求回复','Requested response')}: ${row.status === 'UNKNOWN' ? L('发送结果不确定，请核对','Delivery unconfirmed; check it') : L('发送失败','Delivery failed')}`));
     const paging=pagination(pages.length,session.query?.page,1);
@@ -474,7 +494,7 @@ export function renderPanel(snapshot,session,locale='zh') {
       // A failing discovery source shows here, not only two taps away in Sources.
       const discovery=snapshot.sourceHealth?.discovery || {};
       blocks.splice(1,0,...['trending','newPools','watch','promoted'].filter(field=>discovery[field]?.ok === false)
-        .map(field=>`${ICONS.unknown} ${L(...fieldLabels[field])}: ${discovery[field].code || name('unknown',locale)}`));
+        .map(field=>`${ICONS.unknown} ${L(...fieldLabels[field])}: ${sourceProblem(discovery[field].code,locale)}`));
       keyboard=[...rowsOf(shown.map((row,index)=>detailButton(row,index,locale)),2),[open('audits',locale),open('feed',locale)],[open('saved',locale),open('stats',locale)],[open('wallet',locale),open('status',locale)]];
     }
   } else if(session.panel === 'settings') {
