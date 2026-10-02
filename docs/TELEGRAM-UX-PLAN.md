@@ -101,9 +101,10 @@ assembling their own.
 ### 3.1 Command menu (`HELP_COMMANDS`, `scripts/telegram-register.mjs`)
 
 Registered menu, in frequency order: `/radar`, `/leads`, `/hot`, `/watchlist`,
-`/wallet`, `/performance`, `/settings`, `/help`.
+`/wallet`, `/performance`, `/status`, `/settings`, `/help`. (`/status` joined the
+menu on 2026-10-02: when a source fails, the place that says why must be easy to find.)
 
-Working but unlisted (documented in Help): `/start`, `/activity`, `/status`,
+Working but unlisted (documented in Help): `/start`, `/activity`,
 `/chains`, `/pause`, `/resume`, `/mute`, `/lang`, `/note`, `/cancel`, `/export`,
 `/onboard`, `/setkey`, `/disconnect`.
 
@@ -131,10 +132,14 @@ Updated 12:34 UTC
 [1 PEPE] [2 DOGE2] [3 RUGME]
 [🎯 Leads] [🔥 Hot list]
 [⭐ Watchlist] [📈 Performance]
-[👛 Wallet] [⚙️ Settings]
+[👛 Wallet] [📊 Status]
+[⚙️ Settings] [🔄 Refresh]
 ```
 
 - Top three rows are the newest leads on the scan chain (vetoed shown last).
+- A failing discovery source gets one line under the state line, e.g.
+  "⚠️ New pools on chain: ONCHAIN_HTTP_403"; healthy sources add nothing.
+- Settings leads the footer row, left of Refresh.
 - Empty state: "No leads in the last 30 min. The radar checks the hot list every
   ~15 s." with `[🔥 Hot list]`.
 - Operator counters (scan count, discovered/prefilter, queue/due) move to Status.
@@ -154,15 +159,14 @@ AVE: connected
 
 [🔗 Scan chain: Arc] [⏸ Pause scanning]
 [🔕 Mute alerts]
-[👛 Wallet] [🎚 Trade limits]
-[🌐 Language] [🔑 AVE key]
-[📊 Status] [📤 Export]
-[🔌 Disconnect AVE]
+[🎚 Trade limits] [🌐 Language]
+[🔑 AVE key] [📤 Export]
 [🏠 Home]
 ```
 
-Disconnect sits alone on the last functional row and still opens its
-confirmation panel.
+A panel holds only its own actions; navigation elsewhere is the footer's job.
+Wallet and Status live on Radar. Deleting the AVE key lives in the AVE key panel
+(`[Open AVE Cloud] [🗑 Delete]`), and Delete still opens its confirmation panel.
 
 ### 3.4 Leads, Hot list, Watchlist (`listPanel`)
 
