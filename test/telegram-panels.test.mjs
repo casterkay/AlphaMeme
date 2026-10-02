@@ -23,17 +23,17 @@ test('all native panels render both locales with bounded text and typed action d
   }
 });
 
-test('the command menu lists the eight frequent commands in order, localized, and Help lists every command',()=>{
-  const menu=['radar','leads','hot','watchlist','wallet','performance','settings','help'];
+test('the command menu lists the nine frequent commands in order, localized, and Help lists every command',()=>{
+  const menu=['radar','leads','hot','watchlist','wallet','performance','status','settings','help'];
   for(const locale of ['zh','en']) {
     const commands=telegramCommandDescriptions(locale);
     assert.deepEqual(commands.map(item=>item.command),menu,locale);
     for(const {description} of commands) assert.ok(description.length>0&&description.length<=256,description);
   }
   assert.notDeepEqual(telegramCommandDescriptions('zh'),telegramCommandDescriptions('en'));
-  assert.deepEqual(HELP_COMMAND_NAMES.slice(0,8),menu);
+  assert.deepEqual(HELP_COMMAND_NAMES.slice(0,9),menu);
   for(const retired of ['audits','candidates','feed','saved','stats','events']) assert.ok(!HELP_COMMAND_NAMES.includes(retired),retired);
-  for(const unlisted of ['start','activity','status','chains','pause','resume','mute','lang','note','cancel','export','onboard','setkey','disconnect']) assert.ok(HELP_COMMAND_NAMES.includes(unlisted),unlisted);
+  for(const unlisted of ['start','activity','chains','pause','resume','mute','lang','note','cancel','export','onboard','setkey','disconnect']) assert.ok(HELP_COMMAND_NAMES.includes(unlisted),unlisted);
   for(const locale of ['zh','en']) {
     const commands=renderPanel(fixture(),session('help',{page:1}),locale).text;
     for(const command of HELP_COMMAND_NAMES) assert.match(commands,new RegExp(`/${command} — `),`${locale} ${command}`);
@@ -69,7 +69,10 @@ test('every panel ends with the standard footer and keeps navigation out of its 
   const nav=item=>item.action==='panel.refresh'||item.action==='panel.back'||home(item);
   for(const locale of ['zh','en']) for(const panel of NAVIGABLE_PANELS) for(const returning of [false,true]) {
     const snapshot=fixture(), query={selectedToken:{chain:'robinhood',address:snapshot.candidates[0].address},outcome:'connected',...(returning?{returnTo:{panel:'audits',viewChain:'robinhood',query:{}}}:{})};
-    const result=renderPanel(snapshot,session(panel,query),locale), footer=result.keyboard.at(-1), label=`${panel} ${locale} ${returning}`;
+    const result=renderPanel(snapshot,session(panel,query),locale), label=`${panel} ${locale} ${returning}`;
+    // Radar's footer leads with Settings, then the standard navigation.
+    const footer=panel==='radar' ? result.keyboard.at(-1).slice(1) : result.keyboard.at(-1);
+    if(panel==='radar') assert.equal(result.keyboard.at(-1)[0].params.panel,'settings',label);
     assert.ok(footer.every(nav),label);
     assert.ok(!result.keyboard.slice(0,-1).flat().some(nav),label);
     const order=footer.map(item=>item.action==='panel.refresh'?0:item.action==='panel.back'?1:2);
@@ -220,6 +223,16 @@ test('onboarding in both languages links AVE Cloud, asks for /setkey and states 
     assert.ok(result.keyboard.flat().some(item=>item.url==='https://cloud.ave.ai/login'));
     assert.ok(result.text.includes('/setkey'));assert.ok(result.text.includes(locale==='en'?'cannot guarantee deletion':'无法保证删除'));
   }
+});
+
+test('the AVE key panel holds only its own actions: open AVE Cloud, and Delete once connected',()=>{
+  const snapshot=fixture();
+  const connected=renderPanel(snapshot,session('onboard'),'en');
+  assert.deepEqual(connected.keyboard.slice(0,-1).map(row=>row.map(item=>item.url ? 'url' : item.params.panel)),[['url','disconnect']]);
+  assert.equal(connected.keyboard[0][1].text,'🗑️ Delete');
+  assert.equal(renderPanel(snapshot,session('disconnect'),'en').keyboard[0][0].text,'🗑️ Delete key');
+  snapshot.control.configured=false;
+  assert.deepEqual(renderPanel(snapshot,session('onboard'),'en').keyboard.slice(0,-1).map(row=>row.length),[1]);
 });
 
 test('export is all-chain and whitelist-only with original manual revision and sanitized annotations',()=>{
@@ -390,13 +403,23 @@ test('radar leads with the newest leads on the scan chain, vetoed last, and leav
   const result=renderPanel(snapshot,{...session('radar'),viewChain:'base'},'en');
   assert.equal(result.text,'<b>📡 Radar · Robinhood</b>\n🟢 Scanning · 🔕 Alerts off\n\nLast 30 min: 2 leads · 1 vetoed\n1. <b>DOGE2</b>\n2. <b>PEPE</b> · $120K · 4m old · +35%\n3. ⛔ RUGME · vetoed\n\nUpdated Jan 15 08:00 UTC');
   assert.deepEqual(result.keyboard[0].map(item=>item.token.address),[1,0,2].map(index=>snapshot.candidates[index].address));
-  assert.deepEqual(panelRows(result).slice(1),[['audits','feed'],['saved','stats'],['wallet','settings']]);
+  assert.deepEqual(panelRows(result).slice(1),[['audits','feed'],['saved','stats'],['wallet','status']]);
+  assert.deepEqual(result.keyboard.at(-1).map(item=>item.params?.panel ?? item.action),['settings','panel.refresh'],'Settings sits left of Refresh');
   const status=renderPanel(snapshot,session('status'),'en').text;
   assert.match(status,/Successful scans: 7\n/);assert.match(status,/Last cycle discovered\/prefilter passed: 40\/12\n/);
   snapshot.candidates=[];
   const empty=renderPanel(snapshot,session('radar'),'en');
   assert.match(empty.text,/\n\nNo leads in the last 30 min\. The radar checks the hot list every ~15s\.\n/);
-  assert.deepEqual(panelRows(empty),[[],['audits','feed'],['saved','stats'],['wallet','settings']].filter(row=>row.length));
+  assert.deepEqual(panelRows(empty),[[],['audits','feed'],['saved','stats'],['wallet','status']].filter(row=>row.length));
+});
+
+test('radar names each failing discovery source and its reason, and nothing when all are healthy',()=>{
+  const snapshot=fixture();snapshot.candidates=[];
+  snapshot.sourceHealth={discovery:{trending:{ok:true,count:100},newPools:{ok:false,code:'ONCHAIN_HTTP_403'},watch:{ok:true,count:3},promoted:{ok:false,code:null}}};
+  const failing=renderPanel(snapshot,session('radar'),'en').text;
+  assert.match(failing,/\n🟢 Scanning · 🔕 Alerts off\n⚠️ New pools on chain: ONCHAIN_HTTP_403\n⚠️ New pools screened: Unknown\n\nNo leads/);
+  snapshot.sourceHealth.discovery.newPools={ok:true,count:0};snapshot.sourceHealth.discovery.promoted={ok:true,count:0};
+  assert.doesNotMatch(renderPanel(snapshot,session('radar'),'en').text,/⚠️/);
 });
 
 test('radar says why nothing arrives when scanning is paused or AVE is disconnected',()=>{
@@ -411,16 +434,15 @@ test('radar says why nothing arrives when scanning is paused or AVE is disconnec
   assert.match(renderPanel(disconnected,session('radar'),'zh').text,/\n🔌 未连接AVE · 🔕 提醒关闭\n\n近30分钟：1 条线索/);
 });
 
-test('settings groups state first and actions below, with disconnect alone and only when connected',()=>{
+test('settings groups state first and its own actions below; Status sits on Radar and deleting the key under AVE key',()=>{
   const snapshot=fixture();snapshot.control.notifications=true;snapshot.trading={chains:['arc'],settings:{slippageBps:500,capUsd:100}};
   const connected=renderPanel(snapshot,session('settings'),'en');
   assert.equal(connected.text,'<b>⚙️ Settings</b>\nScanning: 🟢 Robinhood\nAlerts: 🔔 On\nTrading: slippage 5% · cap $100\nLanguage: English\nAVE: connected\n\nUpdated Jan 15 08:00 UTC');
-  assert.deepEqual(panelRows(connected),[['chains','scan.pause'],['notifications.set'],['wallet','trade_settings'],['language','onboard'],['status','export.create'],['disconnect']]);
-  assert.equal(connected.keyboard[0][0].text,'🔗 Scan chain: Robinhood');assert.equal(connected.keyboard[3][1].text,'🔑 AVE key');assert.equal(connected.keyboard.at(-2)[0].text,'🔌 Disconnect AVE');
+  assert.deepEqual(panelRows(connected),[['chains','scan.pause'],['notifications.set'],['trade_settings','language'],['onboard','export.create']]);
+  assert.equal(connected.keyboard[0][0].text,'🔗 Scan chain: Robinhood');assert.equal(connected.keyboard[3][0].text,'🔑 AVE key');
   Object.assign(snapshot.control,{configured:false});delete snapshot.trading;
   const disconnected=renderPanel(snapshot,session('settings'),'en');
   assert.match(disconnected.text,/Scanning: 🔌 Waiting for AVE · Robinhood\n.*\nTrading: not enabled on this deployment\n[\s\S]*AVE: not connected/);
-  assert.ok(!panelRows(disconnected).flat().includes('disconnect'));
   Object.assign(snapshot.control,{configured:true,paused:true});
   const paused=renderPanel(snapshot,session('settings'),'zh');
   assert.match(paused.text,/扫描: ⏸️ 已暂停 · Robinhood/);assert.deepEqual(panelRows(paused)[0],['chains','scan.resume']);

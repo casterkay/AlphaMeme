@@ -14,7 +14,7 @@ export const ICONS = Object.freeze({
   refresh: '🔄', back: '⬅️', home: '🏠', welcome: '👋',
   scanning: '🟢', paused: '⏸️', disconnected: '🔌', alertsOn: '🔔', alertsOff: '🔕',
   radar: '📡', audits: '🎯', feed: '🔥', saved: '⭐', stats: '📈', events: '🗂️', status: '📊', settings: '⚙️', wallet: '👛', help: '❓',
-  passed: '✅', unknown: '⚠️', vetoed: '⛔', checking: '⏳', newLead: '🆕', key: '🔑',
+  passed: '✅', unknown: '⚠️', vetoed: '⛔', checking: '⏳', newLead: '🆕', key: '🔑', delete: '🗑️',
   chains: '🔗', trade_settings: '🎚️', language: '🌐', export: '📤', sources: '🛜', delivery: '📭',
   view_chain: '👁️', filter: '🔽', sort: '↕️', search: '🔍', clear: '✖️', previous: '◀️', next: '▶️',
   x: '𝕏', site: '🌐', chart: '📊', ave: '🔭', evidence: '🔎', note: '📝', ignore: '🙈', approve: '👍'
@@ -126,9 +126,10 @@ export function textPages(blocks, budget = 2100) {
  * "Updated" line when the panel's data has its own, older read time. A session
  * `notice` (a refusal or an invalid reply) leads the panel as a one-line banner.
  */
-export function finishPanel(title, blocks, keyboard, snapshot, session, locale, { token = null, refresh = true, footnote = null } = {}) {
+export function finishPanel(title, blocks, keyboard, snapshot, session, locale, { token = null, refresh = true, footnote = null, footerStart = [] } = {}) {
   const root = session.panel === 'radar';
   const footer = [
+    ...footerStart,
     refresh ? button(`${ICONS.refresh} ${localize(locale, '刷新', 'Refresh')}`, 'panel.refresh') : null,
     !root && session.query?.returnTo ? button(`${ICONS.back} ${localize(locale, '返回', 'Back')}`, 'panel.back') : null,
     root ? null : button(`${ICONS.home} ${localize(locale, '首页', 'Home')}`, 'panel.open', { panel: 'radar' })
