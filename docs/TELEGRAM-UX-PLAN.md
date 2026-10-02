@@ -129,14 +129,16 @@ Last 30 min: 4 leads · 1 vetoed
 3. ⛔ RUGME  vetoed
 
 Updated 12:34 UTC
-[1 PEPE] [2 DOGE2] [3 RUGME]
+[1 PEPE] [2 DOGE2]
+[3 RUGME]
 [🎯 Leads] [🔥 Hot list]
 [⭐ Watchlist] [📈 Performance]
 [👛 Wallet] [📊 Status]
 [⚙️ Settings] [🔄 Refresh]
 ```
 
-- Top three rows are the newest leads on the scan chain (vetoed shown last).
+- The three newest leads on the scan chain (vetoed shown last), two buttons to a
+  row; an odd last one takes the full row.
 - A failing discovery source gets one line under the state line, e.g.
   "⚠️ New pools on chain: ONCHAIN_HTTP_403"; healthy sources add nothing.
 - Settings leads the footer row, left of Refresh.
@@ -157,8 +159,8 @@ Trading: slippage 5% · cap $100
 Language: English
 AVE: connected
 
-[🔗 Scan chain: Arc] [⏸ Pause scanning]
-[🔕 Mute alerts]
+[🔗 Scan chain: Arc]
+[🔕 Mute] [⏸ Pause]
 [🎚 Trade limits] [🌐 Language]
 [🔑 AVE key] [📤 Export]
 [🏠 Home]

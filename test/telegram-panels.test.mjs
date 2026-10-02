@@ -402,8 +402,9 @@ test('radar leads with the newest leads on the scan chain, vetoed last, and leav
   // The radar shows the scan chain even when the session last viewed another one.
   const result=renderPanel(snapshot,{...session('radar'),viewChain:'base'},'en');
   assert.equal(result.text,'<b>📡 Radar · Robinhood</b>\n🟢 Scanning · 🔕 Alerts off\n\nLast 30 min: 2 leads · 1 vetoed\n1. <b>DOGE2</b>\n2. <b>PEPE</b> · $120K · 4m old · +35%\n3. ⛔ RUGME · vetoed\n\nUpdated Jan 15 08:00 UTC');
-  assert.deepEqual(result.keyboard[0].map(item=>item.token.address),[1,0,2].map(index=>snapshot.candidates[index].address));
-  assert.deepEqual(panelRows(result).slice(1),[['audits','feed'],['saved','stats'],['wallet','status']]);
+  // Lead buttons go two to a row; an odd last one takes the full row.
+  assert.deepEqual(result.keyboard.slice(0,2).map(row=>row.map(item=>item.token.address)),[[1,0],[2]].map(row=>row.map(index=>snapshot.candidates[index].address)));
+  assert.deepEqual(panelRows(result).slice(2),[['audits','feed'],['saved','stats'],['wallet','status']]);
   assert.deepEqual(result.keyboard.at(-1).map(item=>item.params?.panel ?? item.action),['settings','panel.refresh'],'Settings sits left of Refresh');
   const status=renderPanel(snapshot,session('status'),'en').text;
   assert.match(status,/Successful scans: 7\n/);assert.match(status,/Last cycle discovered\/prefilter passed: 40\/12\n/);
@@ -438,14 +439,15 @@ test('settings groups state first and its own actions below; Status sits on Rada
   const snapshot=fixture();snapshot.control.notifications=true;snapshot.trading={chains:['arc'],settings:{slippageBps:500,capUsd:100}};
   const connected=renderPanel(snapshot,session('settings'),'en');
   assert.equal(connected.text,'<b>⚙️ Settings</b>\nScanning: 🟢 Robinhood\nAlerts: 🔔 On\nTrading: slippage 5% · cap $100\nLanguage: English\nAVE: connected\n\nUpdated Jan 15 08:00 UTC');
-  assert.deepEqual(panelRows(connected),[['chains','scan.pause'],['notifications.set'],['trade_settings','language'],['onboard','export.create']]);
+  assert.deepEqual(panelRows(connected),[['chains'],['notifications.set','scan.pause'],['trade_settings','language'],['onboard','export.create']]);
+  assert.deepEqual(connected.keyboard[1].map(item=>item.text),['🔕 Mute','⏸️ Pause']);
   assert.equal(connected.keyboard[0][0].text,'🔗 Scan chain: Robinhood');assert.equal(connected.keyboard[3][0].text,'🔑 AVE key');
   Object.assign(snapshot.control,{configured:false});delete snapshot.trading;
   const disconnected=renderPanel(snapshot,session('settings'),'en');
   assert.match(disconnected.text,/Scanning: 🔌 Waiting for AVE · Robinhood\n.*\nTrading: not enabled on this deployment\n[\s\S]*AVE: not connected/);
   Object.assign(snapshot.control,{configured:true,paused:true});
   const paused=renderPanel(snapshot,session('settings'),'zh');
-  assert.match(paused.text,/扫描: ⏸️ 已暂停 · Robinhood/);assert.deepEqual(panelRows(paused)[0],['chains','scan.resume']);
+  assert.match(paused.text,/扫描: ⏸️ 已暂停 · Robinhood/);assert.deepEqual(panelRows(paused)[1],['notifications.set','scan.resume']);assert.deepEqual(paused.keyboard[1].map(item=>item.text),['🔕 静音','🟢 恢复']);
 });
 
 test('status links Activity, Sources and Delivery and flags delivery issues',()=>{
