@@ -1,0 +1,19 @@
+docs/VPS-MIGRATION-PLAN.md
+  s_c497d5c9be8144::t_94f910a16e12e8 11-16,21-26,38-40,47-55,75-90,101-116,119-153,157-166,168-169,178-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "46f7595333c6bc8f204044026ffd6249d01344bc",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
