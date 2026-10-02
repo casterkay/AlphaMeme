@@ -1,0 +1,26 @@
+src/render/telegram.mjs
+  s_c497d5c9be8144::t_158a4bf4f1e998 17,129,132
+src/bot/panels.mjs
+  s_c497d5c9be8144::t_158a4bf4f1e998 16,30,326,334,337,339,474-478,488,494,499,524,526-528
+test/telegram-panels.test.mjs
+  s_c497d5c9be8144::t_c1be1faf17deb6 26-27,34,36,72-75,228-237,406-407,413-419,421-422,437,441-442
+  s_c497d5c9be8144::t_24ba781c4a332b 420
+docs/TELEGRAM-UX-PLAN.md
+  s_c497d5c9be8144::t_c58cb9cc87229f 104-105,107,135-136,140-142,162-163,167-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "de9b6cf93cae8141713c423d0cb8f0b98a283dd7",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
