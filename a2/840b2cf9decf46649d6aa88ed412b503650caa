@@ -1,0 +1,41 @@
+test/telegram-alerts.test.mjs
+  s_03ebd0efd53ab5::t_bf5a8eef0a6429 88-93
+README.md
+  s_03ebd0efd53ab5::t_6f387a3fd8aab6 33-38
+src/scoring/tax.mjs
+  s_03ebd0efd53ab5::t_f9e1833188db11 1-12
+src/scoring/index.mjs
+  s_03ebd0efd53ab5::t_f9e1833188db11 2,196
+src/providers/secondary.mjs
+  s_03ebd0efd53ab5::t_705ff917d75e5c 3,403-405
+  s_03ebd0efd53ab5::t_f9e1833188db11 4,352-353,406
+src/recoverable-scanner.mjs
+  s_03ebd0efd53ab5::t_6f387a3fd8aab6 15-16
+test/ave-provider.test.mjs
+  s_03ebd0efd53ab5::t_bf5a8eef0a6429 4-5,89-109,111
+  s_03ebd0efd53ab5::t_cb052a8391b21a 110,112
+src/providers/ave.mjs
+  s_03ebd0efd53ab5::t_34ee85fc139ab9 136
+  s_03ebd0efd53ab5::t_705ff917d75e5c 223
+  s_03ebd0efd53ab5::t_6445d0e7039832 49,128-129,224
+src/bot/alerts.mjs
+  s_03ebd0efd53ab5::t_705ff917d75e5c 1,10-11
+test/secondary.test.mjs
+  s_03ebd0efd53ab5::t_bf5a8eef0a6429 197-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a2840b2cf9decf46649d6aa88ed412b503650caa",
+  "prompts": {},
+  "sessions": {
+    "s_03ebd0efd53ab5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34373ce1-9e55-4e5c-9162-cf40c8df360e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
