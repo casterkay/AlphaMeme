@@ -451,7 +451,8 @@ function alertPanel(snapshot,session,locale) {
   const keyboard = [[button(L(`打开 ${safeTelegramText(shortName,30)}`,`Open ${safeTelegramText(shortName,30)}`),'panel.open',{ panel:'detail' },token(selected))],
     [button(`${ICONS.audits} ${L('全部线索','All leads')}`,'panel.open',{ panel:'audits' }),button(`${ICONS.alertsOff} ${L('关闭提醒','Mute alerts')}`,'notifications.set',{ value:false })]];
   const controls = session.query.tokenControls ? detailPanel(snapshot,{ ...session, panel:'detail' },locale).keyboard : keyboard;
-  return { text:`<b>${title}</b>\n${blocks.join('\n')}\n\n${L('更新于','Updated')} ${clockTime(snapshot.at,locale)}`, keyboard:controls, version:session.version, token:token(selected) };
+  const notice = session.query.notice ? `${ICONS.unknown} ${escapeHtml(session.query.notice)}\n\n` : '';
+  return { text:`${notice}<b>${title}</b>\n${blocks.join('\n')}\n\n${L('更新于','Updated')} ${clockTime(snapshot.at,locale)}`, keyboard:controls, version:session.version, token:token(selected) };
 }
 
 export function renderPanel(snapshot,session,locale='zh') {

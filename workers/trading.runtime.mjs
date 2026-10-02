@@ -231,7 +231,7 @@ async function withTrading(name, operation) {
 
 describe('one-tap trading', () => {
   it('buys from alert controls in the same message and returns through the warning to the alert keyboard', async () => {
-    await withTrading('alert-controls', async ({ runtime, storage, click, link, seed, createWallet, trades, sent, drain }) => {
+    await withTrading('alert-controls', async ({ runtime, storage, click, link, seed, createWallet, trades, sent, drain, reply }) => {
       await createWallet();seed('arc', 'LIVE_READY', null);
       const commands=runtime().commands;
       const alert=storage.transactionSync(()=>commands.renderInTransaction(commands.sessions.createInTransaction('alert','arc',{selectedToken:{chain:'arc',address:TOKEN}})));
@@ -239,17 +239,34 @@ describe('one-tap trading', () => {
       const current=()=>commands.sessions.get(alert.id),messageId=current().messageId;
       await click(link(current(),'panel.open',params=>params.panel==='detail'));
       expect(sent.at(-1)).toMatchObject({method:'editMessageReplyMarkup',params:{message_id:messageId}});
+      await click(link(current(),'trade.input',params=>params.side==='buy'));
+      await reply(current(),'invalid');
+      expect(sent.at(-1).params.text).toContain('Invalid amount');
+      await reply(current(),'1000');
+      expect(sent.at(-1).params.text).toContain('Above your per-trade buy cap');
       await click(link(current(),'trade.buy',params=>params.usd===1));
       expect(current()).toMatchObject({panel:'trade_unverified',query:{unverifiedBuy:{usdCents:100}}});
+      expect(runtime().alertMessageId({chain:'arc',address:TOKEN})).toBe(Number(messageId));
       expect(sent.at(-1)).toMatchObject({method:'editMessageText',params:{message_id:messageId}});
       await click(link(current(),'trade.decline_unverified'));
       expect(current()).toMatchObject({panel:'alert',query:{tokenControls:true}});
       expect(sent.at(-1).params.text).toContain('New lead · MEME');
+      await click(link(current(),'trade.buy',params=>params.usd===1));
+      seed('arc','LIVE_READY',FATAL);
+      await click(link(current(),'trade.acknowledge_unverified'));
+      expect(current()).toMatchObject({panel:'alert',query:{tokenControls:true}});
+      expect(sent.at(-1).params.text).toContain('buy was refused');
       await click(link(current(),'panel.back'));
       expect(current().query.tokenControls).toBeUndefined();
-      expect(sent.at(-1)).toMatchObject({method:'editMessageReplyMarkup',params:{message_id:messageId}});
+      expect(sent.at(-1)).toMatchObject({method:'editMessageText',params:{message_id:messageId}});
+      expect(sent.at(-1).params.text).not.toContain('buy was refused');
       expect(sent.at(-1).params.reply_markup.inline_keyboard[0][0].text).toBe('Open MEME');
       expect(trades()).toEqual([]);
+      await click(link(current(),'panel.open',params=>params.panel==='detail'));
+      await click(link(current(),'panel.open',params=>params.panel==='radar'));
+      expect(current().panel).toBe('radar');
+      expect(current().query.returnTo).toBeUndefined();
+      expect(runtime().alertMessageId({chain:'arc',address:TOKEN})).toBe(Number(messageId));
     });
   });
 

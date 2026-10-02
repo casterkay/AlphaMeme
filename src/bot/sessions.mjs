@@ -17,7 +17,7 @@ export class TelegramSessions {
   }
 
   createInTransaction(panel, viewChain, query = {}, { ttl = SESSION_TTL } = {}) {
-    const session = { id: id(), ownerUserId: this.tenantId, chatId: this.tenantId, messageId: null, panel, viewChain, query: { schemaVersion: 1, page: 0, ...query }, snapshotAt: this.now(), version: 0, expiresAt: this.now() + ttl };
+    const session = { id: id(), ownerUserId: this.tenantId, chatId: this.tenantId, messageId: null, panel, viewChain, query: { schemaVersion: 1, page: 0, ...query, ...(panel === 'alert' ? { originAlertToken: query.selectedToken } : {}) }, snapshotAt: this.now(), version: 0, expiresAt: this.now() + ttl };
     this.saveInTransaction(session);
     return session;
   }
@@ -30,7 +30,11 @@ export class TelegramSessions {
   advanceInTransaction(session, changes = {}) {
     const current = this.get(session.id);
     if (!current || current.version !== session.version) throw new ReviewConflict('session_changed');
-    const next = { ...current, ...changes, query: changes.query ?? current.query, version: current.version + 1, snapshotAt: this.now(), expiresAt: Math.max(current.expiresAt, this.now() + SESSION_TTL) };
+
+    // The original alert identity survives Home and other navigation changes.
+    const originAlertToken = current.query.originAlertToken ?? (current.panel === 'alert' ? current.query.selectedToken : null);
+    const query = { ...(changes.query ?? current.query), ...(originAlertToken ? { originAlertToken } : {}) };
+    const next = { ...current, ...changes, query, version: current.version + 1, snapshotAt: this.now(), expiresAt: Math.max(current.expiresAt, this.now() + SESSION_TTL) };
     this.saveInTransaction(next);
     return next;
   }
@@ -83,7 +87,7 @@ export class TelegramSessions {
   pruneInTransaction() {
     this.storage.sql.exec('DELETE FROM shortlinks WHERE tenant_id = ? AND expires_at <= ?', this.tenantId, this.now());
     // An expired alert is no longer corrected in place.
-    for (const row of this.storage.sql.exec("SELECT m.message_id FROM message_map m JOIN ui_sessions s ON s.tenant_id = m.tenant_id AND s.id = m.ui_session_id WHERE m.tenant_id = ? AND s.panel = 'alert' AND s.expires_at <= ?", this.tenantId, this.now()).toArray()) {
+    for (const row of this.storage.sql.exec("SELECT m.message_id FROM message_map m JOIN ui_sessions s ON s.tenant_id = m.tenant_id AND s.id = m.ui_session_id WHERE m.tenant_id = ? AND (s.panel = 'alert' OR json_extract(s.query_json,'$.originAlertToken') IS NOT NULL) AND s.expires_at <= ?", this.tenantId, this.now()).toArray()) {
       this.storage.sql.exec('DELETE FROM message_map WHERE tenant_id = ? AND message_id = ?', this.tenantId, row.message_id);
       this.storage.sql.exec('DELETE FROM scheduler_state WHERE tenant_id = ? AND key = ?', this.tenantId, `telegram.rendered:${row.message_id}`);
     }

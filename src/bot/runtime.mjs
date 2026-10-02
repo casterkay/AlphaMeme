@@ -319,7 +319,7 @@ export class TelegramRuntime {
 
   // The token's alert message, which a later notice about it replies to.
   alertMessageId(token) {
-    const row = this.storage.sql.exec("SELECT m.message_id FROM message_map m JOIN ui_sessions s ON s.tenant_id=m.tenant_id AND s.id=m.ui_session_id WHERE m.tenant_id=? AND m.chain=? AND m.address=? AND s.panel='alert' ORDER BY m.rowid DESC LIMIT 1", this.tenantId, token.chain, token.address).toArray()[0];
+    const row = this.storage.sql.exec("SELECT message_id FROM ui_sessions WHERE tenant_id=? AND message_id IS NOT NULL AND expires_at>? AND ((json_extract(query_json,'$.originAlertToken.chain')=? AND json_extract(query_json,'$.originAlertToken.address')=?) OR (panel='alert' AND json_extract(query_json,'$.selectedToken.chain')=? AND json_extract(query_json,'$.selectedToken.address')=?)) ORDER BY rowid DESC LIMIT 1", this.tenantId, this.now(), token.chain, token.address, token.chain, token.address).toArray()[0];
     return row ? Number(row.message_id) : null;
   }
 
