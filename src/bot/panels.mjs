@@ -475,7 +475,7 @@ export function renderPanel(snapshot,session,locale='zh') {
       const discovery=snapshot.sourceHealth?.discovery || {};
       blocks.splice(1,0,...['trending','newPools','watch','promoted'].filter(field=>discovery[field]?.ok === false)
         .map(field=>`${ICONS.unknown} ${L(...fieldLabels[field])}: ${discovery[field].code || name('unknown',locale)}`));
-      keyboard=[shown.map((row,index)=>detailButton(row,index,locale)),[open('audits',locale),open('feed',locale)],[open('saved',locale),open('stats',locale)],[open('wallet',locale),open('status',locale)]];
+      keyboard=[...rowsOf(shown.map((row,index)=>detailButton(row,index,locale)),2),[open('audits',locale),open('feed',locale)],[open('saved',locale),open('stats',locale)],[open('wallet',locale),open('status',locale)]];
     }
   } else if(session.panel === 'settings') {
     const chain=chainLabel(control.scanChain),trading=snapshot.trading;
@@ -483,8 +483,9 @@ export function renderPanel(snapshot,session,locale='zh') {
       `${L('提醒','Alerts')}: ${control.notifications ? `${ICONS.alertsOn} ${L('已开启','On')}` : `${ICONS.alertsOff} ${L('已关闭','Off')}`}`,
       `${L('交易','Trading')}: ${trading?.chains?.length ? L(`滑点 ${trading.settings.slippageBps/100}% · 上限 ${money(trading.settings.capUsd,locale)}`,`slippage ${trading.settings.slippageBps/100}% · cap ${money(trading.settings.capUsd,locale)}`) : L('本部署未启用','not enabled on this deployment')}`,
       `${L('语言','Language')}: ${locale==='en' ? 'English' : '中文'}`,`AVE: ${control.configured ? L('已连接','connected') : L('未连接','not connected')}`];
-    keyboard=[[button(`${heading('chains',locale)}: ${chain}`,'panel.open',{panel:'chains'}),button(control.paused ? `${ICONS.scanning} ${L('恢复扫描','Resume scanning')}` : `${ICONS.paused} ${L('暂停扫描','Pause scanning')}`,control.paused ? 'scan.resume' : 'scan.pause')],
-      [button(control.notifications ? `${ICONS.alertsOff} ${L('关闭提醒','Mute alerts')}` : `${ICONS.alertsOn} ${L('开启提醒','Enable alerts')}`,'notifications.set',{value:!control.notifications})],
+    keyboard=[[button(`${heading('chains',locale)}: ${chain}`,'panel.open',{panel:'chains'})],
+      [button(control.notifications ? `${ICONS.alertsOff} ${L('静音','Mute')}` : `${ICONS.alertsOn} ${L('取消静音','Unmute')}`,'notifications.set',{value:!control.notifications}),
+        button(control.paused ? `${ICONS.scanning} ${L('恢复','Resume')}` : `${ICONS.paused} ${L('暂停','Pause')}`,control.paused ? 'scan.resume' : 'scan.pause')],
       [open('trade_settings',locale),open('language',locale)],[open('onboard',locale),button(`${ICONS.export} ${L('导出记录','Export')}`,'export.create')]];
   } else if(session.panel === 'chains') {
     blocks=[L('一次扫描一条链。切换后旧链的研究记录保留，扫描立即转到新链。','One chain is scanned at a time. Switching keeps the old chain\'s records and moves scanning to the new chain.')];
