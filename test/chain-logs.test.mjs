@@ -54,6 +54,16 @@ test('a chain with pool sources reads new pools only once it has an RPC URL', ()
   assert.equal(onchainOffReason('bsc', {}), null, 'no pool sources: nothing to report');
 });
 
+test('newPools calls fetch unbound, as the Workers runtime requires of the global fetch', async () => {
+  const receivers = [];
+  async function fetchImpl(url, init) {
+    receivers.push(this);
+    return Response.json({ jsonrpc: '2.0', id: 1, result: JSON.parse(init.body).method === 'eth_blockNumber' ? '0x2710' : [] });
+  }
+  await new ChainLogs({ rpcUrls: { arc: 'https://arc.example' }, fetchImpl }).newPools('arc', { cursor: 9_990 });
+  assert.deepEqual(receivers, [undefined, undefined]);
+});
+
 test('newPools asks the chain RPC for one bounded range over its factories and reports errors without the URL', async () => {
   const key = 'secret-key-0123456789', url = `https://arc.example/v2/${key}`, calls = [];
   const fetchImpl = async (url, init) => {

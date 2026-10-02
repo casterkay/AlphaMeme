@@ -92,8 +92,11 @@ export class ChainLogs {
     signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(abort, this.timeoutMs);
     let response;
+
+    // Called unbound: the Workers runtime rejects fetch invoked as another object's method ("Illegal invocation").
+    const { fetchImpl } = this;
     try {
-      response = await this.fetchImpl(url, {
+      response = await fetchImpl(url, {
         method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: controller.signal
       });
