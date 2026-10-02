@@ -1,0 +1,93 @@
+src/recoverable-scanner.mjs
+  s_45981afba4b5f0::t_b2fb06cdceddc6 15,79,272,315,317-319,494,499
+src/providers/ave.mjs
+  s_45981afba4b5f0::t_d1e5036b3dc77f 45-46,133
+src/render/whitelist.mjs
+  s_45981afba4b5f0::t_e3014523161bf8 70,82
+workers/lookup.runtime.mjs
+  s_45981afba4b5f0::t_54a997b96a9147 20-21,27,41,200,223,353,372,378,385,388,398,414,476,514
+  s_45981afba4b5f0::t_d6de8485afbd5b 329,344,496,502,505-506,528,547,549-551
+  s_45981afba4b5f0::t_9a017f44737699 176,182,187-188,190,192
+  s_45981afba4b5f0::t_6b49e37f3fb138 31
+  s_45981afba4b5f0::t_c92883ec7bc1d1 29,32,43,47,114,124,127-128,130,135,143,158
+  s_45981afba4b5f0::t_8727369253364f 450-465
+  s_45981afba4b5f0::t_05d3b04d126783 258,274
+  s_45981afba4b5f0::t_35ca8efdfe96b8 55,102,108
+test/ave-provider.test.mjs
+  s_45981afba4b5f0::t_6b49e37f3fb138 248-254
+test/radar-agent.test.mjs
+  s_45981afba4b5f0::t_0d9ff8e97e606f 440
+  s_45981afba4b5f0::t_e8fe10ad93cab5 95-96,268,434,438-439,441-451,566,705,727,796
+workers/radar-agent.runtime.mjs
+  s_45981afba4b5f0::t_51c04151c9ab11 42-43,45,70,76
+README.md
+  s_45981afba4b5f0::t_e15bfc46d8ba9e 95,128-129
+src/bot/trading-panels.mjs
+  s_45981afba4b5f0::t_7b9cc35e1a8f58 139-140
+test/secondary.test.mjs
+  s_45981afba4b5f0::t_1d5bc799bc8a37 172,175-176,180,183,190-192,197-200,203,211-216,219-229,232-237,239-243,255-257,259-264
+src/lookup.mjs
+  s_45981afba4b5f0::t_0f5da36a0ffbc1 32-34,83,93
+  s_45981afba4b5f0::t_d1e5036b3dc77f 150
+  s_45981afba4b5f0::t_1c981418b629be 5,7-9,21-22,216,220,226-227
+src/scoring/safety.mjs
+  s_45981afba4b5f0::t_a8f8180ba67797 10-13,20
+src/providers/secondary.mjs
+  s_45981afba4b5f0::t_f42753cb997810 485-490
+  s_45981afba4b5f0::t_f2ca94df0757ed 136,424-425,428,433-437,441,444-445,460-462,464-465,466,470,476
+workers/telegram-e2e.runtime.mjs
+  s_45981afba4b5f0::t_c912541c0956ad 296,302,354
+src/recoverable-scan-executor.mjs
+  s_45981afba4b5f0::t_1c981418b629be 73
+docs/TELEGRAM-UX-PLAN.md
+  s_45981afba4b5f0::t_6ef52e376784d9 230-231,277,337-338,340,354,442,499-500,502
+src/scanner-settings.mjs
+  s_45981afba4b5f0::t_7b9cc35e1a8f58 6
+test/trading-panels.test.mjs
+  s_45981afba4b5f0::t_3c3d8d329d911f 92,94
+  s_45981afba4b5f0::t_266d7a59a9be5a 80,91,93
+src/scanner-parity.mjs
+  s_45981afba4b5f0::t_e878d35e8625ab 46
+test/telegram-panels.test.mjs
+  s_45981afba4b5f0::t_6b49e37f3fb138 572-573
+  s_45981afba4b5f0::t_dcfeb8c60177b3 266,279,356-358,360,362-364,463,465,532,536-537,566,571,581,599
+src/scoring/classification.mjs
+  s_45981afba4b5f0::t_9b024e6d1654aa 1,37,44
+workers/trading.runtime.mjs
+  s_45981afba4b5f0::t_c13b52594d3d86 27-29,504,557-558,574-575,585,595-596,746
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_45981afba4b5f0::t_e15bfc46d8ba9e 104
+  s_45981afba4b5f0::t_df876983e3e98b 86,105
+src/bot/snapshot.mjs
+  s_45981afba4b5f0::t_e3014523161bf8 86,94-95,122
+  s_45981afba4b5f0::t_d1e5036b3dc77f 96
+test/safety.test.mjs
+  s_45981afba4b5f0::t_00feab7ddb05ce 5,11-13,15,20,23,36-38,40,49
+src/bot/panels.mjs
+  s_45981afba4b5f0::t_2347eb5706f16b 3,6,99,119,125,229,237,385,543
+  s_45981afba4b5f0::t_32271aa728e14b 178
+  s_45981afba4b5f0::t_0f5da36a0ffbc1 189,218
+  s_45981afba4b5f0::t_bd1f94680f32c3 270
+test/telegram-alerts.test.mjs
+  s_45981afba4b5f0::t_dcfeb8c60177b3 10,55
+test/address.test.mjs
+  s_45981afba4b5f0::t_56ccc1c00736de 16,18
+vitest.workers.config.mjs
+  s_45981afba4b5f0::t_9980bfeb6e6b04 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0e584933a9aa0f1ff60a59000cba0c30110a050c",
+  "prompts": {},
+  "sessions": {
+    "s_45981afba4b5f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f539634-f15f-4524-8736-325543825f35",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
