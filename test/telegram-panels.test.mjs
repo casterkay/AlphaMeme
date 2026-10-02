@@ -497,7 +497,7 @@ test('the token detail link row reads X, Site, Chart, AVE, then Evidence',()=>{
 });
 
 // A pasted token's lookup as the snapshot projects it.
-function lookup(changes={}) { return {chain:'arc',address:'0x'+'cd'.repeat(20),state:'DETAILS',startedAt:now-5_000,reason:null,symbol:'',name:'',price:null,marketCap:null,liquidity:null,holders:null,createdAt:null,priceChange5m:null,volume5m:null,capturedAt:null,verdict:'PENDING',secondary:null,veto:null,failedStep:null,...changes}; }
+function lookup(changes={}) { return {chain:'arc',address:'0x'+'cd'.repeat(20),state:'DETAILS',startedAt:now-5_000,reason:null,symbol:'',name:'',price:null,marketCap:null,liquidity:null,holders:null,createdAt:null,priceChange5m:null,volume5m:null,capturedAt:null,verdict:'PENDING',stale:false,secondary:null,veto:null,failedStep:null,...changes}; }
 const lookupDetail=(changes,snapshotChanges={})=>{ const snapshot={...fixture(),...snapshotChanges},row=lookup(changes);snapshot.lookups=[row];return renderPanel(snapshot,{...session('detail',{selectedToken:{chain:row.chain,address:row.address}}),viewChain:row.chain},'en'); };
 const chainButtons=result=>result.keyboard.flat().filter(item=>item.action==='lookup.start'&&!item.params.retry).map(item=>item.token.chain);
 
@@ -532,6 +532,16 @@ test('a finished lookup shows the shared verdict; a vetoed one keeps selling but
   assert.match(passed.text,/✅ No failures found/);assert.ok(actions(passed).includes('trade.buy'));
 });
 
+
+test('a clean lookup past its freshness keeps its verdict but says the check is stale, and still offers Buy',()=>{
+  const trading={chains:['arc'],wallet:{address:'0x'+'11'.repeat(20)},settings:{capUsd:100,slippageBps:500}};
+  const secondary={status:'COMPLETE',checkedAt:now-20*60_000,market:{websites:[]},security:{verdict:'NO_FATAL_FLAGS',fatal:[],unknownFields:[]},conflicts:[]};
+  const render=(stale,locale='en')=>{ const snapshot={...fixture(),trading},row=lookup({state:'DONE',verdict:'PASSED',secondary,stale});snapshot.lookups=[row];return renderPanel(snapshot,{...session('detail',{selectedToken:{chain:row.chain,address:row.address}}),viewChain:row.chain},locale); };
+  assert.match(render(true).text,/✅ No failures found · checked 20m ago · stale, paste the address again to re-check\n/);
+  assert.match(render(true,'zh').text,/✅ 未发现问题 · 20分钟前核验 · 已过期，重新粘贴地址即可重新核验\n/);
+  assert.match(render(false).text,/✅ No failures found · checked 20m ago\n/);
+  assert.ok(actions(render(true)).includes('trade.buy'));
+});
 
 test('a candidate whose lookup is vetoed shows no buy, as the engine refuses one',()=>{
   const snapshot=fixture(),row=snapshot.candidates[0];

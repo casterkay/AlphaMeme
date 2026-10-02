@@ -85,6 +85,15 @@ test('the unverified-buy question names the token and amount and offers Yes then
   assert.ok(question('en', []).text.includes(`<code>${TOKEN}</code>`), 'an unknown symbol falls back to the contract address');
 });
 
+test('the unverified-buy question says a pasted token\'s clean check is stale, unless a candidate is the token of record', () => {
+  const stale = { chain: 'bsc', address: TOKEN, state: 'DONE', verdict: 'PASSED', stale: true, secondary: { checkedAt: now - 20 * 60_000 } };
+  const question = (locale, rows) => renderPanel({ ...snapshot({}, rows), lookups: [stale] }, { panel: 'trade_unverified', viewChain: 'bsc', query: { unverifiedBuy: { chain: 'bsc', token: TOKEN, usdCents: 2550 } }, version: 1 }, locale).text;
+  assert.match(question('en', []), /⚠️ Safety check is stale[\s\S]*GoPlus and DexScreener checked this token 20m ago; that check is stale\./);
+  assert.doesNotMatch(question('en', []), /not finished|have not verified/);
+  assert.match(question('zh', []), /⚠️ 安全核验已过期[\s\S]*GoPlus 和 DexScreener 于20分钟前核验此代币，结果已过期。/);
+  assert.match(question('en', [candidate({ secondary: null })]), /Safety check not finished[\s\S]*have not verified this token yet/);
+});
+
 test('the quote screen repeats the warning only for a buy requested before the token was verified', () => {
   const trade = unverifiedAtRequest => ({ id: 'e'.repeat(32), chain: 'bsc', token: TOKEN, side: 'buy', usdCents: 1000, percent: null, state: 'QUOTING', tokenMeta: null, createdAt: now, unverifiedAtRequest });
   const render = value => renderPanel(snapshot({ trades: [trade(value)] }), { panel: 'trade', viewChain: 'bsc', query: { tradeId: 'e'.repeat(32) }, version: 1 }, 'en').text;
