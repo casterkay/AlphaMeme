@@ -13,6 +13,9 @@ workers/lookup.runtime.mjs
   s_45981afba4b5f0::t_8727369253364f 450-465
   s_45981afba4b5f0::t_05d3b04d126783 258,274
   s_45981afba4b5f0::t_35ca8efdfe96b8 55,102,108
+  s_45981afba4b5f0::t_7f64db69c62ab5 7
+  s_45981afba4b5f0::t_2c36c692acb42a 133
+  s_45981afba4b5f0::t_77565d30890b99 56
 test/ave-provider.test.mjs
   s_45981afba4b5f0::t_6b49e37f3fb138 248-254
 test/radar-agent.test.mjs
@@ -20,12 +23,16 @@ test/radar-agent.test.mjs
   s_45981afba4b5f0::t_e8fe10ad93cab5 95-96,268,434,438-439,441-451,566,705,727,796
 workers/radar-agent.runtime.mjs
   s_45981afba4b5f0::t_51c04151c9ab11 42-43,45,70,76
+  s_45981afba4b5f0::t_77565d30890b99 44
 README.md
   s_45981afba4b5f0::t_e15bfc46d8ba9e 95,128-129
+  s_45981afba4b5f0::t_7071362c84a6b3 29,31-32
 src/bot/trading-panels.mjs
   s_45981afba4b5f0::t_7b9cc35e1a8f58 139-140
 test/secondary.test.mjs
   s_45981afba4b5f0::t_1d5bc799bc8a37 172,175-176,180,183,190-192,197-200,203,211-216,219-229,232-237,239-243,255-257,259-264
+  s_45981afba4b5f0::t_77565d30890b99 3,177,179,181-182
+  s_45981afba4b5f0::t_7f64db69c62ab5 170-171,173-174,258
 src/lookup.mjs
   s_45981afba4b5f0::t_0f5da36a0ffbc1 32-34,83,93
   s_45981afba4b5f0::t_d1e5036b3dc77f 150
@@ -35,6 +42,7 @@ src/scoring/safety.mjs
 src/providers/secondary.mjs
   s_45981afba4b5f0::t_f42753cb997810 485-490
   s_45981afba4b5f0::t_f2ca94df0757ed 136,424-425,428,433-437,441,444-445,460-462,464-465,466,470,476
+  s_45981afba4b5f0::t_c9b395820b9e55 449,451
 workers/telegram-e2e.runtime.mjs
   s_45981afba4b5f0::t_c912541c0956ad 296,302,354
 src/recoverable-scan-executor.mjs
@@ -68,6 +76,7 @@ src/bot/panels.mjs
   s_45981afba4b5f0::t_32271aa728e14b 178
   s_45981afba4b5f0::t_0f5da36a0ffbc1 189,218
   s_45981afba4b5f0::t_bd1f94680f32c3 270
+  s_45981afba4b5f0::t_6afaba363b6322 252,302
 test/telegram-alerts.test.mjs
   s_45981afba4b5f0::t_dcfeb8c60177b3 10,55
 test/address.test.mjs
