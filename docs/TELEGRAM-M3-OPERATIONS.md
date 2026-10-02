@@ -103,6 +103,16 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   leads, alerts, Performance or `/export`. Lookups run one at a time, at most 5 may
   wait, and records expire after 24 hours, except a vetoed one, which stays until
   a later complete clean check clears it.
+- Vetoed lookups are kept without a cap: evicting one could make its token
+  buyable. Each takes a paste that ends with a fatal finding, so they grow at the
+  owner's pace, and a scheduler pass never reads them. When a new veto
+  leaves a tenant holding more than 100, `lookup_vetoes_high` logs the count;
+  nothing is refused. To review them, list the tenant's `scheduler_state` rows
+  whose key starts with `lookup:` and whose `value_json` has a non-null `veto`.
+  Deleting a row lifts its buy block (a lead whose own check passed is then
+  bought without the Yes/No question), so delete one only after GoPlus no longer
+  flags the token. Pasting the token again clears the veto by itself once a
+  complete check finds no fatal flags.
 - An unreadable lookup row (`lookup:<chain>:<address>` in the tenant's
   `scheduler_state`, reported once per isolate as `lookup_record_unreadable` with
   its key) is never pruned or overwritten, because it may hold a veto. Until it is

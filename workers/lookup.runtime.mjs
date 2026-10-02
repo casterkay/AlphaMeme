@@ -404,6 +404,46 @@ describe('pasted contract-address lookup', () => {
     });
   });
 
+  it(`keeps every veto uncapped, warns once more than ${LOOKUP_SETTINGS.vetoesWarned} are held, and reads none of them in a scheduler pass`, async () => {
+    await withLookups('26824', async ({ runtime, storage, tenantId, net, connect, paste, step, tasks, lookups, clock }) => {
+      await connect();
+      net.knobs.goPlus = { ...CLEAN, is_honeypot: '1' };
+      const veto = async address => { clock.advance(1);await paste(address);for (let index = 0; index < 3; index++) await step(); };
+      await veto(TOKEN);
+      // Copies of the recorded veto bring the tenant to one below the threshold.
+      const [record] = lookups();
+      for (let index = 1; index < LOOKUP_SETTINGS.vetoesWarned - 1; index++) {
+        const address = '0x' + index.toString(16).padStart(40, '0');
+        storage.sql.exec('INSERT INTO scheduler_state (tenant_id,key,value_json) VALUES (?,?,?)', tenantId, `lookup:arc:${address}`, JSON.stringify({ ...record, address }));
+      }
+      const logs = vi.spyOn(console, 'log');
+      try {
+        const warnings = () => logs.mock.calls.map(([line]) => String(line)).filter(line => line.includes('lookup_vetoes_high')).map(line => JSON.parse(line));
+        await veto('0x' + 'f2'.repeat(20));
+        expect(lookups().filter(item => item.veto)).toHaveLength(LOOKUP_SETTINGS.vetoesWarned);
+        expect(warnings()).toEqual([]);
+        await veto('0x' + 'f3'.repeat(20));
+        expect(lookups().filter(item => item.veto)).toHaveLength(LOOKUP_SETTINGS.vetoesWarned + 1);
+        expect(warnings()).toEqual([{ event: 'lookup_vetoes_high', held: LOOKUP_SETTINGS.vetoesWarned + 1 }]);
+      } finally { logs.mockRestore(); }
+
+      clock.advance(LOOKUP_SETTINGS.expiryMs);
+      const RUNNING = '0x' + 'f4'.repeat(20);
+      await paste(RUNNING);
+      // Record the lookup rows every read of a scheduler pass returns.
+      const exec = storage.sql.exec.bind(storage.sql), read = [];
+      const spy = vi.spyOn(storage.sql, 'exec').mockImplementation((query, ...bindings) => {
+        if (query.includes("substr(key,1,7)='lookup:'") && query.startsWith('SELECT key')) read.push(...exec(query, ...bindings).toArray().map(row => row.key));
+        return exec(query, ...bindings);
+      });
+      try { expect(tasks()).toHaveLength(1); } finally { spy.mockRestore(); }
+      expect(read.length).toBeGreaterThan(0);
+      expect(new Set(read)).toEqual(new Set([`lookup:arc:${RUNNING}`]));
+      for (const address of [TOKEN, '0x' + '1'.padStart(40, '0')]) expect(safetyState(storage, tenantId, 'arc', address, clock.now())).toBe('VETOED');
+      expect(runtime().commands.snapshot(storage, tenantId, clock.now()).lookups.filter(item => item.verdict === 'VETOED')).toHaveLength(LOOKUP_SETTINGS.vetoesWarned + 1);
+    });
+  });
+
   it('skips an unreadable lookup row everywhere but safetyState, which refuses to guess about it', async () => {
     await withLookups('26821', async ({ runtime, storage, tenantId, connect, paste, step, tasks, lookups, lastText, clock }) => {
       await connect();

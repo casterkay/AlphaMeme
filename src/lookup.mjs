@@ -24,7 +24,10 @@ export const RUNNING_STATES = Object.freeze(new Set(['DETAILS', 'DEXSCREENER', '
 // for admission, ahead of the scan: five waiting lookups already hold the scan back
 // for over a minute and the last answer arrives that late, so more are refused.
 // A clean check verifies a buy only while fresh; a veto never goes stale.
-export const LOOKUP_SETTINGS = Object.freeze({ reuseMs: 60_000, expiryMs: 24 * 60 * 60_000, kept: 20, pending: 5, verifiedMs: 15 * 60_000 });
+// Vetoed lookups are kept uncapped: each needs a paste that ends FATAL, so they
+// grow at the owner's pace, and evicting one could make its token buyable. Holding
+// more than vetoesWarned is logged, never refused.
+export const LOOKUP_SETTINGS = Object.freeze({ reuseMs: 60_000, expiryMs: 24 * 60 * 60_000, kept: 20, pending: 5, verifiedMs: 15 * 60_000, vetoesWarned: 100 });
 const PREFIX = 'lookup:';
 const SECONDARY_STEPS = Object.freeze({ DEXSCREENER: ['dexScreener', 'GOPLUS'], GOPLUS: ['goPlus', 'DONE'] });
 // AVE answers that end a lookup: the key or the request is refused, or the answer is unusable.
@@ -80,17 +83,26 @@ function parse(row) {
   return value;
 }
 
+// Row selections made in SQL, so a scheduler pass never parses the vetoed records
+// it does not need. A row that is not JSON is left to the full listing, which logs it.
+const field = path => `CASE WHEN json_valid(value_json) THEN json_extract(value_json,'${path}') END`;
+const SELECTIONS = Object.freeze({
+  all: '', running: ` AND ${field('$.state')} IN (${[...RUNNING_STATES].map(state => `'${state}'`).join(',')})`,
+  unvetoed: ` AND ${field('$.veto')} IS NULL`, vetoed: ` AND ${field('$.veto')} IS NOT NULL`
+});
+
 // Rows already reported unreadable, so each is logged once per isolate.
 const reportedUnreadable = new Set();
 
 /**
- * Every readable lookup of the tenant, newest first, including expired ones not
- * yet pruned. A lookup is regenerable, so an unreadable row (corrupt, or from
- * another version) is skipped with one log line instead of stalling the tenant;
- * only safetyState, through readLookup, refuses to guess about one.
+ * Every readable lookup of the tenant in the selection (a key of SELECTIONS),
+ * newest first, including expired ones not yet pruned. A lookup is regenerable, so
+ * an unreadable row (corrupt, or from another version) is skipped with one log line
+ * instead of stalling the tenant; only safetyState, through readLookup, refuses to
+ * guess about one.
  */
-export function listLookups(storage, tenantId) {
-  return storage.sql.exec("SELECT key,value_json FROM scheduler_state WHERE tenant_id=? AND substr(key,1,7)='lookup:'", tenantId).toArray().flatMap(row => {
+export function listLookups(storage, tenantId, selection = 'all') {
+  return storage.sql.exec(`SELECT key,value_json FROM scheduler_state WHERE tenant_id=? AND substr(key,1,7)='lookup:'${SELECTIONS[selection]}`, tenantId).toArray().flatMap(row => {
     try { return [parse(row)]; } catch (error) {
       if (!(error instanceof LookupError)) throw error;
       const reported = `${tenantId}:${row.key}`;
@@ -154,7 +166,7 @@ export class TokenLookups {
     if (current && (RUNNING_STATES.has(current.state) || (!retry && now - current.startedAt < LOOKUP_SETTINGS.reuseMs))) {
       return current.sessionId === sessionId ? current : this.#write(current, { sessionId });
     }
-    if (listLookups(this.storage, this.tenantId).filter(record => RUNNING_STATES.has(record.state)).length >= LOOKUP_SETTINGS.pending) {
+    if (listLookups(this.storage, this.tenantId, 'running').length >= LOOKUP_SETTINGS.pending) {
       throw new LookupError('LOOKUP_QUEUE_FULL', 'too many lookups are waiting');
     }
     const record = { version: 1, chain, address: normalizeTokenAddress(address), revision: 0, state: 'DETAILS', startedAt: now, updatedAt: now,
@@ -168,12 +180,12 @@ export class TokenLookups {
    */
   tasksInTransaction(retries = {}) {
     this.#pruneInTransaction();
-    const running = listLookups(this.storage, this.tenantId).filter(record => RUNNING_STATES.has(record.state));
+    const running = listLookups(this.storage, this.tenantId, 'running');
     for (const record of running) {
       const retry = retries[taskIdOf(record)];
       if (retry?.dueAt === null) this.onLookupInTransaction(this.#write(record, { state: 'FAILED', reason: retry.lastErrorCode.replace(/[^A-Z0-9_]/g, '').slice(0, 64) || 'STEP_FAILED' }));
     }
-    const next = listLookups(this.storage, this.tenantId).filter(record => RUNNING_STATES.has(record.state)).at(-1);
+    const next = listLookups(this.storage, this.tenantId, 'running').at(-1);
     if (!next) return [];
     const id = taskIdOf(next), retry = retries[id];
     return [{ id, kind: 'lookup', dueAt: retry ? Math.max(next.updatedAt, retry.dueAt) : next.updatedAt, enabled: true, aveCost: next.state === 'DETAILS' ? AVE_CU.details : 0 }];
@@ -186,8 +198,8 @@ export class TokenLookups {
    * bounded retry.
    */
   async runStep(taskId, { request, details, secondary = new SecondaryValidator() }) {
-    const record = listLookups(this.storage, this.tenantId).find(item => taskIdOf(item) === taskId);
-    if (!record || !RUNNING_STATES.has(record.state)) return done;
+    const record = listLookups(this.storage, this.tenantId, 'running').find(item => taskIdOf(item) === taskId);
+    if (!record) return done;
     if (record.state === 'DETAILS') {
       let answer;
       try {
@@ -222,7 +234,13 @@ export class TokenLookups {
     this.storage.transactionSync(() => {
       const current = this.read(record.chain, record.address);
       if (!current || current.revision !== record.revision) return;
-      this.onLookupInTransaction(this.#write(current, changes));
+      const written = this.#write(current, changes);
+      this.onLookupInTransaction(written);
+      // Only the final step writes a check, so a FATAL one was recorded just now.
+      if (written.secondary?.security.verdict === 'FATAL') {
+        const held = this.storage.sql.exec(`SELECT COUNT(*) AS held FROM scheduler_state WHERE tenant_id=? AND substr(key,1,7)='lookup:'${SELECTIONS.vetoed}`, this.tenantId).one().held;
+        if (held > LOOKUP_SETTINGS.vetoesWarned) console.log(JSON.stringify({ event: 'lookup_vetoes_high', held }));
+      }
     });
     return done;
   }
@@ -239,7 +257,7 @@ export class TokenLookups {
   // Keep the newest lookups within their expiry, and every vetoed one.
   #pruneInTransaction() {
     const now = this.now();
-    listLookups(this.storage, this.tenantId).filter(record => !record.veto).forEach((record, index) => {
+    listLookups(this.storage, this.tenantId, 'unvetoed').forEach((record, index) => {
       if (index >= LOOKUP_SETTINGS.kept || now - record.startedAt >= LOOKUP_SETTINGS.expiryMs) {
         this.storage.sql.exec('DELETE FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, lookupKey(record.chain, record.address));
       }

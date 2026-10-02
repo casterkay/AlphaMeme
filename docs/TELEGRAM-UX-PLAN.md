@@ -479,7 +479,9 @@ time per tenant; scheduler priority equals `command`.
   GoPlus answer leaves it standing. Only a run that reaches `DONE` with a complete
   GoPlus check free of fatal flags clears it. Pruning (the newest 20, 24 h) never
   drops a vetoed record. Vetoes are rare and owner-initiated, so keeping their
-  records stays small, and the detail keeps showing why. Buy is hidden wherever
+  records stays small, and the detail keeps showing why. They are not capped
+  (#92): evicting one could make its token buyable. The scheduler selects only
+  running records in SQL, and holding more than 100 logs `lookup_vetoes_high`. Buy is hidden wherever
   `safetyState` would refuse it, so a vetoed lookup hides Buy on a candidate's
   detail too.
 - **A clean lookup verifies only while fresh** (amended in #87 review):
