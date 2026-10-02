@@ -13,6 +13,10 @@ than GMGN deep-audit passes. Current interface changes are tracked in the
 
 Keep these secrets out of source control: `TELEGRAM_BOT_TOKEN`,
 `TELEGRAM_WEBHOOK_SECRET`, `MASTER_ENC_KEY`, and `OPERATOR_TOKEN`.
+`GOPLUS_APP_KEY` and `GOPLUS_APP_SECRET` are optional and set together: GoPlus
+checks then sign in for an access token (renewed before its 2-hour expiry), so
+their rate limit is the app's own rather than shared with everyone behind
+Cloudflare's egress IPs. Without them GoPlus is called anonymously.
 Set `TELEGRAM_BOT_USERNAME` to the username verified with Telegram for this bot
 (without `@`). Commands without a mention work without that setting; mentioned
 commands are rejected until the username is configured. The worker does not

@@ -133,7 +133,7 @@ async function readLimitedText(response, maxBytes) {
   return text;
 }
 
-async function requestJson(fetchImpl, url, { timeoutMs, maxResponseBytes, signal }) {
+async function requestJson(fetchImpl, url, { timeoutMs, maxResponseBytes, signal, headers = {} }) {
   const controller = new AbortController();
   const abortFromParent = () => controller.abort(signal.reason);
   if (signal) {
@@ -144,7 +144,7 @@ async function requestJson(fetchImpl, url, { timeoutMs, maxResponseBytes, signal
   try {
     const response = await fetchImpl(url, {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...headers },
       signal: controller.signal
     });
     if (!response || typeof response.ok !== 'boolean') {
@@ -417,7 +417,7 @@ function parseGoPlus(payload, { tokenAddress }) {
   }
   if (payload.code !== undefined && ![1, '1'].includes(payload.code)) {
     const error = new Error('GoPlus rejected request');
-    error.code = 'UPSTREAM_REJECTED';
+    error.code = Number(payload.code) === 4029 ? 'RATE_LIMITED' : 'UPSTREAM_REJECTED';
     throw error;
   }
   const record = findGoPlusRecord(payload, tokenAddress);
@@ -602,10 +602,12 @@ export class SecondaryValidator {
     timeoutMs = 8_000,
     maxResponseBytes = DEFAULT_MAX_BYTES,
     now = () => Date.now(),
-    conflictThresholds = { price: 0.10, marketCap: 0.20, liquidity: 0.25 }
+    conflictThresholds = { price: 0.10, marketCap: 0.20, liquidity: 0.25 },
+    goPlusAuth = null
   } = {}) {
     if (typeof fetchImpl !== 'function') throw new TypeError('fetch implementation is required');
     this.fetchImpl = fetchImpl;
+    this.goPlusAuth = goPlusAuth;
     this.timeoutMs = Math.max(1, Number(timeoutMs) || 8_000);
     this.maxResponseBytes = Math.max(1_024, Number(maxResponseBytes) || DEFAULT_MAX_BYTES);
     this.now = now;
@@ -665,10 +667,14 @@ export class SecondaryValidator {
 
   async fetchGoPlus(url, context, { signal } = {}) {
     try {
-      const payload = await requestJson(this.fetchImpl, url, { ...this, signal });
+      const headers = this.goPlusAuth ? { Authorization: await this.goPlusAuth.accessToken({ signal }) } : {};
+      const payload = await requestJson(this.fetchImpl, url, { ...this, signal, headers });
       const parsed = parseGoPlus(payload, context);
       return { source: sourceState(parsed.found ? 'OK' : 'NO_DATA'), security: parsed.security };
     } catch (error) {
+
+      // A refused request may mean the token was revoked early; the next check signs in again.
+      if (error?.code === 'UPSTREAM_REJECTED') this.goPlusAuth?.forget();
       return {
         source: sourceState('ERROR', { errorCode: errorCode(error) }),
         security: unknownSecurity()

@@ -216,7 +216,8 @@ const SOURCE_PROBLEMS = {
   ONCHAIN_NETWORK:['无法连接RPC','RPC unreachable'], ONCHAIN_TIMEOUT:['RPC响应超时','RPC timed out'], ONCHAIN_SCHEMA:['RPC返回了无法识别的结果','RPC answer unreadable'], ONCHAIN_FAILED:['RPC读取失败','RPC read failed'],
   TIMEOUT:['响应超时','Timed out'], REQUEST_FAILED:['请求失败','Request failed'], UPSTREAM_REJECTED:['拒绝了请求','Rejected the request'], RESPONSE_TOO_LARGE:['响应过大','Answer too large'],
   INVALID_JSON:['返回了无法识别的结果','Answer unreadable'], INVALID_JSON_SHAPE:['返回了无法识别的结果','Answer unreadable'], INVALID_CONTENT_TYPE:['返回了无法识别的结果','Answer unreadable'], INVALID_RESPONSE:['返回了无法识别的结果','Answer unreadable'], NORMALIZATION_MISSING:['返回了无法识别的结果','Answer unreadable'],
-  INVALID_ADDRESS:['代币地址无效','Invalid token address']
+  INVALID_ADDRESS:['代币地址无效','Invalid token address'],
+  GOPLUS_AUTH_REJECTED:['GoPlus拒绝了应用密钥','GoPlus refused the app key'], GOPLUS_AUTH_TIMEOUT:['GoPlus登录超时','GoPlus sign-in timed out'], GOPLUS_AUTH_FAILED:['GoPlus登录失败','GoPlus sign-in failed']
 };
 function sourceProblem(code,locale) {
   const L=(zh,en)=>localize(locale,zh,en),http=/^(?:ONCHAIN_)?HTTP_(\d+)$/.exec(code || ''),rpc=/^ONCHAIN_RPC(?:_(\d+))?$/.exec(code || '');

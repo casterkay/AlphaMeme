@@ -4,6 +4,8 @@ import { parseAveBudget, recordAveResponse } from './ave-admission.mjs';
 import { readAveApiKey } from './auth/connection.mjs';
 import { AVE_CU, AveClient, AveError } from './providers/ave.mjs';
 import { ChainLogs, onchainOffReason } from './providers/chain-logs.mjs';
+import { GoPlusAuth, goPlusCredentials } from './providers/goplus-auth.mjs';
+import { SecondaryValidator } from './providers/secondary.mjs';
 import { chainRpcUrls } from './trading/config.mjs';
 import { readAveAdmissionState, writeAveAdmissionStateInTransaction } from './storage/ave-admission-state.mjs';
 import { initializeRadarSchema } from './storage/schema.mjs';
@@ -26,6 +28,7 @@ import { validateTelegramReceipt } from './telegram-intake.mjs';
 
 export class RadarAgent extends DurableObject {
   #schedulerHandlers;
+  #goPlusAuth;
 
   constructor(ctx, env) {
     super(ctx, env);
@@ -308,10 +311,20 @@ export class RadarAgent extends DurableObject {
         cycleId,
         ave: new AveClient({ apiKey }),
         chainLogs: new ChainLogs({ rpcUrls: chainRpcUrls(this.env) }),
+        secondary: this.#secondary(),
         request: operation => request(aveRequest ? this.#recordingAveAnswer(store.tenantId, operation, checkpoint.keyEpoch) : operation),
         onFinalized: finalized => this.#startNextRecoverableCycle(store, scanner, finalized)
       });
     });
+  }
+
+  // GoPlus checks sign in with the app key when one is set; the token lives as long as this object.
+  #secondary() {
+    if (this.#goPlusAuth === undefined) {
+      const credentials = goPlusCredentials(this.env);
+      this.#goPlusAuth = credentials ? new GoPlusAuth(credentials) : null;
+    }
+    return new SecondaryValidator({ goPlusAuth: this.#goPlusAuth });
   }
 
   // A pasted token's lookup step. Its AVE read is the one admission reserved
@@ -321,6 +334,7 @@ export class RadarAgent extends DurableObject {
       const telegram = this.#telegram(store.tenantId), keyEpoch = telegram.control.snapshot().keyEpoch;
       return telegram.lookups.runStep(task.id, {
         request,
+        secondary: this.#secondary(),
         details: async (chain, address, options) => {
           const apiKey = await readAveApiKey(this.ctx.storage, telegram.masterKey, store.tenantId);
           return this.#recordingAveAnswer(store.tenantId, ({ signal }) => new AveClient({ apiKey }).details(chain, address, { signal }), keyEpoch)(options);
