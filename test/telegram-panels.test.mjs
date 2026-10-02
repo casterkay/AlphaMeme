@@ -418,7 +418,7 @@ test('radar names each failing discovery source and its reason, and nothing when
   const snapshot=fixture();snapshot.candidates=[];
   snapshot.sourceHealth={discovery:{trending:{ok:true,count:100},newPools:{ok:false,code:'ONCHAIN_HTTP_403'},watch:{ok:true,count:3},promoted:{ok:false,code:null}}};
   const failing=renderPanel(snapshot,session('radar'),'en').text;
-  assert.match(failing,/\n🟢 Scanning · 🔕 Alerts off\n⚠️ New pools on chain: ONCHAIN_HTTP_403\n⚠️ New pools screened: Unknown\n\nNo leads/);
+  assert.match(failing,/\n🟢 Scanning · 🔕 Alerts off\n⚠️ New pools on chain: Request refused \(HTTP 403\)\n⚠️ New pools screened: Unknown\n\nNo leads/);
   snapshot.sourceHealth.discovery.newPools={ok:true,count:0};snapshot.sourceHealth.discovery.promoted={ok:true,count:0};
   assert.doesNotMatch(renderPanel(snapshot,session('radar'),'en').text,/⚠️/);
 });
@@ -448,6 +448,16 @@ test('settings groups state first and its own actions below; Status sits on Rada
   Object.assign(snapshot.control,{configured:true,paused:true});
   const paused=renderPanel(snapshot,session('settings'),'zh');
   assert.match(paused.text,/扫描: ⏸️ 已暂停 · Robinhood/);assert.deepEqual(panelRows(paused)[1],['notifications.set','scan.resume']);assert.deepEqual(paused.keyboard[1].map(item=>item.text),['🔕 关闭提醒','🟢 恢复']);
+});
+
+test('sources reads one line per source, with counts, readable failures and when each was checked',()=>{
+  const snapshot=fixture();
+  assert.match(renderPanel(snapshot,session('sources'),'en').text,/\nNo source records/);
+  snapshot.sourceHealth={discovery:{complete:false,checkedAt:now-120_000,trending:{ok:true,status:null,code:null,count:100},newPools:{ok:false,status:null,code:'ONCHAIN_NETWORK',count:null},watch:{ok:true,status:null,code:null,count:0}},
+    lastSecondary:{complete:false,checkedAt:now-240_000,sources:{dexScreener:{ok:null,status:'ERROR',code:'HTTP_429',count:null},goPlus:{ok:null,status:'ERROR',code:'GOPLUS_NEW_CODE',count:null}}}};
+  const text=renderPanel(snapshot,session('sources'),'en').text;
+  assert.match(text,/<b>Discovery<\/b> · 2m ago\n✅ Trending: 100\n⚠️ New pools on chain: RPC unreachable\n✅ New pools watched: 0\n\n<b>Last token check<\/b> · 4m ago\n⚠️ DexScreener: Rate limited \(429\)\n⚠️ GoPlus: GOPLUS_NEW_CODE/);
+  assert.doesNotMatch(text,/Unknown|Complete|1,7/);
 });
 
 test('status links Activity, Sources and Delivery and flags delivery issues',()=>{

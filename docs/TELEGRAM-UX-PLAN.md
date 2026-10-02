@@ -243,7 +243,9 @@ MC $120K · Liq $30K · 2,431 holders
   what is scanned.").
 - Status keeps operator detail with relative times and icons, gains the counters
   removed from Radar, and links `[🗂 Activity] [🛜 Sources] [📭 Delivery]`. Sources
-  uses 🛜, not Radar's 📡: no two destinations share an icon.
+  uses 🛜, not Radar's 📡: no two destinations share an icon. It reads one line per
+  source — `✅ Trending: 100`, `⚠️ New pools on chain: RPC unreachable` — under
+  Discovery and Last token check, each with when it was checked.
 - Activity rows: `4m ago · 🆕 PEPE — new lead`; token buttons as today.
 - Performance leads with plain language — "Tokens that passed the screen, 30 min
   later: median +4.2% (37 tokens)" — and moves the 50-sample and calibration gates
