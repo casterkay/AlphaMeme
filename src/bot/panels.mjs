@@ -1,8 +1,9 @@
 import { backendDisposition, effectiveStatus } from '../scoring/manual-review.mjs';
 import { SCAN_CHAINS } from '../chains.mjs';
-import { safetyVerdict, blockingUnknownFields, blockingConflicts } from '../scoring/safety.mjs';
+import { safetyVerdict, blockingUnknownFields } from '../scoring/safety.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
 import { aveTokenUrl } from '../providers/ave.mjs';
+import { dexScreenerTokenUrl } from '../providers/secondary.mjs';
 import { tokenIdentity, safeTelegramText } from './snapshot.mjs';
 import { TRADING_PANELS, TRADING_PANEL_NAMES, tokenTradeControls, renderTradingPanel } from './trading-panels.mjs';
 import { localize, escapeHtml, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, safetyBadge, ICONS } from '../render/telegram.mjs';
@@ -95,8 +96,7 @@ function tokenSafety(row) {
       failed:(deep.failed || []).length, blocking:blocking.length,
       // GoPlus records a missing check as the single field 'tokenSecurity'; it is not one unknown field.
       goPlusMissing:(security.unknownFields || []).includes('tokenSecurity'),
-      unknown:new Set([...(deep.unknownFields || []).filter(field => !blocking.includes(field)),...(security.unknownFields || []).filter(field => field !== 'tokenSecurity')]).size,
-      conflicts:blockingConflicts(secondary).length
+      unknown:new Set([...(deep.unknownFields || []).filter(field => !blocking.includes(field)),...(security.unknownFields || []).filter(field => field !== 'tokenSecurity')]).size
     }
   };
 }
@@ -116,14 +116,13 @@ function safetyLine(safety,snapshot,locale) {
   if (safety.verdict === 'PENDING') return safetyBadge('PENDING',locale);
   // A lookup's clean check too old to verify a buy says so, as the Buy question does.
   const checked = present(safety.checkedAt) ? ` · ${L(`${relativeTime(safety.checkedAt,snapshot.at,locale)}核验`,`checked ${relativeTime(safety.checkedAt,snapshot.at,locale)}`)}${safety.stale ? ` · ${L('已过期，重新粘贴地址即可重新核验','stale, paste the address again to re-check')}` : ''}` : '';
-  const { failed, blocking, goPlusMissing, unknown, conflicts } = safety.counts, plural = (count,one,many) => count === 1 ? one : many;
+  const { failed, blocking, goPlusMissing, unknown } = safety.counts, plural = (count,one,many) => count === 1 ? one : many;
   const details = safety.verdict === 'VETOED' ? [...new Set(safety.reasons)].map(value => fieldLabels[value] ? L(...fieldLabels[value]) : safeTelegramText(value,48))
     : safety.verdict === 'PASSED' ? [] : [
       failed ? L(`${failed}项检查失败`,`${failed} failed ${plural(failed,'check','checks')}`) : '',
       blocking ? L(`${blocking}项阻断未知`,`${blocking} blocking unknown`) : '',
       goPlusMissing ? L('GoPlus 检查不可用','GoPlus check unavailable') : '',
-      unknown ? L(`${unknown}项字段未知`,`${unknown} ${plural(unknown,'field','fields')} unknown`) : '',
-      conflicts ? L(`${conflicts}处来源冲突`,`${conflicts} source ${plural(conflicts,'conflict','conflicts')}`) : ''
+      unknown ? L(`${unknown}项字段未知`,`${unknown} ${plural(unknown,'field','fields')} unknown`) : ''
     ].filter(Boolean);
   if (safety.verdict === 'INCOMPLETE' && !details.length) details.push(L('核验不完整','check incomplete'));
   const shown = safety.verdict === 'VETOED' ? details.slice(0,2) : details, more = details.length - shown.length;
@@ -176,7 +175,7 @@ function listPanel(snapshot,session,locale) {
 }
 
 const fieldLabels = {
-  openSource:['开源','Open source'],ownerRenounced:['所有权放弃','Owner renounced'],honeypot:['貔貅风险','Honeypot'],buyTax:['买入税','Buy tax'],sellTax:['卖出税','Sell tax'],taxDifference:['税差','Tax difference'],rugRatio:['跑路比例','Rug ratio'],top10:['前10持仓','Top 10 holdings'],devHold:['开发者持仓','Developer holdings'],insider:['内幕持仓','Insider holdings'],bundler:['捆绑持仓','Bundler holdings'],sniperHold:['狙击持仓','Sniper holdings'],lockRate:['锁仓比例','Locked ratio'],lpBurned:['LP销毁','LP burned'],liquidity:['流动性','Liquidity'],sampled:['钱包样本','Sampled wallets'],ordinaryCount:['普通钱包数','Ordinary wallets'],ordinaryHoldRate:['普通钱包持仓','Ordinary holdings'],riskWalletCount:['风险钱包数','Risk wallets'],botHoldRate:['机器人持仓','Bot holdings'],linkedHoldRate:['关联持仓','Linked holdings'],duplicateCount:['重复数','Duplicates'],missingAddressCount:['缺失地址数','Missing addresses'],invalidRateCount:['无效比例数','Invalid ratios'],dataComplete:['证据完整','Evidence complete'],pass:['通过','Passed'],status:['状态','Status'],reason:['原因','Reason'],bars:['K线数','Candle count'],return5m:['5分钟收益','5-minute return'],maxDrawdown:['最大回撤','Maximum drawdown'],volumeConcentration:['成交集中度','Volume concentration'],totalVolume:['总成交','Total volume'],activeBars:['活跃K线','Active candles'],volumeChange:['成交变化','Volume change'],volumeTrend:['成交趋势','Volume trend'],decliningVolumeBars:['成交递减K线','Declining volume candles'],invalidBars:['无效K线','Invalid candles'],duplicateBars:['重复K线','Duplicate candles'],continuous:['连续','Continuous'],fresh:['新鲜','Fresh'],latestClosedAt:['最后闭合时间','Last closed time'],stalenessMs:['证据滞后毫秒','Evidence lag (ms)'],sells5m:['5分钟卖出','5-minute sells'],sells24h:['24小时卖出','24-hour sells'],distinctSellers:['不同卖家','Distinct sellers'],historicalDistinctSellers:['历史不同卖家','Historical distinct sellers'],windowSec:['窗口秒数','Window seconds'],evidenceType:['证据类型','Evidence type'],evidenceNote:['证据局限','Evidence limitations'],unknownFields:['未知字段','Unknown fields'],complete:['完整','Complete'],checkedAt:['核验时间','Checked at'],priceUsd:['美元价格','Price USD'],marketCap:['市值','Market cap'],liquidityUsd:['流动性','Liquidity USD'],verdict:['结论','Verdict'],field:['字段','Field'],relativeDifference:['相对差异','Relative difference'],type:['类别','Type'],notHoneypot:['无貔貅风险','Not honeypot'],lpLocked:['LP锁定','LP locked'],tax:['交易税','Trading tax'],rug:['跑路风险','Rug risk'],concentration:['持仓集中度','Concentration'],dev:['开发者','Developer'],sniper:['狙击者','Sniper'],wash:['刷量','Wash trading'],wallets:['钱包','Wallets'],observation:['价格观察','Price observation'],chartRisk:['图形风险','Chart risk'],marketBehavior:['市场行为','Market behavior'],from:['起始时间','Start time'],to:['结束时间','End time'],reasons:['原因','Reasons'],fatal:['致命证据','Fatal evidence'],conflicts:['来源冲突','Source conflicts']
+  openSource:['开源','Open source'],ownerRenounced:['所有权放弃','Owner renounced'],honeypot:['貔貅风险','Honeypot'],buyTax:['买入税','Buy tax'],sellTax:['卖出税','Sell tax'],taxDifference:['税差','Tax difference'],rugRatio:['跑路比例','Rug ratio'],top10:['前10持仓','Top 10 holdings'],devHold:['开发者持仓','Developer holdings'],insider:['内幕持仓','Insider holdings'],bundler:['捆绑持仓','Bundler holdings'],sniperHold:['狙击持仓','Sniper holdings'],lockRate:['锁仓比例','Locked ratio'],lpBurned:['LP销毁','LP burned'],liquidity:['流动性','Liquidity'],sampled:['钱包样本','Sampled wallets'],ordinaryCount:['普通钱包数','Ordinary wallets'],ordinaryHoldRate:['普通钱包持仓','Ordinary holdings'],riskWalletCount:['风险钱包数','Risk wallets'],botHoldRate:['机器人持仓','Bot holdings'],linkedHoldRate:['关联持仓','Linked holdings'],duplicateCount:['重复数','Duplicates'],missingAddressCount:['缺失地址数','Missing addresses'],invalidRateCount:['无效比例数','Invalid ratios'],dataComplete:['证据完整','Evidence complete'],pass:['通过','Passed'],status:['状态','Status'],reason:['原因','Reason'],bars:['K线数','Candle count'],return5m:['5分钟收益','5-minute return'],maxDrawdown:['最大回撤','Maximum drawdown'],volumeConcentration:['成交集中度','Volume concentration'],totalVolume:['总成交','Total volume'],activeBars:['活跃K线','Active candles'],volumeChange:['成交变化','Volume change'],volumeTrend:['成交趋势','Volume trend'],decliningVolumeBars:['成交递减K线','Declining volume candles'],invalidBars:['无效K线','Invalid candles'],duplicateBars:['重复K线','Duplicate candles'],continuous:['连续','Continuous'],fresh:['新鲜','Fresh'],latestClosedAt:['最后闭合时间','Last closed time'],stalenessMs:['证据滞后毫秒','Evidence lag (ms)'],sells5m:['5分钟卖出','5-minute sells'],sells24h:['24小时卖出','24-hour sells'],distinctSellers:['不同卖家','Distinct sellers'],historicalDistinctSellers:['历史不同卖家','Historical distinct sellers'],windowSec:['窗口秒数','Window seconds'],evidenceType:['证据类型','Evidence type'],evidenceNote:['证据局限','Evidence limitations'],unknownFields:['未知字段','Unknown fields'],complete:['完整','Complete'],checkedAt:['核验时间','Checked at'],marketCap:['市值','Market cap'],verdict:['结论','Verdict'],field:['字段','Field'],type:['类别','Type'],notHoneypot:['无貔貅风险','Not honeypot'],lpLocked:['LP锁定','LP locked'],tax:['交易税','Trading tax'],rug:['跑路风险','Rug risk'],concentration:['持仓集中度','Concentration'],dev:['开发者','Developer'],sniper:['狙击者','Sniper'],wash:['刷量','Wash trading'],wallets:['钱包','Wallets'],observation:['价格观察','Price observation'],chartRisk:['图形风险','Chart risk'],marketBehavior:['市场行为','Market behavior'],from:['起始时间','Start time'],to:['结束时间','End time'],reasons:['原因','Reasons'],fatal:['致命证据','Fatal evidence']
 };
 Object.assign(fieldLabels, {
   discovery:['发现来源','Discovery sources'],lastAudit:['最近审计来源','Last audit sources'],lastSecondary:['最近第二来源','Last secondary sources'],endpoints:['接口','Endpoints'],sources:['来源','Sources'],trenches:['新币发现','Trenches'],trending:['趋势榜','Trending'],newPools:['链上新池','New pools on chain'],watch:['新池观察','New pools watched'],promoted:['新池送筛','New pools screened'],info:['基本信息','Token information'],security:['安全','Security'],pool:['资金池','Pool'],holders:['持有人','Holders'],traders:['交易者','Traders'],candles:['K线','Candles'],ok:['可用','Available'],code:['原因','Reason'],count:['条数','Count'],errorCode:['错误原因','Error reason'],codes:['风险原因','Risk reasons'],evidence:['证据','Evidence'],downgradeReasons:['降级原因','Downgrade reasons'],warnings:['警告','Warnings'],strengths:['积极证据','Supporting evidence'],smartWallets:['聪明钱钱包','Smart money wallets'],renownedWallets:['知名钱包','Renowned wallets'],taggedSmartWallets:['标签聪明钱钱包','Tagged smart wallets'],taggedRenownedWallets:['标签知名钱包','Tagged renowned wallets'],sampledTaggedWallets:['标签钱包样本','Tagged wallet samples'],holderCount:['持有人数','Holder count'],holderSampleDistinct:['不同持有人样本','Distinct holder samples'],swaps5m:['5分钟交换','5-minute swaps'],buys5m:['5分钟买入','5-minute buys'],volume5m:['5分钟成交','5-minute volume'],priceChange5m:['5分钟价格变化','5-minute price change'],swapsPerHolder5m:['每持有人交换数','Swaps per holder'],swapCountConsistent:['交易计数一致','Trade count consistent'],holderSampleConsistent:['持有人样本一致','Holder sample consistent'],sellBuyRatio:['卖买比','Sell/buy ratio'],ageSec:['币龄秒数','Age in seconds'],creatorStatus:['创建者状态','Creator status'],creatorLaunchCount:['创建者发币数','Creator launches'],creatorCreatedCount:['创建数','Created count'],creatorGraduatedCount:['毕业数','Graduated count'],creatorOpenRatio:['开放比例','Open ratio'],creatorDeletedPosts:['删除帖子数','Deleted posts'],creatorPromotedTokens:['推广代币数','Promoted tokens'],isHoneypot:['貔貅风险','Honeypot'],mintable:['可增发','Mintable'],ownerChangeBalance:['所有者可改余额','Owner can change balance'],hiddenOwner:['隐藏所有者','Hidden owner'],cannotSellAll:['无法全部卖出','Cannot sell all'],selfDestruct:['可自毁','Self-destruct'],externalCall:['外部调用','External calls'],slippageModifiable:['可修改滑点','Slippage modifiable'],personalSlippageModifiable:['可修改个人滑点','Personal slippage modifiable'],transferPausable:['可暂停转账','Transfers pausable'],blacklisted:['黑名单','Blacklisted'],tradingCooldown:['交易冷却','Trading cooldown'],freezable:['可冻结','Freezable'],closable:['可关闭','Closable'],balanceMutableAuthority:['可修改余额权限','Balance mutable authority'],transferFeeUpgradable:['可更新转账费','Transfer fee upgradable'],nonTransferable:['不可转账','Non-transferable']
@@ -187,7 +186,7 @@ const reasonLabels = {
 export const reasonText = (value,locale) => fieldLabels[value] ? localize(locale,...fieldLabels[value]) : reasonLabels[value] ? localize(locale,...reasonLabels[value]) : `${localize(locale,'证据不完整，请查看来源','Incomplete evidence; check the source')}: ${safeTelegramText(value,500)}`;
 function evidenceLines(value,locale,prefix='') {
   if (Array.isArray(value)) return value.flatMap((item,index) => typeof item === 'object' && item !== null ? evidenceLines(item,locale,`${prefix} ${index+1}`) : [`${prefix} ${index+1}: ${reasonText(item,locale)}`]);
-  if (value && typeof value === 'object') return Object.entries(value).filter(([key]) => !['version','reviewRevision','pairUrl','websites'].includes(key)).flatMap(([key,item]) => evidenceLines(item,locale,`${prefix ? prefix+' · ' : ''}${fieldLabels[key] ? localize(locale,...fieldLabels[key]) : safeTelegramText(key,60)}`));
+  if (value && typeof value === 'object') return Object.entries(value).filter(([key]) => !['version','reviewRevision'].includes(key)).flatMap(([key,item]) => evidenceLines(item,locale,`${prefix ? prefix+' · ' : ''}${fieldLabels[key] ? localize(locale,...fieldLabels[key]) : safeTelegramText(key,60)}`));
   return [`${prefix}: ${typeof value === 'boolean' ? truth(value,locale) : typeof value === 'number' ? numberText(value,locale) : value === null || value === undefined || value === '' ? name('unknown',locale) : safeTelegramText(value,500)}`];
 }
 
@@ -216,7 +215,7 @@ const SOURCE_PROBLEMS = {
   ONCHAIN_NETWORK:['无法连接RPC','RPC unreachable'], ONCHAIN_TIMEOUT:['RPC响应超时','RPC timed out'], ONCHAIN_SCHEMA:['RPC返回了无法识别的结果','RPC answer unreadable'], ONCHAIN_FAILED:['RPC读取失败','RPC read failed'],
   TIMEOUT:['响应超时','Timed out'], REQUEST_FAILED:['请求失败','Request failed'], UPSTREAM_REJECTED:['拒绝了请求','Rejected the request'], RESPONSE_TOO_LARGE:['响应过大','Answer too large'],
   INVALID_JSON:['返回了无法识别的结果','Answer unreadable'], INVALID_JSON_SHAPE:['返回了无法识别的结果','Answer unreadable'], INVALID_CONTENT_TYPE:['返回了无法识别的结果','Answer unreadable'], INVALID_RESPONSE:['返回了无法识别的结果','Answer unreadable'], NORMALIZATION_MISSING:['返回了无法识别的结果','Answer unreadable'],
-  INVALID_ADDRESS:['代币地址无效','Invalid token address'],
+  INVALID_ADDRESS:['代币地址无效','Invalid token address'], RATE_LIMITED:['请求受限','Rate limited'],
   GOPLUS_AUTH_REJECTED:['GoPlus拒绝了应用密钥','GoPlus refused the app key'], GOPLUS_AUTH_TIMEOUT:['GoPlus登录超时','GoPlus sign-in timed out'], GOPLUS_AUTH_FAILED:['GoPlus登录失败','GoPlus sign-in failed']
 };
 function sourceProblem(code,locale) {
@@ -227,7 +226,7 @@ function sourceProblem(code,locale) {
   return known ? L(...known) : code ? safeTelegramText(code,48) : name('unknown',locale);
 }
 
-const LOOKUP_CHECK_FAILURES = { DEXSCREENER:['DexScreener 检查未完成','the DexScreener check did not finish'], GOPLUS:['GoPlus 检查未完成','the GoPlus check did not finish'] };
+const LOOKUP_CHECK_FAILURES = { GOPLUS:['GoPlus 检查未完成','the GoPlus check did not finish'] };
 
 // A pasted token's lookup (§4): progress while it runs, then AVE's market facts and the shared verdict.
 function lookupDetail(snapshot,session,locale,lookup,listed) {
@@ -235,7 +234,7 @@ function lookupDetail(snapshot,session,locale,lookup,listed) {
   // A recorded veto stands until a later complete check clears it, whatever this run's state.
   const safety = lookup.veto ? { verdict:'VETOED', checkedAt:lookup.veto.checkedAt, reasons:lookup.veto.fields, counts:{} } : { ...tokenSafety(lookup), stale:lookup.stale };
   const where = chainLabel(lookup.chain), others = SCAN_CHAINS.filter(chain => chain !== lookup.chain);
-  const status = ['DETAILS','DEXSCREENER','GOPLUS'].includes(lookup.state)
+  const status = ['DETAILS','GOPLUS'].includes(lookup.state)
     ? lookup.state === 'DETAILS' && snapshot.ave?.readyAt > snapshot.at ? `${ICONS.checking} ${L('等待AVE额度','Waiting for AVE capacity')}` : `${ICONS.checking} ${L(`正在 ${where} 上查询…`,`Looking up on ${where}…`)}`
     : lookup.state === 'NOT_FOUND' ? `${ICONS.unknown} ${L(`AVE在 ${where} 上没有此地址的代币。`,`AVE has no token at this address on ${where}.`)}`
       : lookup.state === 'FAILED' ? `${ICONS.unknown} ${L('查询失败','Lookup failed')}${L('：',': ')}${L(...(lookup.failedStep !== 'DETAILS' ? LOOKUP_CHECK_FAILURES[lookup.failedStep] : LOOKUP_FAILURES[lookup.reason] ?? ['无法读取AVE','AVE could not be read']))}`
@@ -250,7 +249,7 @@ function lookupDetail(snapshot,session,locale,lookup,listed) {
   const trading = tokenTradeControls(snapshot,lookup,locale,identity,lookup.verdict === 'VETOED');
   blocks.push(...trading.blocks);
   const keyboard = [...trading.keyboard,
-    [urlButton(`${ICONS.site} ${L('官网','Site')}`,lookup.secondary?.market?.websites?.[0]),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,lookup.secondary?.market?.pairUrl),urlButton(`${ICONS.ave} ${L('资料','Profile')}`,aveTokenUrl(lookup.chain,lookup.address))],
+    [urlButton(`${ICONS.site} ${L('官网','Site')}`,lookup.website),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,dexScreenerTokenUrl(lookup.chain,lookup.address)),urlButton(`${ICONS.ave} ${L('资料','Profile')}`,aveTokenUrl(lookup.chain,lookup.address))],
     [button(`${ICONS.saved} ${annotation?.favorite ? L('取消自选','Unwatch') : L('自选','Watch')}`,'favorite.set',{value:annotation?.favorite !== true},identity),button(`${ICONS.note} ${L('备注','Note')}`,'note.begin',{},identity),annotation?.note ? button(`${ICONS.clear} ${L('清空备注','Clear note')}`,'note.clear',{},identity) : null],
     lookup.state === 'FAILED' ? [button(`${ICONS.refresh} ${L('重试','Retry')}`,'lookup.start',{retry:true},identity)] : [],
     // Until AVE confirms the token here, the likely cause of a miss is the wrong chain, whichever way AVE says it.
@@ -268,7 +267,7 @@ function detailPanel(snapshot,session,locale) {
     const checks = Object.values(deep.checks || {}), unknown = deep.unknownFields || [], blocking = deep.blockingUnknownFields || [];
     const header = [`${userText(row.symbol || '?',30)} · ${chainLabel(row.chain)} · ${safetyMark(safety,locale)}`, `CA: <code>${userText(row.address,80)}</code>`,`${L('审计','Audit')}: ${timestamp(row.auditedAt,locale)} · ${relativeTime(row.auditedAt,snapshot.at,locale)}`];
     if (invalidApproval) header.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
-    const counts = `${L('通过/未通过检查','Passed/not-passed checks')}: ${checks.filter(value => value === true).length}/${checks.filter(value => value === false).length}\n${L('明确失败/阻断未知/其他未知/冲突','Explicit failures/blocking unknown/other unknown/conflicts')}: ${(deep.failed || []).length}/${blocking.length}/${unknown.filter(value => !blocking.includes(value)).length}/${(row.secondary?.conflicts || []).length}`;
+    const counts = `${L('通过/未通过检查','Passed/not-passed checks')}: ${checks.filter(value => value === true).length}/${checks.filter(value => value === false).length}\n${L('明确失败/阻断未知/其他未知','Explicit failures/blocking unknown/other unknown')}: ${(deep.failed || []).length}/${blocking.length}/${unknown.filter(value => !blocking.includes(value)).length}`;
     const sections = [
       [L('阻断发现','Blocking findings'), [...(deep.failed || []).map(value => `${L('失败','Failure')}: ${reasonText(value,locale)}`),...blocking.map(value => `${L('阻断未知','Blocking unknown')}: ${safeTelegramText(value)}`),...unknown.filter(value => !blocking.includes(value)).map(value => `${L('其他未知','Other unknown')}: ${safeTelegramText(value)}`),row.auditHealth?.earlyExit ? L('审计提前结束，部分证据未采集','Audit exited early; some evidence was not collected') : '',row.decisionReason ? reasonText(row.decisionReason,locale) : '',...evidenceLines(deep.checks || {},locale)]],
       [L('合约与供应','Contract and supply'),[safeTelegramText(deep.honeypotEvidence,500),...evidenceLines(deep.security || {},locale)]],
@@ -300,7 +299,7 @@ function detailPanel(snapshot,session,locale) {
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };
   const eligible = !mark?.decision && row.reviewRevision && backendDisposition(row) === 'chain' && row.auditedAt && snapshot.at-row.auditedAt <= 600_000;
   const keyboard = [...trading.keyboard,
-    [urlButton(ICONS.x,officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter)),urlButton(`${ICONS.site} ${L('官网','Site')}`,row.info?.website),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,row.secondary?.market?.pairUrl),urlButton(`${ICONS.ave} ${L('资料','Profile')}`,aveTokenUrl(row.chain,row.address)),button(`${ICONS.evidence} ${L('证据','Evidence')}`,'panel.open',{panel:'evidence'},identity)],
+    [urlButton(ICONS.x,officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter)),urlButton(`${ICONS.site} ${L('官网','Site')}`,row.info?.website),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,dexScreenerTokenUrl(row.chain,row.address)),urlButton(`${ICONS.ave} ${L('资料','Profile')}`,aveTokenUrl(row.chain,row.address)),button(`${ICONS.evidence} ${L('证据','Evidence')}`,'panel.open',{panel:'evidence'},identity)],
     [button(`${ICONS.saved} ${annotation?.favorite ? L('取消自选','Unwatch') : L('自选','Watch')}`,'favorite.set',{value:annotation?.favorite !== true},identity),button(`${ICONS.note} ${L('备注','Note')}`,'note.begin',{},identity),mark?.decision === 'ignored' ? null : button(`${ICONS.ignore} ${L('忽略','Ignore')}`,'mark.set_ignored',binding,identity)],
     [mark?.decision ? button(mark.decision === 'passed' ? L('撤销人工通过','Undo approval') : L('取消忽略','Stop ignoring'),'mark.clear',binding,identity) : eligible ? button(`${ICONS.approve} ${L('人工通过','Approve')}`,'mark.set_passed',binding,identity) : null,annotation?.note ? button(`${ICONS.clear} ${L('清空备注','Clear note')}`,'note.clear',{},identity) : null]];
   return finishPanel(`${safeTelegramText(row.symbol || '?',30)} · ${chainLabel(row.chain)}`,blocks.filter(value => value !== ''),keyboard,snapshot,session,locale,{token:identity});
@@ -383,7 +382,7 @@ function statusPanel(snapshot,session,locale) {
       : `${ICONS.passed} ${label}${row.count !== null ? `: ${numberText(row.count,locale)}` : row.status && row.status !== 'OK' ? `: ${sourceProblem(row.status,locale)}` : ''}`;
     blocks=[];
     if(discovery) blocks.push(section(L('发现来源','Discovery'),discovery),...['trending','newPools','watch','promoted'].filter(field=>discovery[field]).map(field=>line(L(...fieldLabels[field]),discovery[field])));
-    if(lastSecondary) blocks.push(...(blocks.length ? [''] : []),section(L('最近代币核验','Last token check'),lastSecondary),...Object.entries({dexScreener:'DexScreener',goPlus:'GoPlus'}).filter(([field])=>lastSecondary.sources[field]).map(([field,label])=>line(label,lastSecondary.sources[field])));
+    if(lastSecondary) blocks.push(...(blocks.length ? [''] : []),section(L('最近代币核验','Last token check'),lastSecondary),...Object.entries({goPlus:'GoPlus'}).filter(([field])=>lastSecondary.sources[field]).map(([field,label])=>line(label,lastSecondary.sources[field])));
     if(!blocks.length) blocks=[L('尚无来源记录','No source records')];
     keyboard=[];
   } else if(session.panel === 'delivery') {
@@ -541,7 +540,7 @@ export function renderPanel(snapshot,session,locale='zh') {
   } else if(session.panel === 'help') {
     const commands=list=>list.map(([command,zh,en])=>escapeHtml(`/${command} — ${L(zh,en)}`));
     const pages=[
-      [L('雷达读取扫描链上的AVE热榜，把通过行情筛选的新代币作为线索提醒你。','The radar reads the AVE hot list on your scan chain and alerts you to new tokens that pass its market screen: these are leads.'),L('随后GoPlus与DexScreener核验每条线索的安全性；未通过的线索被否决，不能买入，仍可卖出。','GoPlus and DexScreener then check each lead\'s safety; a lead that fails is vetoed and cannot be bought, though it can still be sold.'),L('交易可选：使用独立的热钱包（/wallet），每笔交易都需你确认报价。','Trading is optional: it uses a separate hot wallet (/wallet), and every trade waits for you to confirm its quote.')],
+      [L('雷达读取扫描链上的AVE热榜，把通过行情筛选的新代币作为线索提醒你。','The radar reads the AVE hot list on your scan chain and alerts you to new tokens that pass its market screen: these are leads.'),L('随后GoPlus核验每条线索的安全性；未通过的线索被否决，不能买入，仍可卖出。','GoPlus then checks each lead\'s safety; a lead that fails is vetoed and cannot be bought, though it can still be sold.'),L('交易可选：使用独立的热钱包（/wallet），每笔交易都需你确认报价。','Trading is optional: it uses a separate hot wallet (/wallet), and every trade waits for you to confirm its quote.')],
       [`<b>${L('菜单命令','Menu commands')}</b>`,...commands(MENU_COMMANDS),'',`<b>${L('更多命令','More commands')}</b>`,...commands(MORE_COMMANDS)],
       [keySafetyCopy(locale),L('热钱包只存放你愿意承担风险的小额资金；导出的私钥请离线保存。','Keep only small amounts you can afford to lose in the hot wallet, and store its exported key offline.'),L('线索只通过了AVE行情筛选；未核验不代表安全，交易前请自行核查。','Leads passed the AVE market screen only; unverified does not mean safe, so check before any trade.'),L('人工通过不会改变筛选结果，也不会执行交易。暂停扫描与关闭提醒互不影响。','Manual approval does not change screening results or execute trades. Pausing scanning and muting alerts are independent.'),L('非投资建议。','Not investment advice.')]
     ];

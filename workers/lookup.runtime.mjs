@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { TelegramRuntime } from '../src/bot/runtime.mjs';
 import { createTelegramExport } from '../src/bot/snapshot.mjs';
 import { AveClient, AVE_CU } from '../src/providers/ave.mjs';
+import { GoPlusAuth } from '../src/providers/goplus-auth.mjs';
 import { SecondaryValidator } from '../src/providers/secondary.mjs';
 import { listLookups, LOOKUP_SETTINGS } from '../src/lookup.mjs';
 import { OneAlarmScheduler, externalRequestHandler } from '../src/scheduler.mjs';
@@ -16,17 +17,19 @@ const masterKey = { activeVersion: '1', keys: { '1': 'lookup-runtime-master-key'
 const apiKey = 'ave-lookup-runtime-key-0001';
 const TOKEN = '0x' + 'cd'.repeat(20);
 const WBNB = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c';
+const GOPLUS_TOKEN_URL = 'https://api.gopluslabs.io/api/v1/token';
+const GOPLUS = { appKey: 'goplus-key', appSecret: 'goplus-secret' };
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 const request = operation => operation({ signal: new AbortController().signal, timeoutMs: 1000 });
 const CLEAN = { is_honeypot: '0', is_open_source: '1', is_mintable: '0', owner_change_balance: '0', hidden_owner: '0', cannot_sell_all: '0', selfdestruct: '0', external_call: '0',
   slippage_modifiable: '0', personal_slippage_modifiable: '0', transfer_pausable: '0', is_blacklisted: '0', trading_cooldown: '0', buy_tax: '0', sell_tax: '0' };
 
-// Hand-written AVE, DexScreener and GoPlus endpoints that record every URL in order.
+// Hand-written AVE and GoPlus endpoints that record every URL in order.
 function network() {
-  const calls = [], knobs = { ave: null, goPlus: CLEAN };
+  const calls = [], authorizations = [], knobs = { ave: null, goPlus: CLEAN };
   const aveToken = (address, apiChain) => ({ token: address, chain: apiChain, symbol: 'LOOK', name: 'Look token', current_price_usd: '0.0012', market_cap: '50000', main_pair_tvl: '20000',
-    holders: 150, token_tx_volume_usd_5m: '4000', token_price_change_5m: '12.5', launch_at: (start - 3_600_000) / 1000 });
-  const fetch = async url => {
+    holders: 150, token_tx_volume_usd_5m: '4000', token_price_change_5m: '12.5', launch_at: (start - 3_600_000) / 1000, website: 'https://look.example' });
+  const fetch = async (url, init = {}) => {
     const target = String(url);
     calls.push(target);
     const ave = /^https:\/\/prod\.ave-api\.com\/v2\/tokens\/([^-]+)-([a-z]+)$/.exec(target);
@@ -35,14 +38,13 @@ function network() {
       if (ave[1] === WBNB) return json({ status: 1, data: { token: { token: WBNB, chain: 'bsc', current_price_usd: '600' }, pairs: [] } });
       return knobs.ave ? knobs.ave(ave[1], ave[2]) : json({ status: 1, data: { token: aveToken(ave[1], ave[2]), pairs: [] } });
     }
-    const dex = /^https:\/\/api\.dexscreener\.com\/token-pairs\/v1\/([a-z]+)\/(.+)$/.exec(target);
-    if (dex) return json([{ chainId: dex[1], pairAddress: '0x' + 'ef'.repeat(20), dexId: 'dex', url: `https://dexscreener.com/${dex[1]}/pair`, baseToken: { address: dex[2], symbol: 'LOOK', name: 'Look token' },
-      priceUsd: '0.0012', marketCap: 50000, fdv: 50000, liquidity: { usd: 20000 }, info: { websites: [{ url: 'https://look.example' }] } }]);
+    if (target === GOPLUS_TOKEN_URL) return json({ code: 1, message: 'ok', result: { access_token: 'goplus-token', expires_in: 7200 } });
     const goPlus = /contract_addresses=(.+)$/.exec(target);
+    if (goPlus) authorizations.push(init.headers?.Authorization);
     if (goPlus) return json({ code: 1, result: { [decodeURIComponent(goPlus[1])]: knobs.goPlus } });
     throw new Error(`unexpected request ${target}`);
   };
-  return { calls, knobs, fetch, ave: () => calls.filter(url => url.startsWith('https://prod.ave-api.com/') && !url.includes(WBNB)) };
+  return { calls, authorizations, knobs, fetch, ave: () => calls.filter(url => url.startsWith('https://prod.ave-api.com/') && !url.includes(WBNB)) };
 }
 
 async function withLookups(tenantId, operation, extraEnv = {}) {
@@ -50,6 +52,8 @@ async function withLookups(tenantId, operation, extraEnv = {}) {
   return runInDurableObject(radar, async (_instance, { storage }) => {
     let clock = start, update = 0, message = 100;
     const net = network(), sent = [];
+    // One validator, as the agent keeps one, so its GoPlus token is issued once.
+    const secondary = new SecondaryValidator({ goPlusAuth: new GoPlusAuth({ ...GOPLUS, fetchImpl: net.fetch, now: () => clock }), fetchImpl: net.fetch, now: () => clock });
     const runtimeEnv = { MASTER_ENC_KEY: masterKey, AVE_MONTHLY_CU: env.AVE_MONTHLY_CU, AVE_CU_RESET_DAY: env.AVE_CU_RESET_DAY, ...extraEnv };
     const make = () => {
       const runtime = new TelegramRuntime({ storage, tenantId, env: runtimeEnv, now: () => clock });
@@ -95,19 +99,19 @@ async function withLookups(tenantId, operation, extraEnv = {}) {
     const step = async () => {
       const [task] = tasks();
       if (!task) throw new Error('no lookup step is scheduled');
-      await runtime.lookups.runStep(task.id, { request, details, secondary: new SecondaryValidator({ fetchImpl: net.fetch, now: () => clock }) });
+      await runtime.lookups.runStep(task.id, { request, details, secondary });
       await drain();
     };
     const lookups = () => listLookups(storage, tenantId);
     const lastText = () => sent.filter(row => row.params.text).at(-1).params.text;
     const count = table => storage.sql.exec(`SELECT COUNT(*) AS n FROM ${table} WHERE tenant_id=?`, tenantId).one().n;
-    await operation({ runtime: () => runtime, restart: () => { runtime = make(); }, storage, tenantId, net, sent, receipt, run, drain, sessions, session, link, click, connect, paste,
+    await operation({ runtime: () => runtime, restart: () => { runtime = make(); }, storage, tenantId, net, sent, secondary, receipt, run, drain, sessions, session, link, click, connect, paste,
       tasks, step, details, lookups, lastText, count, clock: { now: () => clock, advance: ms => { clock += ms; } } });
   });
 }
 
 describe('pasted contract-address lookup', () => {
-  it('looks the address up on the scan chain: AVE, then DexScreener, then GoPlus, one request per step, editing the same detail each time', async () => {
+  it('looks the address up on the scan chain: AVE, then GoPlus, one request per step besides the GoPlus token, editing the same detail each time', async () => {
     await withLookups('26801', async ({ runtime, net, sent, connect, paste, tasks, step, lookups, lastText, session }) => {
       await connect();
       const detail = await paste(TOKEN);
@@ -117,18 +121,18 @@ describe('pasted contract-address lookup', () => {
       expect(tasks()).toEqual([{ id: `lookup:arc:${TOKEN}:${start}`, kind: 'lookup', dueAt: start, enabled: true, aveCost: AVE_CU.details }]);
       const edits = () => sent.filter(row => row.method === 'editMessageText' && row.params.message_id === session(detail.id).messageId).length;
       await step();
-      expect(lookups()[0].state).toBe('DEXSCREENER');expect(edits()).toBe(1);
+      expect(lookups()[0].state).toBe('GOPLUS');expect(edits()).toBe(1);
       expect(lastText()).toMatch(/^<b>LOOK · Arc<\/b>\n⏳ Looking up on Arc…\nMC \$50K · Liq \$20K · 150 holders\n1h old · 5m \+12\.5% · 5m vol \$4K\n[\s\S]*AVE · just now/);
       expect(tasks()[0].aveCost).toBe(0);
-      await step();expect(lookups()[0].state).toBe('GOPLUS');expect(edits()).toBe(2);
-      await step();expect(lookups()[0].state).toBe('DONE');expect(edits()).toBe(3);
-      expect(net.calls.filter(url => !url.includes(WBNB))).toEqual([`https://prod.ave-api.com/v2/tokens/${TOKEN}-arc`, `https://api.dexscreener.com/token-pairs/v1/arc/${TOKEN}`,
+      await step();expect(lookups()[0].state).toBe('DONE');expect(edits()).toBe(2);
+      expect(net.calls.filter(url => !url.includes(WBNB))).toEqual([`https://prod.ave-api.com/v2/tokens/${TOKEN}-arc`, GOPLUS_TOKEN_URL,
         `https://api.gopluslabs.io/api/v1/token_security/5042?contract_addresses=${TOKEN}`]);
+      expect(net.authorizations).toEqual(['goplus-token']);
       expect(lastText()).toMatch(/\n✅ No failures found · checked just now\n/);
       const buttons = sent.at(-1).params.reply_markup.inline_keyboard.flat();
-      expect(buttons.filter(button => button.url).map(button => [button.text, button.url])).toEqual([['🌐 Site', 'https://look.example/'], ['📊 Chart', 'https://dexscreener.com/arc/pair'], ['🔭 Profile', `https://ave.ai/token/${TOKEN}-arc`]]);
+      expect(buttons.filter(button => button.url).map(button => [button.text, button.url])).toEqual([['🌐 Site', 'https://look.example/'], ['📊 Chart', `https://dexscreener.com/arc/${TOKEN}`], ['🔭 Profile', `https://ave.ai/token/${TOKEN}-arc`]]);
       expect(tasks()).toEqual([]);
-      expect(runtime().lookups.read('arc', TOKEN).secondary).toMatchObject({ status: 'COMPLETE', security: { verdict: 'NO_FATAL_FLAGS' }, conflicts: [] });
+      expect(runtime().lookups.read('arc', TOKEN).secondary).toMatchObject({ status: 'COMPLETE', sources: { goPlus: { status: 'OK' } }, security: { verdict: 'NO_FATAL_FLAGS' } });
     });
   });
 
@@ -136,7 +140,7 @@ describe('pasted contract-address lookup', () => {
     ['NOT_FOUND', '26803', () => json({ status: 1, data: { token: {}, pairs: [] } }), /AVE has no token at this address on Arc\./],
     ['FAILED', '26804', () => json({ status: 0, msg: 'unexpected' }), /Lookup failed: AVE returned an answer it could not be read from/],
     ['FAILED', '26805', () => new Response('unauthorized', { status: 401 }), /Lookup failed: AVE key unavailable; reconnect/]
-  ])('ends %s (tenant %s) without any DexScreener or GoPlus request and offers the other EVM chains', async (state, tenantId, answer, copy) => {
+  ])('ends %s (tenant %s) without any GoPlus request and offers the other EVM chains', async (state, tenantId, answer, copy) => {
     await withLookups(tenantId, async ({ net, connect, paste, step, tasks, lookups, lastText, link, click, session }) => {
       await connect();
       net.knobs.ave = answer;
@@ -151,7 +155,7 @@ describe('pasted contract-address lookup', () => {
       expect(session(detail.id).query.selectedToken).toEqual({ chain: 'bsc', address: TOKEN });
       await step();
       expect(net.ave().at(-1)).toBe(`https://prod.ave-api.com/v2/tokens/${TOKEN}-bsc`);
-      expect(lookups().find(record => record.chain === 'bsc').state).toBe('DEXSCREENER');
+      expect(lookups().find(record => record.chain === 'bsc').state).toBe('GOPLUS');
     });
   });
 
@@ -169,24 +173,23 @@ describe('pasted contract-address lookup', () => {
       expect(lastText()).toMatch(/⏳ Waiting for AVE capacity/);
       clock.advance(60_000);net.knobs.ave = null;
       await step();
-      expect(lookups()[0].state).toBe('DEXSCREENER');
+      expect(lookups()[0].state).toBe('GOPLUS');
       expect(runtime().commands.sessions.get(detail.id).panel).toBe('detail');
     });
   });
 
   it('resumes after a restart from the step it reached, and a step replayed concurrently commits once', async () => {
-    await withLookups('26808', async ({ runtime, restart, net, connect, paste, step, tasks, lookups, details }) => {
+    await withLookups('26808', async ({ runtime, restart, net, connect, paste, step, tasks, lookups, details, secondary }) => {
       await connect();await paste(TOKEN);
       await step();
       restart();
       const [task] = tasks();
-      expect(task).toMatchObject({ aveCost: 0 });expect(lookups()[0].state).toBe('DEXSCREENER');
-      const revision = lookups()[0].revision, secondary = new SecondaryValidator({ fetchImpl: net.fetch });
+      expect(task).toMatchObject({ aveCost: 0 });expect(lookups()[0].state).toBe('GOPLUS');
+      const revision = lookups()[0].revision;
       await Promise.all([runtime().lookups.runStep(task.id, { request, details, secondary }), runtime().lookups.runStep(task.id, { request, details, secondary })]);
-      expect(lookups()[0]).toMatchObject({ state: 'GOPLUS', revision: revision + 1 });
+      expect(lookups()[0]).toMatchObject({ state: 'DONE', revision: revision + 1 });
       expect(net.ave()).toHaveLength(1);
-      await step();
-      expect(lookups()[0].state).toBe('DONE');
+      expect(tasks()).toEqual([]);
     });
   });
 
@@ -194,7 +197,7 @@ describe('pasted contract-address lookup', () => {
     await withLookups('26809', async ({ net, connect, paste, step, tasks, lookups, clock }) => {
       await connect();
       const first = await paste(TOKEN);
-      for (let index = 0; index < 3; index++) await step();
+      for (let index = 0; index < 2; index++) await step();
       clock.advance(LOOKUP_SETTINGS.reuseMs - 1);
       const second = await paste(TOKEN);
       expect(lookups()).toEqual([expect.objectContaining({ state: 'DONE', startedAt: start, sessionId: second.id })]);
@@ -217,7 +220,7 @@ describe('pasted contract-address lookup', () => {
       expect(session(refused.id).panel).toBe('radar');
       expect(lastText()).toMatch(new RegExp(`^⚠️ ${LOOKUP_SETTINGS.pending} lookups are already waiting; try again when one finishes\\.`));
       expect(lookups()).toHaveLength(LOOKUP_SETTINGS.pending);
-      for (let index = 0; index < 3; index++) await step();
+      for (let index = 0; index < 2; index++) await step();
       expect(tasks().map(task => task.id)).toEqual([`lookup:arc:${addresses[1]}:${start + 1}`]);
       await paste(addresses.at(-1));
       expect(lookups()).toHaveLength(LOOKUP_SETTINGS.pending + 1);
@@ -252,7 +255,7 @@ describe('pasted contract-address lookup', () => {
       expect(lookups()[0]).toMatchObject({ state: 'DETAILS', startedAt: clock.now() });
       expect(tasks()).toHaveLength(1);
       await step();
-      expect(lookups()[0].state).toBe('DEXSCREENER');
+      expect(lookups()[0].state).toBe('GOPLUS');
     });
   });
 
@@ -268,7 +271,7 @@ describe('pasted contract-address lookup', () => {
       await click(link(detail, 'lookup.start', (_params, row) => row.chain === 'bsc'));
       expect(lookups().find(record => record.chain === 'bsc')).toMatchObject({ state: 'DETAILS', startedAt: clock.now() });
       expect(tasks()).toHaveLength(1);
-      await step();await step();await step();
+      await step();await step();
 
       const OTHER = '0x' + 'e3'.repeat(20);
       net.knobs.ave = () => new Response('unauthorized', { status: 401 });
@@ -323,7 +326,7 @@ describe('pasted contract-address lookup', () => {
       await click(link(detail, 'lookup.start', params => params.retry === true));
       expect(lookups()[0]).toMatchObject({ state: 'DETAILS', startedAt: clock.now() });
       await step();
-      expect(lookups()[0].state).toBe('DEXSCREENER');
+      expect(lookups()[0].state).toBe('GOPLUS');
       expect(tasks()).toHaveLength(1);
       expect(lastText()).toMatch(/Looking up on Arc/);
     });
@@ -338,7 +341,7 @@ describe('pasted contract-address lookup', () => {
       await paste(CLEAN_TOKEN);
       await step();
       expect(state(CLEAN_TOKEN)).toBe('UNVERIFIED');
-      await step();await step();
+      await step();
       expect(state(CLEAN_TOKEN)).toBe('VERIFIED');
       // A clean check verifies a buy for 15 minutes from its GoPlus read; then a buy asks again.
       clock.advance(LOOKUP_SETTINGS.verifiedMs);
@@ -347,7 +350,7 @@ describe('pasted contract-address lookup', () => {
       expect(state(CLEAN_TOKEN)).toBe('UNVERIFIED');
       net.knobs.goPlus = { ...CLEAN, is_honeypot: '1' };
       await paste(FATAL_TOKEN);
-      for (let index = 0; index < 3; index++) await step();
+      for (let index = 0; index < 2; index++) await step();
       expect(state(FATAL_TOKEN)).toBe('VETOED');
       // A candidate is the token of record: its open check outranks a clean lookup, but a fatal lookup still vetoes.
       for (const address of [CLEAN_TOKEN, FATAL_TOKEN]) storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?)',
@@ -366,23 +369,23 @@ describe('pasted contract-address lookup', () => {
       const rerun = async ave => { clock.advance(LOOKUP_SETTINGS.reuseMs);net.knobs.ave = ave;await paste(TOKEN); };
       net.knobs.goPlus = { ...CLEAN, is_honeypot: '1' };
       await paste(TOKEN);
-      for (let index = 0; index < 3; index++) await step();
+      for (let index = 0; index < 2; index++) await step();
       expect(state()).toBe('VETOED');
       // A rerun keeps the veto while it runs, and when it ends NOT_FOUND or FAILED.
       await rerun(null);
       expect([lookups()[0].state, state()]).toEqual(['DETAILS', 'VETOED']);
       expect(lastText()).toMatch(/⏳ Looking up on Arc…\n⛔ Vetoed: Honeypot/);
-      for (let index = 0; index < 3; index++) await step();
+      for (let index = 0; index < 2; index++) await step();
       await rerun(() => json({ status: 1, data: { pairs: [] } }));await step();
       expect([lookups()[0].state, state()]).toEqual(['NOT_FOUND', 'VETOED']);
       await rerun(() => json({ status: 0, msg: 'unexpected' }));await step();
       expect([lookups()[0].state, state()]).toEqual(['FAILED', 'VETOED']);
       // A finished check without a complete GoPlus answer keeps it too.
       net.knobs.goPlus = { ...CLEAN, is_honeypot: undefined };
-      await rerun(null);for (let index = 0; index < 3; index++) await step();
+      await rerun(null);for (let index = 0; index < 2; index++) await step();
       expect([lookups()[0].state, lookups()[0].secondary.security.verdict, state()]).toEqual(['DONE', 'UNKNOWN', 'VETOED']);
       net.knobs.goPlus = CLEAN;
-      await rerun(null);for (let index = 0; index < 3; index++) await step();
+      await rerun(null);for (let index = 0; index < 2; index++) await step();
       expect([lookups()[0].veto, state()]).toEqual([null, 'VERIFIED']);
     });
   });
@@ -392,7 +395,7 @@ describe('pasted contract-address lookup', () => {
       await connect();
       net.knobs.goPlus = { ...CLEAN, is_honeypot: '1' };
       const VETOED = '0x' + 'fe'.repeat(20);
-      await paste(VETOED);for (let index = 0; index < 3; index++) await step();
+      await paste(VETOED);for (let index = 0; index < 2; index++) await step();
       net.knobs.ave = () => json({ status: 1, data: { pairs: [] } });
       const addresses = Array.from({ length: LOOKUP_SETTINGS.kept + 1 }, (_, index) => '0x' + index.toString(16).padStart(40, 'a'));
       for (const address of addresses) { clock.advance(1);await paste(address);await step(); }
@@ -408,7 +411,7 @@ describe('pasted contract-address lookup', () => {
     await withLookups('26824', async ({ runtime, storage, tenantId, net, connect, paste, step, tasks, lookups, clock }) => {
       await connect();
       net.knobs.goPlus = { ...CLEAN, is_honeypot: '1' };
-      const veto = async address => { clock.advance(1);await paste(address);for (let index = 0; index < 3; index++) await step(); };
+      const veto = async address => { clock.advance(1);await paste(address);for (let index = 0; index < 2; index++) await step(); };
       await veto(TOKEN);
       // Copies of the recorded veto bring the tenant to one below the threshold.
       const [record] = lookups();
@@ -444,6 +447,22 @@ describe('pasted contract-address lookup', () => {
     });
   });
 
+  it('resumes a lookup saved at the retired DexScreener step with its GoPlus step', async () => {
+    await withLookups('26830', async ({ storage, tenantId, connect, paste, step, tasks, lookups, clock }) => {
+      await connect();
+      await paste(TOKEN);
+      await step();
+      // As the previous release saved it after AVE confirmed the token.
+      const key = `lookup:arc:${TOKEN}`, saved = JSON.parse(storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', tenantId, key).one().value_json);
+      storage.sql.exec('UPDATE scheduler_state SET value_json=? WHERE tenant_id=? AND key=?', JSON.stringify({ ...saved, state: 'DEXSCREENER' }), tenantId, key);
+      expect(lookups()).toEqual([expect.objectContaining({ address: TOKEN, state: 'GOPLUS' })]);
+      expect(tasks()).toHaveLength(1);
+      await step();
+      expect(lookups()).toEqual([expect.objectContaining({ address: TOKEN, state: 'DONE' })]);
+      expect(safetyState(storage, tenantId, 'arc', TOKEN, clock.now())).toBe('VERIFIED');
+    });
+  });
+
   it('skips an unreadable lookup row everywhere but safetyState, which refuses to guess about it', async () => {
     await withLookups('26821', async ({ runtime, storage, tenantId, connect, paste, step, tasks, lookups, lastText, clock }) => {
       await connect();
@@ -454,7 +473,7 @@ describe('pasted contract-address lookup', () => {
       try {
         expect(lookups()).toEqual([]);
         await paste(TOKEN);
-        for (let index = 0; index < 3; index++) await step();
+        for (let index = 0; index < 2; index++) await step();
         expect(lookups()).toEqual([expect.objectContaining({ address: TOKEN, state: 'DONE' })]);
         expect(runtime().commands.snapshot(storage, tenantId, clock.now()).lookups).toHaveLength(1);
         expect(tasks()).toEqual([]);
@@ -474,17 +493,17 @@ describe('pasted contract-address lookup', () => {
       await connect();
       await paste(TOKEN);
       await step();
-      expect(lookups()[0].state).toBe('DEXSCREENER');
+      expect(lookups()[0].state).toBe('GOPLUS');
       const secondary = { fetchSource: async () => { throw new Error('a defect in the check'); } };
       const scheduler = new OneAlarmScheduler({ store: new SqliteSchedulerStore(storage, tenantId), now: clock.now, aveBudget: { monthlyCu: 1_000_000, resetDay: 1 },
         alarms: { setAlarm: async () => {}, deleteAlarm: async () => {} },
         handlers: { lookup: externalRequestHandler(({ task, request: scoped }) => runtime().lookups.runStep(task.id, { request: scoped, details, secondary })) },
         taskReconciler: tasks => runtime().reconcileInTransaction({ tasks }).filter(task => task.kind === 'lookup') });
-      for (let attempt = 0; attempt < 20 && lookups()[0].state === 'DEXSCREENER'; attempt++) { await scheduler.alarm();clock.advance(30_000); }
+      for (let attempt = 0; attempt < 20 && lookups()[0].state === 'GOPLUS'; attempt++) { await scheduler.alarm();clock.advance(30_000); }
       await drain();
       expect(lookups()[0]).toMatchObject({ state: 'FAILED', reason: 'SCHEDULER_STEP_FAILED' });
-      expect(runtime().commands.snapshot(storage, tenantId, clock.now()).lookups[0].failedStep).toBe('DEXSCREENER');
-      expect(lastText()).toMatch(/Lookup failed: the DexScreener check did not finish/);
+      expect(runtime().commands.snapshot(storage, tenantId, clock.now()).lookups[0].failedStep).toBe('GOPLUS');
+      expect(lastText()).toMatch(/Lookup failed: the GoPlus check did not finish/);
       expect(lastText()).not.toMatch(/AVE could not be read/);
     });
   });
@@ -492,7 +511,7 @@ describe('pasted contract-address lookup', () => {
   it('never makes a looked-up token a lead: no candidate, audit, outcome, notification, statistic or export entry', async () => {
     await withLookups('26802', async ({ runtime, storage, connect, paste, step, lookups, count, clock }) => {
       await connect();await paste(TOKEN);
-      for (let index = 0; index < 3; index++) await step();
+      for (let index = 0; index < 2; index++) await step();
       expect(lookups()[0].state).toBe('DONE');
       for (const table of ['candidates', 'audit_queue', 'outcomes', 'events', 'risk_exclusions']) expect(count(table), table).toBe(0);
       const notifications = storage.transactionSync(() => runtime().notifications.reconcileInTransaction({ issues: [] }).notifications);
@@ -506,7 +525,7 @@ describe('pasted contract-address lookup', () => {
 
   it('runs through the agent\'s scheduler: the AVE read waits for admission, spends its 5 CU once, and the checks follow', async () => {
     const tenantId = '26816', radar = env.RADAR.get(env.RADAR.idFromName(`lookup-agent:${tenantId}`)), net = network();
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => net.fetch(url));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => net.fetch(url, init));
     try {
       await runInDurableObject(radar, async (instance, state) => {
         const now = Date.now(), receipt = (updateId, commandType, payload) => ({ tenantId, actorUserId: tenantId, updateId, commandType, payload, dueAt: now, messageDate: Math.floor(now / 1000), sourceMessageId: `9${updateId}`, locale: 'en' });
@@ -525,8 +544,11 @@ describe('pasted contract-address lookup', () => {
         await instance.setAveAdmissionState({ tenantId, state: { ...(await instance.getAveAdmissionState(tenantId)), spacingReadyAt: 0 } });
         await alarms(10, () => record().state === 'DONE');
         expect(record().state).toBe('DONE');
-        expect(net.calls.filter(url => url.includes(TOKEN))).toEqual([`https://prod.ave-api.com/v2/tokens/${TOKEN}-arc`, `https://api.dexscreener.com/token-pairs/v1/arc/${TOKEN}`,
+        expect(net.calls.filter(url => url.includes(TOKEN))).toEqual([`https://prod.ave-api.com/v2/tokens/${TOKEN}-arc`,
           `https://api.gopluslabs.io/api/v1/token_security/5042?contract_addresses=${TOKEN}`]);
+        // The agent's validator signs in with the env's GoPlus credentials.
+        expect(net.calls).toContain(GOPLUS_TOKEN_URL);expect(net.authorizations).toEqual(['goplus-token']);
+        expect(record().secondary.status).toBe('COMPLETE');
         const spent = await instance.getAveAdmissionState(tenantId);
         expect(spent.cuUsed).toBe(held.cuUsed + AVE_CU.details);
         expect(spent.spacingReadyAt).toBeGreaterThan(now);

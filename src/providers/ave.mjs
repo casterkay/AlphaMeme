@@ -42,6 +42,8 @@ export class AveError extends Error {
 const fail = (kind, status, retryAt) => new AveError(kind, status, retryAt);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value, limit) => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, limit) : '';
+// The token's website as AVE lists it, kept only as an http(s) URL.
+const webUrl = value => URL.canParse(text(value, 2048)) && ['http:', 'https:'].includes(new URL(text(value, 2048)).protocol) ? new URL(text(value, 2048)).href : '';
 const numeric = value => (typeof value === 'number' || typeof value === 'string' && /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
 const signedNumeric = value => (typeof value === 'number' || typeof value === 'string' && /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) && Number.isFinite(Number(value)) ? Number(value) : null;
 const seconds = value => Number.isSafeInteger(value) && value > 0 && value < 100000000000 ? value : null;
@@ -128,7 +130,7 @@ function tokenRow(row, chain, ca, required = false) {
     token_buy_volume_u_5m: numeric(row.token_buy_volume_u_5m), token_sell_volume_u_5m: numeric(row.token_sell_volume_u_5m),
     token_tx_count_5m: numeric(row.token_tx_count_5m), token_buy_tx_count_5m: numeric(row.token_buy_tx_count_5m),
     token_sell_tx_count_5m: numeric(row.token_sell_tx_count_5m), token_price_change_5m: signedNumeric(row.token_price_change_5m),
-    launch_at: seconds(row.launch_at), created_at: seconds(row.created_at),
+    launch_at: seconds(row.launch_at), created_at: seconds(row.created_at), website: webUrl(row.website),
     updated_at: row.updated_at ?? null, sourceUpdatedAt: upstreamTime(row.updated_at),
     identityBasis: row.token === undefined && row.address === undefined ? 'request_path' : 'response' };
 }

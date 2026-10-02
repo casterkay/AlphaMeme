@@ -26,10 +26,10 @@ uses a separate hot wallet the bot generates for you, and every trade needs a co
   read, 5 credits). It reads through `ARC_RPC_URL`, the RPC trading uses; without it
   the source shows as not configured. The RPC must serve `eth_getLogs` over 500-block
   ranges (Arc's public RPC does; Alchemy's free plan allows 10).
-- 线索随后由 GoPlus 与 DexScreener 免费核验（Arc：GoPlus 链 5042、DexScreener `arc`）。
+- 线索随后由 GoPlus 核验（Arc：GoPlus 链 5042）。
   貔貅、异常税率等一票否决会撤销线索并推送“风险恶化”。
-  Leads are then checked on GoPlus and DexScreener; a fatal finding vetoes the lead
-  and sends a "risk worsened" follow-up.
+  Leads are then checked on GoPlus; a fatal finding vetoes the lead and sends a
+  "risk worsened" follow-up.
 - AVE 不提供持有人、交易者或合约安全数据，因此线索只是行情观察，**安全性未核验不代表安全**。
   AVE has no holder, trader or contract-security data: a lead is a market
   observation, and unverified does not mean safe.
@@ -125,8 +125,8 @@ If you deployed the GMGN version, delete it first; the schema moved to v2 withou
 1. `/start`，然后 `/onboard`：登录 [AVE Cloud](https://cloud.ave.ai/login) 复制 Data API Key。
 2. 发送 `/setkey <key>`：验证读取一次（5 个额度）后开始扫描 Arc。含密钥的消息会尝试删除，请自行确认已删除。
 3. 线索提醒默认开启，`/mute` 可关闭或重新开启；`/radar` 查看最新线索；`/leads` 查看线索与核验；`/hot` 查看热榜；`/watchlist` 查看自选；`/performance` 查看筛选后表现；`/settings` 切换扫描链、提醒与交易限额；`/status` 查看运行与额度。
-4. 粘贴代币合约地址即可实时查询（AVE 行情，再由 DexScreener 与 GoPlus 核验）；查询结果不算线索。
-   Paste a token contract address for a live lookup (AVE market data, then DexScreener and GoPlus checks); a looked-up token is not a lead.
+4. 粘贴代币合约地址即可实时查询（AVE 行情，再由 GoPlus 核验）；查询结果不算线索。
+   Paste a token contract address for a live lookup (AVE market data, then a GoPlus check); a looked-up token is not a lead.
 5. 可选：`/wallet` 创建交易钱包并充值，然后在代币详情中买卖。
 
 `/help` 列出全部命令。运维细节见 [docs/TELEGRAM-M3-OPERATIONS.md](docs/TELEGRAM-M3-OPERATIONS.md)。

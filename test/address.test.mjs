@@ -13,8 +13,7 @@ test('one strict EVM address validator is shared by chain-facing layers', async 
 
   let requests = 0;
   const secondary = await new SecondaryValidator({ fetchImpl: async () => { requests++; return Response.json({}); } })
-    .validate({ chain: 'base', tokenAddress: solanaMint });
+    .fetchSource({ chain: 'base', tokenAddress: solanaMint });
   assert.equal(requests, 0);
-  assert.equal(secondary.sources.dexScreener.errorCode, 'INVALID_ADDRESS');
-  assert.equal(secondary.sources.goPlus.errorCode, 'INVALID_ADDRESS');
+  assert.equal(secondary.source.errorCode, 'INVALID_ADDRESS');
 });

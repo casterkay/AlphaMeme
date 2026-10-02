@@ -3,7 +3,7 @@ export const scannerSettings = Object.freeze({
   // The target cadence; AVE admission stretches it when the monthly credit
   // allowance would otherwise run out before it resets.
   scanIntervalMs: 15_000,
-  // GoPlus and DexScreener checks cost no AVE credits; bound them per cycle.
+  // GoPlus checks cost no AVE credits; bound them per cycle.
   maxSecondaryChecksPerCycle: 3,
   auditCycleBudgetMs: 60_000,
   // Historical one-minute candle backfills (10 credits each) are opt-in, as upstream.

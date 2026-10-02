@@ -245,6 +245,13 @@ test('details reads one token on its chain and returns its row', async () => {
   assert.deepEqual([token.symbol, token.market_cap, token.main_pair_tvl, token.holders, capturedAt], ['TEST', 50_000, 20_000, 150, NOW]);
 });
 
+test('details keeps the website AVE lists only as an http(s) URL', async () => {
+  for (const [website, expected] of [['https://www.pepe.vip/', 'https://www.pepe.vip/'], ['javascript:alert(1)', ''], ['not a url', ''], [undefined, '']]) {
+    const { ave } = client(() => Response.json({ status: 1, data: { token: { ...tokenRow(BSC_TOKEN), website }, pairs: [] } }));
+    assert.equal((await ave.details('bsc', BSC_TOKEN)).token.website, expected, String(website));
+  }
+});
+
 // Only a successful answer that holds no token and no pairs means "not indexed";
 // a refusal or a malformed answer must not read as "no such token".
 for (const [scenario, body, code] of [

@@ -77,7 +77,7 @@ test('the unverified-buy question names the token and amount and offers Yes then
   const origin = { panel: 'detail', viewChain: 'bsc', query: { selectedToken: { chain: 'bsc', address: TOKEN } } };
   const question = (locale, rows = [candidate()]) => renderPanel(snapshot({}, rows), { panel: 'trade_unverified', viewChain: 'bsc', query: { unverifiedBuy: { chain: 'bsc', token: TOKEN, usdCents: 2550 }, returnTo: origin }, version: 1 }, locale);
   const en = question('en');
-  for (const line of ['Safety check not finished', 'MEME · BNB Chain — buy $25.50?', 'have not verified this token yet', 'honeypot']) assert.ok(en.text.includes(line), line);
+  for (const line of ['Safety check not finished', 'MEME · BNB Chain — buy $25.50?', 'GoPlus has not verified this token yet', 'honeypot']) assert.ok(en.text.includes(line), line);
   assert.deepEqual(en.keyboard[0].map(item => [item.text, item.action]), [['✅ Yes', 'trade.acknowledge_unverified'], ['❌ No', 'trade.decline_unverified']]);
   assert.deepEqual(en.keyboard.at(-1).map(item => item.action), ['panel.back']);
   assert.ok(!buttons(en).some(item => item.action === 'panel.refresh'));
@@ -88,10 +88,10 @@ test('the unverified-buy question names the token and amount and offers Yes then
 test('the unverified-buy question says a pasted token\'s clean check is stale, unless a candidate is the token of record', () => {
   const stale = { chain: 'bsc', address: TOKEN, state: 'DONE', verdict: 'PASSED', stale: true, secondary: { checkedAt: now - 20 * 60_000 } };
   const question = (locale, rows) => renderPanel({ ...snapshot({}, rows), lookups: [stale] }, { panel: 'trade_unverified', viewChain: 'bsc', query: { unverifiedBuy: { chain: 'bsc', token: TOKEN, usdCents: 2550 } }, version: 1 }, locale).text;
-  assert.match(question('en', []), /⚠️ Safety check is stale[\s\S]*GoPlus and DexScreener checked this token 20m ago; that check is stale\./);
-  assert.doesNotMatch(question('en', []), /not finished|have not verified/);
-  assert.match(question('zh', []), /⚠️ 安全核验已过期[\s\S]*GoPlus 和 DexScreener 于20分钟前核验此代币，结果已过期。/);
-  assert.match(question('en', [candidate({ secondary: null })]), /Safety check not finished[\s\S]*have not verified this token yet/);
+  assert.match(question('en', []), /⚠️ Safety check is stale[\s\S]*GoPlus checked this token 20m ago; that check is stale\./);
+  assert.doesNotMatch(question('en', []), /not finished|has not verified/);
+  assert.match(question('zh', []), /⚠️ 安全核验已过期[\s\S]*GoPlus 于20分钟前核验此代币，结果已过期。/);
+  assert.match(question('en', [candidate({ secondary: null })]), /Safety check not finished[\s\S]*has not verified this token yet/);
 });
 
 test('the quote screen repeats the warning only for a buy requested before the token was verified', () => {

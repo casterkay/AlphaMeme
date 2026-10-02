@@ -293,13 +293,13 @@ describe('Telegram complete command and delivery flows',()=>{
       storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,'WAGMI','LIVE_READY',50_000,at,at+600_000,'lead-1','null');
       reconcile();await drain();
       const alert=sent.find(row=>row.params.text?.includes('New lead · WAGMI')),messageId=sent.indexOf(alert)+101;
-      const clean={status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]},conflicts:[]};
+      const clean={status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]}};
       storage.sql.exec("UPDATE candidates SET review_revision='lead-2',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify(clean),tenantId,address);
       reconcile();await drain();
       const passed=sent.at(-1);
       expect(passed).toMatchObject({method:'editMessageText',params:{message_id:String(messageId)}});
       expect(passed.params.text.split('\n')[2]).toBe('✅ No failures found');
-      const fatal={status:'COMPLETE',security:{verdict:'FATAL',fatal:[{field:'isHoneypot'}],fields:{isHoneypot:true}},conflicts:[]};
+      const fatal={status:'COMPLETE',security:{verdict:'FATAL',fatal:[{field:'isHoneypot'}],fields:{isHoneypot:true}}};
       storage.sql.exec("UPDATE candidates SET status='HARD_REJECT',review_revision='veto-1',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify(fatal),tenantId,address);
       storage.sql.exec('INSERT INTO events (tenant_id,id,at,type,chain,address) VALUES (?,?,?,?,?,?)',tenantId,'risk-1',at+1,'RISK_WORSENED','arc',address);
       const before=sent.length;
@@ -351,7 +351,7 @@ describe('Telegram complete command and delivery flows',()=>{
       storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
       const alert=sessions().find(session=>session.panel==='alert'),open=link(alert,'panel.open',params=>params.panel==='detail');
       // A finished check edits the alert; the buttons already on screen keep working.
-      storage.sql.exec("UPDATE candidates SET review_revision='lead-2',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify({status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]},conflicts:[]}),tenantId,address);
+      storage.sql.exec("UPDATE candidates SET review_revision='lead-2',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify({status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[]}}),tenantId,address);
       storage.transactionSync(()=>runtime.reconcileCardsInTransaction());
       expect(runtime.commands.sessions.get(alert.id).version).toBe(alert.version+1);
       clock.now=at+16*60_000;

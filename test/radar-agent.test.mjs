@@ -92,11 +92,8 @@ function radar({ chain = 'bsc', settings: overrides = {}, onchain = false } = {}
     priceAt: (...args) => fixture.priceAt(...args)
   };
   fixture.secondary = {
-    async fetchSource({ source, tokenAddress }) {
-      fixture.secondaryCalls.push({ source, tokenAddress });
-      if (source === 'dexScreener') {
-        return { source: { status: 'OK' }, market: { complete: true, priceUsd: null, marketCap: null, liquidityUsd: null, websites: [] } };
-      }
+    async fetchSource({ tokenAddress }) {
+      fixture.secondaryCalls.push({ tokenAddress });
       const verdict = fixture.verdicts.get(tokenAddress) || 'NO_FATAL_FLAGS';
       return {
         source: { status: 'OK' },
@@ -268,7 +265,7 @@ test('a queued lead that leaves the hot list still gets its check, and a forgott
   const leads = [A, B, C, D, E];
   radarFixture.hotList = leads.map(token => radarFixture.quote(token));
   await radarFixture.runCycle('cycle-queue-1');
-  const checked = () => new Set(radarFixture.secondaryCalls.filter(call => call.source === 'goPlus').map(call => call.tokenAddress.toLowerCase()));
+  const checked = () => new Set(radarFixture.secondaryCalls.map(call => call.tokenAddress.toLowerCase()));
   const waiting = leads.filter(token => !checked().has(token.toLowerCase()));
   assert.ok(waiting.length > 0, 'more leads than one cycle checks');
 
@@ -434,8 +431,22 @@ test('a non-fatal secondary result keeps the lead status and revision and record
   assert.equal(checked.status, 'LIVE_READY');
   assert.equal(checked.reviewRevision, lead.reviewRevision);
   assert.equal(checked.secondary.security.verdict, 'NO_FATAL_FLAGS');
-  assert.deepEqual(radarFixture.secondaryCalls.map(call => call.source), ['dexScreener', 'goPlus']);
+  assert.deepEqual(radarFixture.secondaryCalls, [{ tokenAddress: A }]);
   assert.deepEqual(radarFixture.events().map(event => event.type), ['CANDIDATE_NEW']);
+});
+
+test('a checkpoint left between the retired DexScreener and GoPlus steps finishes with one GoPlus read', async () => {
+  const radarFixture = radar();
+  radarFixture.seedCheckpoint({ cycleId: 'cycle-mid-check', chain: 'bsc', phase: 'SECONDARY', endpointIndex: 1, partial: { settings: radarFixture.settings, queue: { selected: [leadItem(A)] },
+    secondary: { sources: { dexScreener: { collectedAt: NOW, error: { code: 'HTTP_429' } } }, lastCollectedAt: NOW } } });
+  assert.equal(radarFixture.scanner.nextRequest('cycle-mid-check').kind, 'SECONDARY');
+  await radarFixture.step('cycle-mid-check');
+  assert.equal(radarFixture.store.read('cycle-mid-check').phase, 'CLASSIFY_AND_COMMIT');
+  await radarFixture.step('cycle-mid-check');
+  assert.deepEqual(radarFixture.secondaryCalls, [{ tokenAddress: A }]);
+  const checked = radarFixture.candidate(A).secondary;
+  assert.equal(checked.status, 'COMPLETE');
+  assert.deepEqual(Object.keys(checked.sources), ['goPlus']);
 });
 
 test('a GoPlus fatal verdict vetoes a lead and the vetoed token is not re-promoted by the next screen', async () => {
@@ -552,7 +563,7 @@ test('secondary checks per cycle are bounded by maxSecondaryChecksPerCycle', asy
 
   const checked = [...new Set(radarFixture.secondaryCalls.map(call => call.tokenAddress))];
   assert.equal(checked.length, 2);
-  assert.equal(radarFixture.secondaryCalls.length, 4);
+  assert.equal(radarFixture.secondaryCalls.length, 2);
   const leads = [A, B, C, D, E].map(token => radarFixture.candidate(token));
   assert.ok(leads.every(lead => lead.status === 'LIVE_READY'));
   assert.deepEqual(leads.filter(lead => lead.secondary).map(lead => lead.address).sort(), checked.sort());
@@ -691,7 +702,7 @@ test('the executor records a caught AVE error as the trending response', async (
   assert.equal(checkpoint.partial.discovery.responses.trending.error.code, 'AVE_NETWORK');
 });
 
-test('an expired cycle budget finishes the current token secondary checks before stopping at the next token', async () => {
+test('an expired cycle budget finishes the current token check before stopping at the next token', async () => {
   const radarFixture = radar();
   radarFixture.hotList = [radarFixture.quote(A), radarFixture.quote(B)];
   radarFixture.begin('cycle-deadline', NOW + 1_000);
@@ -704,7 +715,6 @@ test('an expired cycle budget finishes the current token secondary checks before
   assert.equal(radarFixture.scanner.nextRequest('cycle-deadline').kind, 'SECONDARY');
   await radarFixture.step('cycle-deadline');
   await radarFixture.step('cycle-deadline');
-  await radarFixture.step('cycle-deadline');
   const afterFirst = radarFixture.store.read('cycle-deadline');
   assert.equal(afterFirst.phase, 'SECONDARY');
   assert.equal(afterFirst.tokenIndex, 1);
@@ -714,7 +724,7 @@ test('an expired cycle budget finishes the current token secondary checks before
   const stopped = radarFixture.store.read('cycle-deadline');
   assert.equal(stopped.phase, 'OUTCOMES_SAMPLE');
   assert.equal(stopped.partial.outcomeDeadlineAt, NOW + 1_000 + 25_000);
-  assert.equal(radarFixture.secondaryCalls.length, 2);
+  assert.equal(radarFixture.secondaryCalls.length, 1);
   const [checked, unchecked] = afterFirst.partial.queue.selected.map(item => radarFixture.candidate(item.address));
   assert.equal(checked.secondary.security.verdict, 'NO_FATAL_FLAGS');
   assert.equal(unchecked.secondary, null);
@@ -783,14 +793,13 @@ test('a due outcome is sampled from the nearest AVE candle and closes the cycle 
   assert.equal(result.nextAveCost, 0);
 });
 
-test('a chain without secondary sources completes its source steps without a fetch and says the lead is unverified', async () => {
+test('a chain without secondary sources completes its check step without a fetch and says the lead is unverified', async () => {
   const radarFixture = radar({ chain: 'robinhood' });
   let fetches = 0;
   radarFixture.secondary = new SecondaryValidator({ fetchImpl: async () => { fetches += 1; throw new Error('must not fetch'); } });
   radarFixture.seedCheckpoint({ cycleId: 'cycle-unsupported', chain: 'robinhood', phase: 'SECONDARY',
     partial: { settings: radarFixture.settings, queue: { selected: [leadItem(A)] } } });
 
-  await radarFixture.step('cycle-unsupported', { secondary: radarFixture.secondary });
   await radarFixture.step('cycle-unsupported', { secondary: radarFixture.secondary });
   assert.equal(fetches, 0);
   assert.equal(radarFixture.store.read('cycle-unsupported').phase, 'CLASSIFY_AND_COMMIT');

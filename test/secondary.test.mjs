@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DexBatchMarketOverlay, SecondaryValidator, secondaryChainSupport } from '../src/providers/secondary.mjs';
+import { DexBatchMarketOverlay, SecondaryValidator, aggregateSecondarySources, dexScreenerTokenUrl, secondaryChainSupport } from '../src/providers/secondary.mjs';
 
 const evmAddress = '0x1111111111111111111111111111111111111111';
 const otherEvmAddress = '0x2222222222222222222222222222222222222222';
@@ -167,73 +167,40 @@ test('batch market overlay shares in-flight work, caches it and fails back to or
   assert.equal(original[0], row);
 });
 
-test('BSC validation selects the highest-liquidity matching pair and exposes only allowlisted fields', async () => {
-  const urls = [];
-  const fetchImpl = async url => {
-    urls.push(url);
-    if (url.includes('dexscreener.com')) {
-      return jsonResponse([
-        completeDexPair({ liquidity: { usd: 8_000 }, pairAddress: 'low-liquidity' }),
-        completeDexPair({ liquidity: { usd: 18_000 }, pairAddress: 'chosen-pair' }),
-        completeDexPair({ baseToken: { address: otherEvmAddress }, liquidity: { usd: 999_999 } }),
-        completeDexPair({ chainId: 'ethereum', liquidity: { usd: 999_999 } })
-      ]);
-    }
-    return jsonResponse({
-      code: 1,
-      result: { [evmAddress.toUpperCase()]: { ...safeEvmSecurity(), untrusted_blob: 'must-not-leak' } }
-    });
-  };
-  const validator = new SecondaryValidator({ fetchImpl, now: () => 1234 });
-  const result = await validator.validate({ chain: 'bsc', tokenAddress: evmAddress });
+// A GoPlus stub that records every call and answers `security(url, init)`.
+function goPlusStub(security) {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => { calls.push({ url: String(url), init }); return security(String(url), init); };
+  return { calls, fetchImpl };
+}
+const securityOf = record => () => jsonResponse({ code: 1, result: { [evmAddress]: record } });
+const validatorWith = (stub, options = {}) => new SecondaryValidator({ fetchImpl: stub.fetchImpl, ...options });
 
-  assert.equal(result.status, 'COMPLETE');
-  assert.equal(result.complete, true);
-  assert.equal(result.checkedAt, 1234);
-  assert.equal(result.sources.dexScreener.status, 'OK');
-  assert.equal(result.sources.goPlus.status, 'OK');
-  assert.equal(result.market.pairAddress, 'chosen-pair');
-  assert.equal(result.market.liquidityUsd, 18_000);
-  assert.deepEqual(result.market.websites, ['https://dog.example/']);
+test('a BSC check reads GoPlus chain 56 and exposes only allowlisted fields', async () => {
+  const stub = goPlusStub(() => jsonResponse({ code: 1, result: { [evmAddress.toUpperCase()]: { ...safeEvmSecurity(), untrusted_blob: 'must-not-leak' } } }));
+  const result = await validatorWith(stub).fetchSource({ chain: 'bsc', tokenAddress: evmAddress });
+  assert.deepEqual(stub.calls.map(call => call.url), [`https://api.gopluslabs.io/api/v1/token_security/56?contract_addresses=${evmAddress}`]);
+  assert.equal(result.source.status, 'OK');
   assert.equal(result.security.verdict, 'NO_FATAL_FLAGS');
   assert.equal(result.security.buyTax, 0.01);
   assert.equal(result.security.sellTax, 0.02);
   assert.equal(JSON.stringify(result).includes('must-not-leak'), false);
-  assert.deepEqual(urls.sort(), [
-    `https://api.dexscreener.com/token-pairs/v1/bsc/${evmAddress}`,
-    `https://api.gopluslabs.io/api/v1/token_security/56?contract_addresses=${evmAddress}`
-  ].sort());
 });
 
-test('GoPlus fatal flags are not softened, and conflicting primary market/security data is reported', async () => {
-  const fetchImpl = async url => url.includes('dexscreener.com')
-    ? jsonResponse([completeDexPair({ priceUsd: '2', marketCap: 80_000, liquidity: { usd: 20_000 }, info: { websites: [{ url: 'https://secondary.example' }] } })])
-    : jsonResponse({ code: 1, result: { [evmAddress]: safeEvmSecurity({ is_honeypot: '1', is_open_source: '0' }) } });
-  const result = await new SecondaryValidator({ fetchImpl }).validate({
-    chain: 'bsc',
-    tokenAddress: evmAddress,
-    primary: {
-      market: { priceUsd: 1, marketCap: 50_000, liquidityUsd: 10_000, website: 'https://primary.example' },
-      security: { is_honeypot: false, is_open_source: true }
-    }
-  });
-
-  assert.equal(result.status, 'COMPLETE');
+test('GoPlus fatal flags are not softened', async () => {
+  const stub = goPlusStub(securityOf(safeEvmSecurity({ is_honeypot: '1', is_open_source: '0' })));
+  const result = await validatorWith(stub).fetchSource({ chain: 'bsc', tokenAddress: evmAddress });
   assert.equal(result.security.verdict, 'FATAL');
   assert.deepEqual(result.security.fatal.map(row => row.field).sort(), ['isHoneypot', 'openSource']);
-  assert.ok(result.conflicts.some(row => row.type === 'MARKET_MISMATCH' && row.field === 'priceUsd'));
-  assert.ok(result.conflicts.some(row => row.type === 'WEBSITE_MISMATCH'));
-  assert.ok(result.conflicts.some(row => row.type === 'SECURITY_MISMATCH' && row.field === 'isHoneypot'));
 });
 
-test('missing or malformed GoPlus safety fields stay UNKNOWN and degrade the result', async () => {
-  const fetchImpl = async url => url.includes('dexscreener.com')
-    ? jsonResponse([completeDexPair()])
-    : jsonResponse({ code: 1, result: { [evmAddress]: { is_honeypot: 'unknown', is_open_source: '1' } } });
-  const result = await new SecondaryValidator({ fetchImpl }).validate({ chain: 'bsc', tokenAddress: evmAddress });
-
+test('missing or malformed GoPlus safety fields stay UNKNOWN and degrade the check', async () => {
+  const stub = goPlusStub(securityOf({ is_honeypot: 'unknown', is_open_source: '1' }));
+  const value = await validatorWith(stub).fetchSource({ chain: 'bsc', tokenAddress: evmAddress });
+  const result = aggregateSecondarySources({ chain: 'bsc', tokenAddress: evmAddress, sources: { goPlus: { value, collectedAt: 5 } } });
   assert.equal(result.status, 'DEGRADED');
   assert.equal(result.complete, false);
+  assert.equal(result.checkedAt, 5);
   assert.equal(result.sources.goPlus.status, 'OK');
   assert.equal(result.security.verdict, 'UNKNOWN');
   assert.equal(result.security.fields.isHoneypot, null);
@@ -241,51 +208,40 @@ test('missing or malformed GoPlus safety fields stay UNKNOWN and degrade the res
   assert.ok(result.security.unknownFields.includes('buyTax'));
 });
 
-test('unsupported chains never make external requests', async () => {
-  for (const chain of ['robinhood', 'stable']) {
-    let calls = 0;
-    const result = await new SecondaryValidator({ fetchImpl: async () => { calls += 1; throw new Error('must not be called'); } })
-      .validate({ chain, tokenAddress: evmAddress });
-    assert.equal(calls, 0);
-    assert.equal(result.status, 'DEGRADED');
-    assert.equal(result.sources.dexScreener.status, 'UNSUPPORTED');
-    assert.equal(result.sources.goPlus.status, 'UNSUPPORTED');
+test('a complete GoPlus record makes the check COMPLETE, whatever else an older checkpoint recorded', () => {
+  const goPlus = { value: { source: { status: 'OK' }, security: { complete: true, verdict: 'NO_FATAL_FLAGS', fatal: [], unknownFields: [], fields: {} } }, collectedAt: 7 };
+  const result = aggregateSecondarySources({ chain: 'bsc', tokenAddress: evmAddress, sources: { dexScreener: { error: { code: 'HTTP_429' }, collectedAt: 6 }, goPlus } });
+  assert.equal(result.status, 'COMPLETE');
+  assert.deepEqual(Object.keys(result.sources), ['goPlus']);
+  assert.equal(result.checkedAt, 7);
+});
+
+test('unsupported chains and invalid addresses never make external requests', async () => {
+  for (const [chain, tokenAddress, expected] of [
+    ['robinhood', evmAddress, { status: 'UNSUPPORTED' }],
+    ['stable', evmAddress, { status: 'UNSUPPORTED' }],
+    ['base', 'not-an-address', { status: 'ERROR', errorCode: 'INVALID_ADDRESS' }]
+  ]) {
+    const stub = goPlusStub(() => { throw new Error('must not be called'); });
+    const result = await validatorWith(stub).fetchSource({ chain, tokenAddress });
+    assert.equal(stub.calls.length, 0);
+    assert.deepEqual(result.source, expected);
   }
 });
 
-test('invalid addresses fail before either supported source is called', async () => {
-  let calls = 0;
-  const result = await new SecondaryValidator({ fetchImpl: async () => { calls += 1; return jsonResponse({}); } })
-    .validate({ chain: 'base', tokenAddress: 'not-an-address' });
-  assert.equal(calls, 0);
-  assert.equal(result.status, 'DEGRADED');
-  assert.equal(result.sources.dexScreener.errorCode, 'INVALID_ADDRESS');
-  assert.equal(result.sources.goPlus.errorCode, 'INVALID_ADDRESS');
+test('timeouts and upstream parse failures are recorded without rejecting the check', async () => {
+  const neverFetch = goPlusStub((_url, { signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+  }));
+  const timeout = await validatorWith(neverFetch, { timeoutMs: 5 }).fetchSource({ chain: 'eth', tokenAddress: evmAddress });
+  assert.equal(timeout.source.errorCode, 'TIMEOUT');
+
+  const malformed = await validatorWith(goPlusStub(() => jsonResponse('{ definitely-not-json'))).fetchSource({ chain: 'eth', tokenAddress: evmAddress });
+  assert.equal(malformed.source.errorCode, 'INVALID_JSON');
+  const large = await validatorWith(goPlusStub(() => jsonResponse('{}', { contentLength: 2_000 })), { maxResponseBytes: 1_024 })
+    .fetchSource({ chain: 'eth', tokenAddress: evmAddress });
+  assert.equal(large.source.errorCode, 'RESPONSE_TOO_LARGE');
 });
-
-test('timeouts and upstream parse failures degrade without rejecting the validation call', async () => {
-  const neverFetch = async (_url, { signal }) => new Promise((resolve, reject) => {
-    signal.addEventListener('abort', () => {
-      const error = new Error('aborted');
-      error.name = 'AbortError';
-      reject(error);
-    }, { once: true });
-  });
-  const timeoutResult = await new SecondaryValidator({ fetchImpl: neverFetch, timeoutMs: 5 })
-    .validate({ chain: 'eth', tokenAddress: evmAddress });
-  assert.equal(timeoutResult.status, 'DEGRADED');
-  assert.equal(timeoutResult.sources.dexScreener.errorCode, 'TIMEOUT');
-  assert.equal(timeoutResult.sources.goPlus.errorCode, 'TIMEOUT');
-
-  const malformedFetch = async url => url.includes('dexscreener.com')
-    ? jsonResponse('[]', { contentLength: 2_000 })
-    : jsonResponse('{ definitely-not-json');
-  const malformed = await new SecondaryValidator({ fetchImpl: malformedFetch, maxResponseBytes: 1_024 })
-    .validate({ chain: 'eth', tokenAddress: evmAddress });
-  assert.equal(malformed.sources.dexScreener.errorCode, 'RESPONSE_TOO_LARGE');
-  assert.equal(malformed.sources.goPlus.errorCode, 'INVALID_JSON');
-});
-
 
 test('exported support map contains only verified chain identifiers', () => {
   assert.deepEqual(secondaryChainSupport.dexScreener, {
@@ -296,10 +252,14 @@ test('exported support map contains only verified chain identifiers', () => {
   });
 });
 
-test('Arc tokens are checked on DexScreener chain arc and GoPlus chain 5042', async () => {
-  const urls = [];
-  await new SecondaryValidator({ fetchImpl: async url => { urls.push(String(url)); return Response.json({}); } })
-    .validate({ chain: 'arc', tokenAddress: evmAddress });
-  assert.ok(urls.some(url => url.startsWith('https://api.dexscreener.com/') && url.includes('/arc/')), urls.join(' '));
-  assert.ok(urls.some(url => url.startsWith('https://api.gopluslabs.io/api/v1/token_security/5042?')), urls.join(' '));
+test('Arc tokens are checked on GoPlus chain 5042', async () => {
+  const stub = goPlusStub(() => Response.json({}));
+  await validatorWith(stub).fetchSource({ chain: 'arc', tokenAddress: evmAddress });
+  assert.ok(stub.calls[0].url.startsWith('https://api.gopluslabs.io/api/v1/token_security/5042?'));
+});
+
+test('the chart link opens the token on DexScreener only for a chain it lists', () => {
+  assert.equal(dexScreenerTokenUrl('eth', evmAddress.toUpperCase().replace('0X', '0x')), `https://dexscreener.com/ethereum/${evmAddress}`);
+  assert.equal(dexScreenerTokenUrl('robinhood', evmAddress), '');
+  assert.equal(dexScreenerTokenUrl('bsc', 'not-an-address'), '');
 });

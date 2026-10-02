@@ -43,7 +43,7 @@ export async function reviewRevision(candidate) {
     owner: security.ownerRenounced,
     honeypot: security.honeypot, buyTax: security.buyTax, sellTax: security.sellTax,
     lock: security.lockRate, burned: security.lpBurned,
-    secondary: candidate.secondary?.security?.verdict, conflicts: candidate.secondary?.conflicts,
+    secondary: candidate.secondary?.security?.verdict,
     website: candidate.info?.website, twitter: candidate.info?.twitter
   }))).slice(0, 24);
 }

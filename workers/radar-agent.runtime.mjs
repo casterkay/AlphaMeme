@@ -39,15 +39,10 @@ async function trending(tokens) {
   return client.trending('arc');
 }
 
-/** The scanner's SECONDARY values as the validator parses stubbed DexScreener and GoPlus responses. */
-async function secondaryValues(address, { honeypot }) {
-  const validator = new SecondaryValidator({ fetchImpl: async url => String(url).includes('gopluslabs')
-    ? jsonResponse({ code: 1, result: { [address]: { is_honeypot: honeypot ? '1' : '0' } } })
-    : jsonResponse([]) });
-  return {
-    dexScreener: await validator.fetchSource({ source: 'dexScreener', chain: 'arc', tokenAddress: address }),
-    goPlus: await validator.fetchSource({ source: 'goPlus', chain: 'arc', tokenAddress: address })
-  };
+/** The scanner's SECONDARY value as the validator parses a stubbed GoPlus response. */
+async function goPlusValue(address, { honeypot }) {
+  const validator = new SecondaryValidator({ fetchImpl: async () => jsonResponse({ code: 1, result: { [address]: { is_honeypot: honeypot ? '1' : '0' } } }) });
+  return validator.fetchSource({ chain: 'arc', tokenAddress: address });
 }
 
 async function configuredRadar(tenantId) {
@@ -72,15 +67,13 @@ async function seedAveCredential(radar, tenantId) {
   });
 }
 
-/** Screen one passing lead and record its secondary checks, stopping at CLASSIFY_AND_COMMIT. */
+/** Screen one passing lead and record its GoPlus check, stopping at CLASSIFY_AND_COMMIT. */
 async function reachClassification(radar, tenantId, cycleId, { honeypot = false } = {}) {
   await beginCycle(radar, tenantId, cycleId);
   await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: await trending([arcToken(LEAD)]), collectedAt: Date.now() });
   expect((await radar.advanceRecoverableScan({ tenantId, cycleId })).phase).toBe('BUILD_QUEUE');
   expect((await radar.advanceRecoverableScan({ tenantId, cycleId })).phase).toBe('SECONDARY');
-  const secondary = await secondaryValues(LEAD, { honeypot });
-  await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: secondary.dexScreener, collectedAt: Date.now() });
-  await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: secondary.goPlus, collectedAt: Date.now() });
+  await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: await goPlusValue(LEAD, { honeypot }), collectedAt: Date.now() });
   expect((await radar.getRecoverableCycle({ tenantId, cycleId })).phase).toBe('CLASSIFY_AND_COMMIT');
 }
 

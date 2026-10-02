@@ -263,7 +263,7 @@ test('evidence pages keep the exact audit time while the detail summary shows it
   assert.match(detail,/· checked 1m ago\n/);assert.doesNotMatch(detail,/2027-01-15/);
 });
 
-const complete={status:'COMPLETE',complete:true,checkedAt:now-120_000,sources:{},market:{pairUrl:'https://dexscreener.com/solana/pair'},security:{complete:true,verdict:'NO_FATAL_FLAGS',fatal:[],unknownFields:[]},conflicts:[]};
+const complete={status:'COMPLETE',complete:true,checkedAt:now-120_000,sources:{},security:{complete:true,verdict:'NO_FATAL_FLAGS',fatal:[],unknownFields:[]}};
 const lead=(changes={})=>candidate(0,{status:'LIVE_READY',deep:{},...changes});
 test('the safety verdict leads the detail and marks each list row, from the recorded check',()=>{
   const fatal=(fields,status='HARD_REJECT')=>lead({status,secondary:{...complete,security:{complete:true,verdict:'FATAL',fatal:fields.map(field=>({field})),unknownFields:[]}}});
@@ -274,14 +274,12 @@ test('the safety verdict leads the detail and marks each list row, from the reco
     ['lead before its check',lead(),'⏳ Checking','⏳ Checking',true],
     ['candidate with no recorded check',candidate(0),'⏳ Checking','⏳ Checking',false],
     ['complete check without fatal flags',lead({secondary:complete}),'✅ No failures found · checked 2m ago','✅ No failures found',false],
-    ['a website mismatch does not block',lead({secondary:{...complete,conflicts:[{type:'WEBSITE_MISMATCH',field:'website'}]}}),'✅ No failures found · checked 2m ago','✅ No failures found',false],
     ['incomplete GoPlus fields',degraded({complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['buyTax','sellTax']}),'⚠️ Needs review: 2 fields unknown · checked 2m ago','⚠️ Needs review',true],
     ['GoPlus check missing',degraded({complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['tokenSecurity']}),'⚠️ Needs review: GoPlus check unavailable · checked 2m ago','⚠️ Needs review',true],
-    ['degraded market source only',degraded(),'⚠️ Needs review: check incomplete · checked 2m ago','⚠️ Needs review',true],
+    ['degraded check without field detail',degraded(),'⚠️ Needs review: check incomplete · checked 2m ago','⚠️ Needs review',true],
     ['one failed deep check',audited({failed:['tax']}),'⚠️ Needs review: 1 failed check · checked 2m ago','⚠️ Needs review',false],
     ['one blocking unknown',audited({unknownFields:['top10'],blockingUnknownFields:['top10']}),'⚠️ Needs review: 1 blocking unknown · checked 2m ago','⚠️ Needs review',false],
     ['failures, blocking and other unknowns together',audited({failed:['tax'],unknownFields:['top10','devHold','lockRate'],blockingUnknownFields:['top10']}),'⚠️ Needs review: 1 failed check, 1 blocking unknown, 2 fields unknown · checked 2m ago','⚠️ Needs review',false],
-    ['conflicting sources after a complete check',lead({secondary:{...complete,conflicts:[{type:'MARKET_MISMATCH',field:'marketCap'}]}}),'⚠️ Needs review: 1 source conflict · checked 2m ago','⚠️ Needs review',false],
     ['secondary veto',fatal(['isHoneypot','hiddenOwner','mintable']),'⛔ Vetoed: Honeypot, Hidden owner +1 · checked 2m ago','⛔ Vetoed',false],
     ['fatal verdict before the status changes',fatal(['isHoneypot'],'LIVE_READY'),'⛔ Vetoed: Honeypot · checked 2m ago','⛔ Vetoed',false],
     ['held risk exclusion',applyRiskExclusion(lead({secondary:complete}),{['robinhood:'+'a'.repeat(32)+'0']:{reasons:['x'],codes:['VERTICAL_PLATEAU']}}),'⛔ Vetoed: Chart risk · checked 2m ago','⛔ Vetoed',false],
@@ -355,13 +353,15 @@ test('list, activity and detail panels fit the text budget with maximum-length r
   }
 });
 
-test('the token detail links only what exists, with the chart from DexScreener, and no unavailable-link notice',()=>{
-  const snapshot=fixture(),row=lead({secondary:complete,info:{twitter:'@coin',website:''}});snapshot.candidates=[row];
+test('the token detail links only what exists, with the chart from the token on DexScreener, and no unavailable-link notice',()=>{
+  const evm='0x59a0d858b0825098b5218f08e09901381c25a57d';
+  const snapshot=fixture(),row=lead({chain:'bsc',address:evm,secondary:complete,info:{twitter:'@coin',website:''}});snapshot.candidates=[row];
   const result=renderPanel(snapshot,session('detail',{selectedToken:row}),'en'),links=result.keyboard.find(line=>line.some(item=>item.action==='panel.open'&&item.params.panel==='evidence'));
-  assert.deepEqual(links.map(item=>item.url||item.text),['https://x.com/coin','https://dexscreener.com/solana/pair','🔎 Evidence']);
+  assert.deepEqual(links.map(item=>item.url||item.text),['https://x.com/coin',`https://dexscreener.com/bsc/${evm}`,`https://ave.ai/token/${evm}-bsc`,'🔎 Evidence']);
   assert.doesNotMatch(result.text,/unavailable|Manual approval does not change/);
-  snapshot.candidates=[lead()];
-  assert.deepEqual(renderPanel(snapshot,session('detail',{selectedToken:row}),'en').keyboard.flat().filter(item=>item.url),[]);
+  // Robinhood has no DexScreener id and this address is no EVM token, so nothing links.
+  const bare=lead();snapshot.candidates=[bare];
+  assert.deepEqual(renderPanel(snapshot,session('detail',{selectedToken:bare}),'en').keyboard.flat().filter(item=>item.url),[]);
 });
 
 test('selectors lay out two choices per row, time windows three, and only the chain selector explains itself',()=>{
@@ -460,9 +460,9 @@ test('sources reads one line per source, with counts, readable failures and when
   const snapshot=fixture();
   assert.match(renderPanel(snapshot,session('sources'),'en').text,/\nNo source records/);
   snapshot.sourceHealth={discovery:{complete:false,checkedAt:now-120_000,trending:{ok:true,status:null,code:null,count:100},newPools:{ok:false,status:null,code:'ONCHAIN_NETWORK',count:null},watch:{ok:true,status:null,code:null,count:0}},
-    lastSecondary:{complete:false,checkedAt:now-240_000,sources:{dexScreener:{ok:null,status:'ERROR',code:'HTTP_429',count:null},goPlus:{ok:null,status:'ERROR',code:'GOPLUS_NEW_CODE',count:null}}}};
+    lastSecondary:{complete:false,checkedAt:now-240_000,sources:{goPlus:{ok:null,status:'ERROR',code:'GOPLUS_NEW_CODE',count:null}}}};
   const text=renderPanel(snapshot,session('sources'),'en').text;
-  assert.match(text,/<b>Discovery<\/b> · 2m ago\n✅ Trending: 100\n⚠️ New pools on chain: RPC unreachable\n✅ New pools watched: 0\n\n<b>Last token check<\/b> · 4m ago\n⚠️ DexScreener: Rate limited \(429\)\n⚠️ GoPlus: GOPLUS_NEW_CODE/);
+  assert.match(text,/<b>Discovery<\/b> · 2m ago\n✅ Trending: 100\n⚠️ New pools on chain: RPC unreachable\n✅ New pools watched: 0\n\n<b>Last token check<\/b> · 4m ago\n⚠️ GoPlus: GOPLUS_NEW_CODE\n/);
   assert.doesNotMatch(text,/Unknown|Complete|1,7/);
 });
 
@@ -529,11 +529,12 @@ test('the AVE token page is built from the chain and address, and left out when 
 
 test('the token detail link row reads X, Site, Chart, Profile, then Evidence',()=>{
   const snapshot=fixture();
-  snapshot.candidates=[candidate(0,{address:'0x59a0d858b0825098b5218f08e09901381c25a57d',info:{website:'https://coin.example',twitter:'coin'},secondary:{status:'COMPLETE',market:{pairUrl:'https://dexscreener.com/robinhood/pair',websites:[]},security:{verdict:'NO_FATAL_FLAGS'},conflicts:[]}})];
+  snapshot.candidates=[candidate(0,{chain:'bsc',address:'0x59a0d858b0825098b5218f08e09901381c25a57d',info:{website:'https://coin.example',twitter:'coin'},secondary:{status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS'}}})];
   const detail=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
   const row=detail.keyboard.find(items=>items.some(item=>item.url?.startsWith('https://ave.ai/')));
   assert.deepEqual(row.map(item=>item.text),['𝕏','🌐 Site','📊 Chart','🔭 Profile','🔎 Evidence']);
-  assert.equal(row[3].url,'https://ave.ai/token/0x59a0d858b0825098b5218f08e09901381c25a57d-robinhood');
+  assert.equal(row[2].url,'https://dexscreener.com/bsc/0x59a0d858b0825098b5218f08e09901381c25a57d');
+  assert.equal(row[3].url,'https://ave.ai/token/0x59a0d858b0825098b5218f08e09901381c25a57d-bsc');
 });
 
 // A pasted token's lookup as the snapshot projects it.
@@ -562,12 +563,14 @@ test('a lookup AVE did not find, or that failed, offers the other EVM chains; on
 });
 
 test('a finished lookup shows the shared verdict; a vetoed one keeps selling but offers no buy',()=>{
-  const fatal={status:'DEGRADED',checkedAt:now-60_000,market:{pairUrl:'https://dexscreener.com/arc/pair',websites:[]},security:{verdict:'FATAL',fatal:[{field:'honeypot'}],unknownFields:[]},conflicts:[]};
+  const fatal={status:'DEGRADED',checkedAt:now-60_000,security:{verdict:'FATAL',fatal:[{field:'honeypot'}],unknownFields:[]}};
   const trading={chains:['arc'],wallet:{address:'0x'+'11'.repeat(20)},settings:{capUsd:100,slippageBps:500}};
   const result=lookupDetail({state:'DONE',verdict:'VETOED',secondary:fatal},{trading});
   assert.match(result.text,/⛔ Vetoed: Honeypot · checked 1m ago/);
   assert.ok(!actions(result).includes('trade.buy'));assert.ok(actions(result).includes('trade.sell'));
-  assert.ok(result.keyboard.flat().some(item=>item.url==='https://dexscreener.com/arc/pair'));
+  assert.ok(result.keyboard.flat().some(item=>item.url===`https://dexscreener.com/arc/0x${'cd'.repeat(20)}`));
+  assert.ok(!result.keyboard.flat().some(item=>item.text==='🌐 Site'),'no Site button without a website');
+  assert.ok(lookupDetail({state:'DONE',verdict:'VETOED',secondary:fatal,website:'https://look.example/'},{trading}).keyboard.flat().some(item=>item.text==='🌐 Site'&&item.url==='https://look.example/'));
   const passed=lookupDetail({state:'DONE',verdict:'PASSED',secondary:{...fatal,status:'COMPLETE',security:{verdict:'NO_FATAL_FLAGS',fatal:[],unknownFields:[]}}},{trading});
   assert.match(passed.text,/✅ No failures found/);assert.ok(actions(passed).includes('trade.buy'));
 });
@@ -575,7 +578,7 @@ test('a finished lookup shows the shared verdict; a vetoed one keeps selling but
 
 test('a clean lookup past its freshness keeps its verdict but says the check is stale, and still offers Buy',()=>{
   const trading={chains:['arc'],wallet:{address:'0x'+'11'.repeat(20)},settings:{capUsd:100,slippageBps:500}};
-  const secondary={status:'COMPLETE',checkedAt:now-20*60_000,market:{websites:[]},security:{verdict:'NO_FATAL_FLAGS',fatal:[],unknownFields:[]},conflicts:[]};
+  const secondary={status:'COMPLETE',checkedAt:now-20*60_000,security:{verdict:'NO_FATAL_FLAGS',fatal:[],unknownFields:[]}};
   const render=(stale,locale='en')=>{ const snapshot={...fixture(),trading},row=lookup({state:'DONE',verdict:'PASSED',secondary,stale});snapshot.lookups=[row];return renderPanel(snapshot,{...session('detail',{selectedToken:{chain:row.chain,address:row.address}}),viewChain:row.chain},locale); };
   assert.match(render(true).text,/✅ No failures found · checked 20m ago · stale, paste the address again to re-check\n/);
   assert.match(render(true,'zh').text,/✅ 未发现问题 · 20分钟前核验 · 已过期，重新粘贴地址即可重新核验\n/);
@@ -593,7 +596,7 @@ test('a candidate whose lookup is vetoed shows no buy, as the engine refuses one
 });
 
 test('a lookup that failed after AVE confirmed the token names the check and offers only Retry',()=>{
-  for(const [failedStep,check] of [['DEXSCREENER','DexScreener'],['GOPLUS','GoPlus']]) {
+  for(const [failedStep,check] of [['GOPLUS','GoPlus']]) {
     const failed=lookupDetail({state:'FAILED',reason:'SCHEDULER_LEASE_EXPIRED',failedStep,symbol:'LOOK',marketCap:50_000,capturedAt:now});
     assert.match(failed.text,new RegExp(`⚠️ Lookup failed: the ${check} check did not finish`),failedStep);
     assert.deepEqual(chainButtons(failed),[],failedStep);
