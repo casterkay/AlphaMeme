@@ -101,7 +101,16 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   re-rendering the token detail after each; DexScreener and GoPlus see the address
   only after AVE confirms it is a token. A lookup is not a lead: it never enters
   leads, alerts, Performance or `/export`. Lookups run one at a time, at most 5 may
-  wait, and records expire after 24 hours.
+  wait, and records expire after 24 hours, except a vetoed one, which stays until
+  a later complete clean check clears it.
+- An unreadable lookup row (`lookup:<chain>:<address>` in the tenant's
+  `scheduler_state`, reported once per isolate as `lookup_record_unreadable` with
+  its key) is never pruned or overwritten, because it may hold a veto. Until it is
+  fixed, buying that token fails and pasting it again shows a banner instead of a
+  lookup; every other token is unaffected. This fails safe on purpose. No operator
+  command clears it: in the tenant's RadarAgent Durable Object storage, check the
+  token on GoPlus first, then repair the row or delete it. Deleting it drops any
+  veto it held, and the next paste starts a fresh lookup.
 - Other plain text that is neither a command nor a reply gets a hint, and its text is
   never stored. A reply is kept in the command log for up to seven days like any
   command; a reply that answers no open prompt is refused as expired.
