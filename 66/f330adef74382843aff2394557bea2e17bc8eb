@@ -1,0 +1,31 @@
+src/scoring/tax.mjs
+  s_03ebd0efd53ab5::t_33e507b8f9a47e 2-3
+test/secondary.test.mjs
+  s_03ebd0efd53ab5::t_33e507b8f9a47e 200-202
+src/scoring/index.mjs
+  s_03ebd0efd53ab5::t_33e507b8f9a47e 625
+test/ave-provider.test.mjs
+  s_03ebd0efd53ab5::t_33e507b8f9a47e 94
+README.md
+  s_03ebd0efd53ab5::t_33e507b8f9a47e 33-35
+src/providers/secondary.mjs
+  s_03ebd0efd53ab5::t_33e507b8f9a47e 352
+test/scoring.test.mjs
+  s_03ebd0efd53ab5::t_33e507b8f9a47e 240,256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "66f330adef74382843aff2394557bea2e17bc8eb",
+  "prompts": {},
+  "sessions": {
+    "s_03ebd0efd53ab5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34373ce1-9e55-4e5c-9162-cf40c8df360e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
