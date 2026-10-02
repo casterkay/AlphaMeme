@@ -1,0 +1,34 @@
+test/goplus-auth.test.mjs
+  s_c497d5c9be8144::t_06a408b29c9977 1-83
+src/bot/panels.mjs
+  s_c497d5c9be8144::t_096c4c002adbff 219-220
+src/providers/secondary.mjs
+  s_c497d5c9be8144::t_66b644ec257191 605-606,610
+  s_c497d5c9be8144::t_c8e1d0df877e31 136,147,420,670-671,675-677
+src/providers/goplus-auth.mjs
+  s_c497d5c9be8144::t_66b644ec257191 1-74
+README.md
+  s_c497d5c9be8144::t_096c4c002adbff 94-95
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_c497d5c9be8144::t_096c4c002adbff 16-19
+wrangler.jsonc
+  s_c497d5c9be8144::t_096c4c002adbff 59-60
+src/radar-agent.mjs
+  s_c497d5c9be8144::t_6aa713868dc0d9 7-8,31,314,321-329,337
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "50ddedb125842f958d9b3defb377169d3a415c5d",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
