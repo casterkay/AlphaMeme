@@ -1,0 +1,19 @@
+docs/TELEGRAM-M3-OPERATIONS.md
+  s_6295713717bc33::t_01e623cdb4ccb4 102-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "013accc5efa84302152faf9a8bbe2d10edaed1ae",
+  "prompts": {},
+  "sessions": {
+    "s_6295713717bc33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14d7cdc4-15f0-423e-be4a-a37def111e28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
