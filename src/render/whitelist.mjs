@@ -51,7 +51,6 @@ export function publicSecondary(source = {}) {
     status: text(row?.status, 24),
     errorCode: publicCode(row?.errorCode)
   });
-  const market = source.market || {};
   const security = source.security || {};
   const fields = security.fields || {};
   const securityFields = {};
@@ -68,18 +67,7 @@ export function publicSecondary(source = {}) {
     status: text(source.status, 24),
     complete: source.complete === true,
     checkedAt: finite(source.checkedAt),
-    sources: {
-      dexScreener: sourceStatus(source.sources?.dexScreener),
-      goPlus: sourceStatus(source.sources?.goPlus)
-    },
-    market: {
-      complete: market.complete === true,
-      pairUrl: externalUrl(market.pairUrl),
-      priceUsd: finiteOrNull(market.priceUsd),
-      marketCap: finiteOrNull(market.marketCap),
-      liquidityUsd: finiteOrNull(market.liquidityUsd),
-      websites: Array.isArray(market.websites) ? market.websites.slice(0, 5).map(externalUrl).filter(Boolean) : []
-    },
+    sources: { goPlus: sourceStatus(source.sources?.goPlus) },
     security: {
       complete: security.complete === true,
       verdict: text(security.verdict, 32),
@@ -91,12 +79,7 @@ export function publicSecondary(source = {}) {
       fields: securityFields,
       buyTax: finiteOrNull(security.buyTax),
       sellTax: finiteOrNull(security.sellTax)
-    },
-    conflicts: Array.isArray(source.conflicts) ? source.conflicts.slice(0, 20).map(row => ({
-      type: text(row?.type, 40),
-      field: text(row?.field, 48),
-      relativeDifference: finiteOrNull(row?.relativeDifference)
-    })) : []
+    }
   };
 }
 

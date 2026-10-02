@@ -24,12 +24,10 @@ const word = value => '0x' + BigInt(value).toString(16).padStart(64, '0');
 const topic = address => '0x' + '0'.repeat(24) + address.slice(2).toLowerCase();
 const json = value => new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
 const SECURITY = { complete: true, verdict: 'NO_FATAL_FLAGS', fatal: [], unknownFields: [], fields: {}, buyTax: 0, sellTax: 0 };
-// A GoPlus/DexScreener check recorded the way the scanner stores it.
-const check = ({ dex = 'OK', security = SECURITY } = {}) => aggregateSecondarySources({ chain: 'arc', tokenAddress: TOKEN, sources: {
-  dexScreener: { value: { source: { status: dex }, market: { complete: true, priceUsd: null, marketCap: null, liquidityUsd: null, websites: [] } } },
-  goPlus: { value: { source: { status: 'OK' }, security } } } });
+// A GoPlus check recorded the way the scanner stores it.
+const check = ({ goPlus = 'OK', security = SECURITY } = {}) => aggregateSecondarySources({ chain: 'arc', tokenAddress: TOKEN, sources: {
+  goPlus: { value: { source: { status: goPlus }, security } } } });
 const VERIFIED = check();
-const conflicted = type => ({ ...VERIFIED, conflicts: [{ type, field: 'isHoneypot', primary: true, secondary: false }] });
 const FATAL = check({ security: { ...SECURITY, verdict: 'FATAL', fatal: [{ field: 'honeypot', reason: 'honeypot' }] } });
 
 // A hand-written EVM node and KyberSwap endpoint; nothing touches the network.
@@ -503,11 +501,9 @@ describe('buying before the safety check verified a token', () => {
   it.each([
     ['a hot-list row that never became a candidate', null, 'none', 'UNVERIFIED'],
     ['a lead whose check has not run', 'LIVE_READY', null, 'UNVERIFIED'],
-    ['a degraded check', 'LIVE_READY', check({ dex: 'ERROR' }), 'UNVERIFIED'],
+    ['a degraded check', 'LIVE_READY', check({ goPlus: 'ERROR' }), 'UNVERIFIED'],
     ['an unknown verdict', 'LIVE_READY', check({ security: { ...SECURITY, complete: false, verdict: 'UNKNOWN', unknownFields: ['honeypot'] } }), 'UNVERIFIED'],
     ['a complete record whose verdict is unknown', 'LIVE_READY', { status: 'COMPLETE', security: { verdict: 'UNKNOWN' } }, 'UNVERIFIED'],
-    ['a complete check with a security conflict', 'LIVE_READY', conflicted('SECURITY_MISMATCH'), 'UNVERIFIED'],
-    ['a complete check with a market conflict', 'LIVE_READY', conflicted('MARKET_MISMATCH'), 'UNVERIFIED'],
     ['a complete check without fatal flags', 'LIVE_READY', VERIFIED, 'VERIFIED'],
     ['a complete check with a waiting deep-audit failure', 'X_REVIEW', VERIFIED, 'UNVERIFIED', { failed: ['notHoneypot'], blockingUnknownFields: [] }],
     ['a complete check with a blocking unknown deep-audit field', 'X_REVIEW', VERIFIED, 'UNVERIFIED', { failed: [], blockingUnknownFields: ['buyTax'] }],
@@ -558,10 +554,8 @@ describe('buying before the safety check verified a token', () => {
       expect(trades()).toEqual([]);expect(network.kyber).toEqual([]);
       await click(link(session(), 'trade.decline_unverified'));
       const details = async () => ({ token: { symbol: 'MEME', name: 'Meme', current_price_usd: 0.001, market_cap: 1000, main_pair_tvl: 500, tvl: null, holders: 10, launch_at: null, created_at: null, token_price_change_5m: null, token_tx_volume_usd_5m: null }, capturedAt: Date.now() });
-      const secondary = { fetchSource: async ({ source }) => source === 'dexScreener'
-        ? { source: { status: 'OK' }, market: { complete: true, priceUsd: 0.001, marketCap: 1000, liquidityUsd: 500, pairUrl: '', websites: [] } }
-        : { source: { status: 'OK' }, security: FATAL.security } };
-      for (let index = 0; index < 3; index++) await lookupStep({ details, secondary });
+      const secondary = { fetchSource: async () => ({ source: { status: 'OK' }, security: FATAL.security }) };
+      for (let index = 0; index < 2; index++) await lookupStep({ details, secondary });
       expect(session().panel).toBe('detail');expect(lastText()).toContain('⛔ Vetoed');
       expect(has(session(), 'trade.buy')).toBe(false);expect(has(session(), 'trade.sell')).toBe(true);
       expect(() => storage.transactionSync(() => runtime().trading.requestTradeInTransaction({ chain: 'arc', token: TOKEN, side: 'buy', usdCents: 1000, slippageBps: 500, capUsd: 100, unverifiedAcknowledged: true })))
@@ -577,10 +571,8 @@ describe('buying before the safety check verified a token', () => {
       // Open the detail afresh from the Watchlist; an older panel's buttons have expired by then.
       const open = async () => { await command('watchlist');const list = sessions().at(-1);await click(link(list, 'panel.open', params => params.panel === 'detail'));return list; };
       const details = async () => ({ token: { symbol: 'MEME', name: 'Meme', current_price_usd: 0.001, market_cap: 1000, main_pair_tvl: 500, tvl: null, holders: 10, launch_at: null, created_at: null, token_price_change_5m: null, token_tx_volume_usd_5m: null }, capturedAt: clock.now() });
-      const secondary = { fetchSource: async ({ source }) => source === 'dexScreener'
-        ? { source: { status: 'OK' }, market: { complete: true, priceUsd: 0.001, marketCap: 1000, liquidityUsd: 500, pairUrl: '', websites: [] } }
-        : { source: { status: 'OK' }, security: VERIFIED.security } };
-      for (let index = 0; index < 3; index++) await lookupStep({ details, secondary });
+      const secondary = { fetchSource: async () => ({ source: { status: 'OK' }, security: VERIFIED.security }) };
+      for (let index = 0; index < 2; index++) await lookupStep({ details, secondary });
       await click(link(runtime().commands.sessions.get(detail.id), 'favorite.set'));
       clock.advance(LOOKUP_SETTINGS.verifiedMs);
       await open();
@@ -590,7 +582,7 @@ describe('buying before the safety check verified a token', () => {
       expect(lastText()).toMatch(/✅ No failures found · checked 15m ago · stale, paste the address again to re-check\n/);
       await click(link(list, 'trade.buy', params => params.usd === 1));
       expect(runtime().commands.sessions.get(list.id).panel).toBe('trade_unverified');
-      expect(lastText()).toMatch(/⚠️ Safety check is stale[\s\S]*GoPlus and DexScreener checked this token 15m ago; that check is stale\./);
+      expect(lastText()).toMatch(/⚠️ Safety check is stale[\s\S]*GoPlus checked this token 15m ago; that check is stale\./);
       expect(trades()).toEqual([]);
     });
   });
@@ -600,10 +592,8 @@ describe('buying before the safety check verified a token', () => {
       await createWallet();
       const detail = await paste(TOKEN);
       const details = async () => ({ token: { symbol: 'MEME', name: 'Meme', current_price_usd: 0.001, market_cap: 1000, main_pair_tvl: 500, tvl: null, holders: 10, launch_at: null, created_at: null, token_price_change_5m: null, token_tx_volume_usd_5m: null }, capturedAt: clock.now() });
-      const secondary = { fetchSource: async ({ source }) => source === 'dexScreener'
-        ? { source: { status: 'OK' }, market: { complete: true, priceUsd: 0.001, marketCap: 1000, liquidityUsd: 500, pairUrl: '', websites: [] } }
-        : { source: { status: 'OK' }, security: FATAL.security } };
-      for (let index = 0; index < 3; index++) await lookupStep({ details, secondary });
+      const secondary = { fetchSource: async () => ({ source: { status: 'OK' }, security: FATAL.security }) };
+      for (let index = 0; index < 2; index++) await lookupStep({ details, secondary });
       await click(link(runtime().commands.sessions.get(detail.id), 'favorite.set'));
       clock.advance(LOOKUP_SETTINGS.expiryMs + 1);
       await command('watchlist');
@@ -649,16 +639,6 @@ describe('buying before the safety check verified a token', () => {
       });
       await click({ id: yes.callback_data.slice('cb:'.length), origin_message_id: sessions.get(detail.id).messageId });
       expect(trades()).toEqual([]);expect(sent.at(-1).params.text).toMatch(/old action was not applied/);
-    });
-  });
-
-  it('asks before buying a token whose sources conflict, even though its check is complete', async () => {
-    await withTrading('unverified-conflict', async ({ runtime, click, link, seed, createWallet, openDetail, trades }) => {
-      seed('arc', 'LIVE_READY', conflicted('SECURITY_MISMATCH'));await createWallet();
-      const detail = await openDetail();
-      await click(link(detail, 'trade.buy', params => params.usd === 1));
-      expect(runtime().commands.sessions.get(detail.id)).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { usdCents: 100 } } });
-      expect(trades()).toEqual([]);
     });
   });
 
@@ -763,7 +743,7 @@ describe('buying before the safety check verified a token', () => {
       await click(link(verified, 'trade.buy', params => params.usd === 2));
       await run(() => tradeOf(verified).state === 'QUOTED');
       const expiring = tradeOf(verified).id;
-      seed('bsc', 'LIVE_READY', check({ dex: 'ERROR' }));
+      seed('bsc', 'LIVE_READY', check({ goPlus: 'ERROR' }));
       clock.advance(30_000);
       await confirm(verified);
       expect(trades().find(trade => trade.id === expiring).state).toBe('EXPIRED');

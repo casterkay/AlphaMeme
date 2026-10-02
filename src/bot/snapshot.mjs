@@ -83,12 +83,7 @@ export function projectTelegramCandidate(source) {
   return row;
 }
 
-function projectSecondary(source) {
-  const secondary = availabilityProjection(publicCandidate({ secondary: source }).secondary, source);
-  secondary.market.pairUrl = safeTelegramUrl(source.market?.pairUrl);
-  secondary.market.websites = (source.market?.websites || []).map(safeTelegramUrl).filter(Boolean);
-  return secondary;
-}
+const projectSecondary = source => availabilityProjection(publicCandidate({ secondary: source }).secondary, source);
 
 /** A pasted token's lookup: its progress, AVE market facts and, once done, its check. */
 export function projectTelegramLookup(record, now) {
@@ -96,9 +91,9 @@ export function projectTelegramLookup(record, now) {
   const numbers = ['price','marketCap','liquidity','holders','createdAt','priceChange5m','volume5m','capturedAt'];
   return {
     chain: record.chain, address: record.address, state: record.state, startedAt: record.startedAt, reason: record.reason,
-    // The step a failed run stopped at: AVE until it confirmed the token, then each check in turn.
-    failedStep: record.state !== 'FAILED' ? null : !record.market ? 'DETAILS' : !record.sources.dexScreener ? 'DEXSCREENER' : 'GOPLUS',
-    symbol: safeTelegramText(market.symbol, 30), name: safeTelegramText(market.name, 80),
+    // The step a failed run stopped at: AVE until it confirmed the token, then GoPlus.
+    failedStep: record.state !== 'FAILED' ? null : !record.market ? 'DETAILS' : 'GOPLUS',
+    symbol: safeTelegramText(market.symbol, 30), name: safeTelegramText(market.name, 80), website: safeTelegramUrl(market.website),
     ...Object.fromEntries(numbers.map(key => [key, typeof market[key] === 'number' && Number.isFinite(market[key]) ? market[key] : null])),
     verdict: lookupVerdict(record),
     // A clean check that is too old to verify a buy (safetyState's rule), so a buy asks again.
@@ -124,7 +119,7 @@ function projectSourceHealth(source) {
     const row=source[key];
     return [key,{ complete:typeof row.complete === 'boolean' ? row.complete : null,checkedAt:typeof row.checkedAt === 'number' ? row.checkedAt : null,
       ...Object.fromEntries(['trending','newPools','watch','promoted'].filter(field => row[field]).map(field => [field,endpoint(row[field])])),
-      sources:Object.fromEntries(['dexScreener','goPlus'].filter(field => row.sources?.[field]).map(field => [field,endpoint(row.sources[field])])) }];
+      sources:Object.fromEntries(['goPlus'].filter(field => row.sources?.[field]).map(field => [field,endpoint(row.sources[field])])) }];
   }));
 }
 

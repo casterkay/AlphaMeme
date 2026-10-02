@@ -227,7 +227,8 @@ MC $120K · Liq $30K · 2,431 holders
 - Market line joins the hot-list row when the candidate lacks age/5m fields
   (verify which fields candidates retain; show only present facts).
 - Link row omits missing buttons silently; the "some links unavailable" line goes.
-- `📊 Chart` uses the DexScreener `pairUrl` already collected in `secondary.market`.
+- `📊 Chart` opens the token on DexScreener (`dexscreener.com/<chain>/<address>`), built from
+  the chain and address; DexScreener is no longer a check source.
 - `🔭 AVE` (added in slice 7) opens the token's AVE page,
   `https://ave.ai/token/<address>-<AVE chain id>`, built from the AVE chain ids in
   `src/providers/ave.mjs` (`aveTokenUrl`); it is left out for a chain AVE has no id
@@ -273,7 +274,7 @@ Updated 08:00 UTC
 - Market cap, liquidity and age come from the candidate row; the 5m change from
   the token's row in the latest hot-list snapshot. A missing fact is omitted.
 - The alert is mapped to its token like a detail card. When the token's review
-  projection changes (its GoPlus/DexScreener check finishes, or it is vetoed),
+  projection changes (its GoPlus check finishes, or it is vetoed),
   the same message is edited to show the shared verdict's badge; a veto also
   sends the short risk notice below as a reply to the alert. The alert states no
   relative times, since it is not re-rendered as time passes.
@@ -333,11 +334,10 @@ Buying is never blocked merely because the safety check is pending or
 incomplete; it asks once. Only a veto — `HARD_REJECT`, a `FATAL` verdict or a
 risk exclusion — still blocks buying (unchanged).
 
-A token is **verified** when its recorded GoPlus/DexScreener check has status
-`COMPLETE`, the security verdict `NO_FATAL_FLAGS` and no blocking source conflict
-(`MARKET_MISMATCH`/`SECURITY_MISMATCH`), and its deep audit has no failed or
+A token is **verified** when its recorded GoPlus check has status `COMPLETE` and
+the security verdict `NO_FATAL_FLAGS`, and its deep audit has no failed or
 blocking-unknown field. Everything else — a lead whose check has not run yet, a
-degraded, unknown or conflicted check, an open deep audit, a hot-list
+degraded or unknown check, an open deep audit, a hot-list
 row that never became a candidate, a pasted token whose lookup is still running
 or whose clean check is more than 15 minutes old —
 is **unverified**. One pure function (`safetyVerdict({ status, secondary, deep })` in
@@ -351,7 +351,7 @@ token edits the panel into a confirmation before any quote is requested:
 ```
 ⚠️ Safety check not finished
 PEPE · Arc — buy $25?
-GoPlus and DexScreener have not verified this token yet.
+GoPlus has not verified this token yet.
 It could be a honeypot or carry hidden taxes.
 
 [Yes] [No]
@@ -439,8 +439,7 @@ scheduler's existing limit and backoff.
 | Step | Request | AVE cost |
 |---|---|---|
 | `DETAILS` | `AveClient.details(chain, address)` | 5 CU through the existing admission |
-| `DEXSCREENER` | `SecondaryValidator.fetchSource('dexScreener')` | 0 |
-| `GOPLUS` | `SecondaryValidator.fetchSource('goPlus')` | 0 |
+| `GOPLUS` | `SecondaryValidator.fetchSource` | 0 |
 | `DONE` | `aggregateSecondarySources` → verdict | — |
 
 Terminal states: `DONE` (with `PASS`/`UNKNOWN`/`FATAL`), `NOT_FOUND` (detail
@@ -497,10 +496,10 @@ time per tenant; scheduler priority equals `command`.
   `UNVERIFIED`, so a later buy asks Yes/No again. The detail keeps its verdict
   and says the check is stale: "✅ No failures found · checked 20m ago · stale,
   paste the address again to re-check". The Yes/No question then reads
-  "⚠️ Safety check is stale" and "GoPlus and DexScreener checked this token 20m
-  ago; that check is stale." (amended in #92). A veto never goes stale.
+  "⚠️ Safety check is stale" and "GoPlus checked this token 20m ago; that check
+  is stale." (amended in #92). A veto never goes stale.
 - Detail shows the source and age: "AVE · 20s ago".
-- DexScreener and GoPlus receive an address only after AVE has confirmed it as a
+- GoPlus receives an address only after AVE has confirmed it as a
   token on that chain; `NOT_FOUND` and `FAILED` end the lookup first. (The 32-byte
   Solana seed that reads as an address, raised in #68, no longer reaches a lookup:
   Solana was dropped, so base58 text is plain text.)

@@ -70,7 +70,7 @@ export async function executeRecoverableScanStep({ scanner, cycleId, ave, second
     result = await record(request, discoveryOperation(next, { ave, chainLogs, dexMarkets }),
       value => { logDiscovery(next, value); return recordResponse(value, null); }, error => recordResponse(null, error));
   } else if (next.kind === 'SECONDARY') {
-    result = await record(request, ({ signal }) => secondary.fetchSource({ source: next.source, chain: next.chain, tokenAddress: next.address, signal }),
+    result = await record(request, ({ signal }) => secondary.fetchSource({ chain: next.chain, tokenAddress: next.address, signal }),
       value => recordResponse(value, null), error => recordResponse(null, error));
   } else if (next.kind === 'OUTCOMES_SAMPLE') {
     result = await record(request, ({ signal }) => ave.priceAt(next.address, next.targetAt, next.chain || next.checkpoint.chain, { signal }),

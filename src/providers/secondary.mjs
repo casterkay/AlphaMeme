@@ -61,17 +61,6 @@ function cleanString(value, maxLength = 160) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
 }
 
-function safeHttpUrl(value) {
-  const raw = cleanString(value, 2048);
-  if (!raw) return '';
-  try {
-    const url = new URL(raw);
-    return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
-  } catch {
-    return '';
-  }
-}
-
 const normalizedAddress = value => cleanString(value, 128).toLowerCase();
 
 function sameAddress(left, right) {
@@ -189,44 +178,6 @@ async function requestJson(fetchImpl, url, { timeoutMs, maxResponseBytes, signal
     clearTimeout(timer);
     signal?.removeEventListener('abort', abortFromParent);
   }
-}
-
-function emptyMarket() {
-  return {
-    complete: false, pairAddress: '', dexId: '', pairUrl: '', symbol: '', name: '',
-    priceUsd: null, marketCap: null, fdv: null, liquidityUsd: null, websites: []
-  };
-}
-
-function parseDexScreener(payload, { dexChainId, tokenAddress }) {
-  if (!Array.isArray(payload)) {
-    const error = new Error('unexpected DexScreener JSON shape');
-    error.code = 'INVALID_JSON_SHAPE';
-    throw error;
-  }
-  const pairs = payload.filter(pair => pair && typeof pair === 'object'
-    && cleanString(pair.chainId, 32) === dexChainId
-    && sameAddress(pair.baseToken?.address, tokenAddress));
-  if (!pairs.length) return { found: false, market: emptyMarket() };
-  pairs.sort((a, b) => (optionalNonNegative(b.liquidity?.usd) ?? -1) - (optionalNonNegative(a.liquidity?.usd) ?? -1));
-  const pair = pairs[0];
-  const websites = [...new Set((Array.isArray(pair.info?.websites) ? pair.info.websites : [])
-    .map(row => safeHttpUrl(row?.url)).filter(Boolean))].slice(0, 10);
-  const market = {
-    complete: false,
-    pairAddress: cleanString(pair.pairAddress, 128),
-    dexId: cleanString(pair.dexId, 64),
-    pairUrl: safeHttpUrl(pair.url),
-    symbol: cleanString(pair.baseToken?.symbol, 40),
-    name: cleanString(pair.baseToken?.name, 120),
-    priceUsd: optionalNonNegative(pair.priceUsd),
-    marketCap: optionalNonNegative(pair.marketCap),
-    fdv: optionalNonNegative(pair.fdv),
-    liquidityUsd: optionalNonNegative(pair.liquidity?.usd),
-    websites
-  };
-  market.complete = market.priceUsd !== null && market.marketCap !== null && market.liquidityUsd !== null;
-  return { found: true, market };
 }
 
 function validPairAddress(value) {
@@ -462,71 +413,6 @@ function parseGoPlus(payload, { tokenAddress }) {
   };
 }
 
-function firstNumber(...values) {
-  for (const value of values) {
-    const parsed = optionalNonNegative(value);
-    if (parsed !== null) return parsed;
-  }
-  return null;
-}
-
-function relativeDifference(left, right) {
-  return Math.abs(left - right) / Math.max(Math.abs(left), Math.abs(right), Number.EPSILON);
-}
-
-function websiteHost(value) {
-  const url = safeHttpUrl(value);
-  if (!url) return '';
-  return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
-}
-
-function buildConflicts(primary, market, security, thresholds) {
-  const conflicts = [];
-  const primaryMarket = primary?.market && typeof primary.market === 'object' ? primary.market : primary || {};
-  const comparisons = [
-    ['priceUsd', firstNumber(primaryMarket.priceUsd, primaryMarket.price), market.priceUsd, thresholds.price],
-    ['marketCap', firstNumber(primaryMarket.marketCap, primaryMarket.market_cap), market.marketCap, thresholds.marketCap],
-    ['liquidityUsd', firstNumber(primaryMarket.liquidityUsd, primaryMarket.liquidity), market.liquidityUsd, thresholds.liquidity]
-  ];
-  for (const [field, primaryValue, secondaryValue, threshold] of comparisons) {
-    if (primaryValue === null || secondaryValue === null) continue;
-    const difference = relativeDifference(primaryValue, secondaryValue);
-    if (difference > threshold) conflicts.push({ type: 'MARKET_MISMATCH', field, primary: primaryValue, secondary: secondaryValue, relativeDifference: difference });
-  }
-
-  const primaryWebsite = primaryMarket.website || primary?.info?.website || primary?.website;
-  const primaryHost = websiteHost(primaryWebsite);
-  const secondaryHosts = market.websites.map(websiteHost).filter(Boolean);
-  if (primaryHost && secondaryHosts.length && !secondaryHosts.includes(primaryHost)) {
-    conflicts.push({ type: 'WEBSITE_MISMATCH', field: 'website', primaryHost, secondaryHosts });
-  }
-
-  const primarySecurity = primary?.security && typeof primary.security === 'object' ? primary.security : {};
-  const aliases = {
-    isHoneypot: ['isHoneypot', 'is_honeypot', 'honeypot'],
-    openSource: ['openSource', 'is_open_source'],
-    mintable: ['mintable', 'is_mintable'],
-    ownerChangeBalance: ['ownerChangeBalance', 'owner_change_balance'],
-    hiddenOwner: ['hiddenOwner', 'hidden_owner'],
-    cannotSellAll: ['cannotSellAll', 'cannot_sell_all']
-  };
-  for (const [field, names] of Object.entries(aliases)) {
-    const secondaryValue = security.fields?.[field];
-    if (secondaryValue === null || secondaryValue === undefined) continue;
-    let primaryValue = null;
-    for (const name of names) {
-      if (Object.hasOwn(primarySecurity, name)) {
-        primaryValue = optionalBoolean(primarySecurity[name]);
-        break;
-      }
-    }
-    if (primaryValue !== null && primaryValue !== secondaryValue) {
-      conflicts.push({ type: 'SECURITY_MISMATCH', field, primary: primaryValue, secondary: secondaryValue });
-    }
-  }
-  return conflicts;
-}
-
 function sourceState(status, extra = {}) {
   return { status, ...extra };
 }
@@ -535,159 +421,70 @@ function unknownSecurity(verdict = 'UNKNOWN') {
   return { complete: false, verdict, fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null };
 }
 
-function sourceConfiguration(source, chain, tokenAddress) {
-  const normalizedChain = cleanString(chain, 24).toLowerCase();
-  const address = cleanString(tokenAddress, 128);
-  const dexChainId = DEX_CHAIN_IDS[normalizedChain];
-  const goPlusChainId = GOPLUS_EVM_CHAIN_IDS[normalizedChain];
-  const supported = source === 'dexScreener' ? Boolean(dexChainId)
-    : source === 'goPlus' ? Boolean(goPlusChainId)
-      : null;
-  if (supported === null) throw new TypeError('secondary source is not supported');
-  const valid = validAddress(address);
-  const url = source === 'dexScreener'
-    ? dexChainId ? `https://api.dexscreener.com/token-pairs/v1/${dexChainId}/${encodeURIComponent(address)}` : ''
-    : goPlusChainId
-      ? `https://api.gopluslabs.io/api/v1/token_security/${goPlusChainId}?contract_addresses=${encodeURIComponent(address)}`
-      : '';
-  return { normalizedChain, address, supported, valid, url, dexChainId };
-}
-
-function sourceResult(source, response) {
-  if (response?.error) {
-    return source === 'dexScreener'
-      ? { source: sourceState('ERROR', { errorCode: errorCode(response.error) }), market: emptyMarket() }
-      : { source: sourceState('ERROR', { errorCode: errorCode(response.error) }), security: unknownSecurity() };
-  }
+function sourceResult(response) {
+  if (response?.error) return { source: sourceState('ERROR', { errorCode: errorCode(response.error) }), security: unknownSecurity() };
   const value = response?.value;
   if (!value || typeof value !== 'object' || Array.isArray(value) || !value.source || typeof value.source.status !== 'string') {
-    return source === 'dexScreener'
-      ? { source: sourceState('ERROR', { errorCode: 'NORMALIZATION_MISSING' }), market: emptyMarket() }
-      : { source: sourceState('ERROR', { errorCode: 'NORMALIZATION_MISSING' }), security: unknownSecurity() };
-  }
-  if (source === 'dexScreener') {
-    return { source: value.source, market: value.market && typeof value.market === 'object' ? value.market : emptyMarket() };
+    return { source: sourceState('ERROR', { errorCode: 'NORMALIZATION_MISSING' }), security: unknownSecurity() };
   }
   return { source: value.source, security: value.security && typeof value.security === 'object' ? value.security : unknownSecurity() };
 }
 
-function sourceCollectedAt(sources) {
-  return Math.max(0, ...Object.values(sources || {}).map(response =>
-    Number.isSafeInteger(response?.collectedAt) && response.collectedAt >= 0 ? response.collectedAt : 0
-  ));
-}
-
-export function aggregateSecondarySources({ chain, tokenAddress, primary = {}, sources = {} }) {
-  const dex = sourceResult('dexScreener', sources.dexScreener);
-  const goPlus = sourceResult('goPlus', sources.goPlus);
-  const market = { ...emptyMarket(), ...dex.market };
-  const security = goPlus.security || unknownSecurity('UNSUPPORTED');
-  const complete = dex.source.status === 'OK' && goPlus.source.status === 'OK' && market.complete && security.complete;
+/** The token's secondary safety check from its recorded GoPlus response. */
+export function aggregateSecondarySources({ chain, tokenAddress, sources = {} }) {
+  const goPlus = sourceResult(sources.goPlus);
+  const complete = goPlus.source.status === 'OK' && goPlus.security.complete === true;
+  const collectedAt = sources.goPlus?.collectedAt;
   return {
     status: complete ? 'COMPLETE' : 'DEGRADED',
     complete,
-    checkedAt: sourceCollectedAt(sources),
+    checkedAt: Number.isSafeInteger(collectedAt) && collectedAt >= 0 ? collectedAt : 0,
     chain: cleanString(chain, 24).toLowerCase(),
     tokenAddress: cleanString(tokenAddress, 128),
-    sources: { dexScreener: dex.source, goPlus: goPlus.source },
-    market,
-    security,
-    conflicts: buildConflicts(primary, market, security, { price: 0.10, marketCap: 0.20, liquidity: 0.25 })
+    sources: { goPlus: goPlus.source },
+    security: goPlus.security
   };
 }
 
+/** Reads a token's GoPlus security record, signed in with the app key when `goPlusAuth` holds one. */
 export class SecondaryValidator {
-  constructor({
-    fetchImpl = globalThis.fetch,
-    timeoutMs = 8_000,
-    maxResponseBytes = DEFAULT_MAX_BYTES,
-    now = () => Date.now(),
-    conflictThresholds = { price: 0.10, marketCap: 0.20, liquidity: 0.25 },
-    goPlusAuth = null
-  } = {}) {
+  constructor({ goPlusAuth = null, fetchImpl = globalThis.fetch, timeoutMs = 8_000, maxResponseBytes = DEFAULT_MAX_BYTES, now = () => Date.now() } = {}) {
     if (typeof fetchImpl !== 'function') throw new TypeError('fetch implementation is required');
     this.fetchImpl = fetchImpl;
     this.goPlusAuth = goPlusAuth;
     this.timeoutMs = Math.max(1, Number(timeoutMs) || 8_000);
     this.maxResponseBytes = Math.max(1_024, Number(maxResponseBytes) || DEFAULT_MAX_BYTES);
     this.now = now;
-    this.conflictThresholds = {
-      price: optionalRate(conflictThresholds.price) ?? 0.10,
-      marketCap: optionalRate(conflictThresholds.marketCap) ?? 0.20,
-      liquidity: optionalRate(conflictThresholds.liquidity) ?? 0.25
-    };
   }
 
-  async validate({ chain, tokenAddress, primary = {} }) {
-    const normalizedChain = cleanString(chain, 24).toLowerCase();
+  /** The token's GoPlus check as a source record; a failure is recorded, never thrown. */
+  async fetchSource({ chain, tokenAddress, signal } = {}) {
+    const chainId = GOPLUS_EVM_CHAIN_IDS[cleanString(chain, 24).toLowerCase()];
     const address = cleanString(tokenAddress, 128);
-    const [dexResult, goPlusResult] = await Promise.all([
-      this.fetchSource({ source: 'dexScreener', chain: normalizedChain, tokenAddress: address }),
-      this.fetchSource({ source: 'goPlus', chain: normalizedChain, tokenAddress: address })
-    ]);
-    const result = aggregateSecondarySources({
-      chain: normalizedChain,
-      tokenAddress: address,
-      primary,
-      sources: {
-        dexScreener: { value: dexResult, collectedAt: this.now() },
-        goPlus: { value: goPlusResult, collectedAt: this.now() }
-      }
-    });
-    return { ...result, conflicts: buildConflicts(primary, result.market, result.security, this.conflictThresholds) };
-  }
-
-  async fetchSource({ source, chain, tokenAddress, signal } = {}) {
-    const configuration = sourceConfiguration(source, chain, tokenAddress);
-    if (!configuration.supported) {
-      return source === 'dexScreener'
-        ? { source: sourceState('UNSUPPORTED'), market: emptyMarket() }
-        : { source: sourceState('UNSUPPORTED'), security: unknownSecurity('UNSUPPORTED') };
-    }
-    if (!configuration.valid) {
-      return source === 'dexScreener'
-        ? { source: sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' }), market: emptyMarket() }
-        : { source: sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' }), security: unknownSecurity() };
-    }
-    const context = { tokenAddress: configuration.address, dexChainId: configuration.dexChainId };
-    return source === 'dexScreener'
-      ? this.fetchDex(configuration.url, context, { signal })
-      : this.fetchGoPlus(configuration.url, context, { signal });
-  }
-
-  async fetchDex(url, context, { signal } = {}) {
-    try {
-      const payload = await requestJson(this.fetchImpl, url, { ...this, signal });
-      const parsed = parseDexScreener(payload, context);
-      return { source: sourceState(parsed.found ? 'OK' : 'NO_DATA'), market: parsed.market };
-    } catch (error) {
-      return { source: sourceState('ERROR', { errorCode: errorCode(error) }), market: emptyMarket() };
-    }
-  }
-
-  async fetchGoPlus(url, context, { signal } = {}) {
+    if (!chainId) return { source: sourceState('UNSUPPORTED'), security: unknownSecurity('UNSUPPORTED') };
+    if (!validAddress(address)) return { source: sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' }), security: unknownSecurity() };
+    const url = `https://api.gopluslabs.io/api/v1/token_security/${chainId}?contract_addresses=${encodeURIComponent(address)}`;
     try {
       const headers = this.goPlusAuth ? { Authorization: await this.goPlusAuth.accessToken({ signal }) } : {};
       const payload = await requestJson(this.fetchImpl, url, { ...this, signal, headers });
-      const parsed = parseGoPlus(payload, context);
+      const parsed = parseGoPlus(payload, { tokenAddress: address });
       return { source: sourceState(parsed.found ? 'OK' : 'NO_DATA'), security: parsed.security };
     } catch (error) {
 
       // A refused request may mean the token was revoked early; the next check signs in again.
       if (error?.code === 'UPSTREAM_REJECTED') this.goPlusAuth?.forget();
-      return {
-        source: sourceState('ERROR', { errorCode: errorCode(error) }),
-        security: unknownSecurity()
-      };
+      return { source: sourceState('ERROR', { errorCode: errorCode(error) }), security: unknownSecurity() };
     }
   }
-}
-
-export async function validateSecondary(input, options = {}) {
-  return new SecondaryValidator(options).validate(input);
 }
 
 export const secondaryChainSupport = Object.freeze({
   dexScreener: Object.freeze({ ...DEX_CHAIN_IDS }),
   goPlus: Object.freeze({ ...GOPLUS_EVM_CHAIN_IDS })
 });
+
+/** The token's chart on dexscreener.com, which opens its busiest pool, or '' when DexScreener has no id for the chain. */
+export function dexScreenerTokenUrl(chain, address) {
+  const chainId = DEX_CHAIN_IDS[chain], token = normalizedAddress(address);
+  return chainId && validAddress(token) ? `https://dexscreener.com/${chainId}/${token}` : '';
+}

@@ -83,7 +83,7 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   `/events` have no aliases: like any unknown command they open Help.
 - Every passing hot-list token becomes a lead and alerts at once, up to ten per
   message, each with its market cap, liquidity, age and 5-minute change. GoPlus
-  and DexScreener then check it; a fatal finding vetoes the lead, blocks buying it
+  then checks it; a fatal finding vetoes the lead, blocks buying it
   (selling still works) and sends a risk alert naming the recorded GoPlus findings
   to anyone it alerted. Until the check completes without fatal flags, a buy
   first asks Yes/No; the trading engine refuses an unverified buy that lacks this
@@ -101,8 +101,8 @@ AVE密钥只读；交易钱包不受 /disconnect 影响；非投资建议。
   token detail offers the other chains when AVE has no such token there. A token
   already known as a lead or hot-list row opens at once and spends nothing (a
   watched token is looked up; Retry and the chain buttons always look up). Otherwise one AVE details read (5 credits, paced by admission like the
-  scan's), then DexScreener, then GoPlus run as `lookup` scheduler steps,
-  re-rendering the token detail after each; DexScreener and GoPlus see the address
+  scan's), then GoPlus run as `lookup` scheduler steps, re-rendering the token
+  detail after each; GoPlus sees the address
   only after AVE confirms it is a token. A lookup is not a lead: it never enters
   leads, alerts, Performance or `/export`. Lookups run one at a time, at most 5 may
   wait, and records expire after 24 hours, except a vetoed one, which stays until

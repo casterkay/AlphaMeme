@@ -1,7 +1,6 @@
 import { tokenInfoPrice } from './providers/ave.mjs';
 import { aggregateSecondarySources } from './providers/secondary.mjs';
 import { discoveryScreen } from './scoring/index.mjs';
-import { blockingConflicts } from './scoring/safety.mjs';
 import { dueOutcomeJobs, hasAveOutcomeBaseline, horizons } from './scoring/outcomes.mjs';
 import { addressKey, buildQueue, nextAuditDelay, publicToken, selectAuditQueue, socialFrom } from './scanner-parity.mjs';
 import { RecoverableScannerError } from './storage/recoverable-scanner.mjs';
@@ -13,8 +12,7 @@ import { nextWatchState, promotions, watchTargets } from './onchain-watch.mjs';
 // On a chain with pinned pool factories it also reads the new pools its logs
 // created, watches them on DexScreener, and reads AVE's market row for up to
 // two that trade enough, so they are screened alongside the hot list.
-// Leads then get the free GoPlus and DexScreener checks; a fatal security
-// finding vetoes the lead. No AVE token audit runs: AVE has no holder, trader
+// Leads then get the free GoPlus check; a fatal security finding vetoes the lead. No AVE token audit runs: AVE has no holder, trader
 // or contract-security data, so an AVE audit could never pass (upstream v0.1.10).
 // The discovery requests for a cycle; the AVE market reads follow from what the watch found.
 // A cycle reads new pools only when it began with the on-chain source configured.
@@ -22,7 +20,6 @@ function discoveryEndpoints(chain, partial) {
   if (!POOL_SOURCES[chain] || partial.onchainOffReason !== null) return ['trending'];
   return ['trending', 'newPools', 'watch', ...(partial.discovery?.promoted || []).map((_, index) => `market:${index}`)];
 }
-const SECONDARY_SOURCES = Object.freeze(['dexScreener', 'goPlus']);
 const OUTCOME_SAMPLE_GRACE_MS = 25_000;
 // Upstream samples an outcome horizon from a later hot-list quote within this lag.
 const TRENDING_SAMPLE_GRACE_MS = 5 * 60_000;
@@ -79,7 +76,7 @@ function retainedOutcomes(outcomes, now, retentionMs) {
 
 function isCheckDeadlineBoundary(checkpoint, now) {
   return checkpoint.deadlineAt !== null && now >= checkpoint.deadlineAt
-    && checkpoint.phase === 'SECONDARY' && checkpoint.endpointIndex === 0 && checkpoint.tokenIndex > 0;
+    && checkpoint.phase === 'SECONDARY' && checkpoint.tokenIndex > 0;
 }
 
 function responseRecord(value, error, collectedAt) {
@@ -272,8 +269,7 @@ export class RecoverableScanner {
     }
     if (checkpoint.phase === 'SECONDARY') {
       const item = checkpoint.partial.queue?.selected?.[checkpoint.tokenIndex];
-      const source = SECONDARY_SOURCES[checkpoint.endpointIndex];
-      return item && source ? Object.freeze({ kind: 'SECONDARY', source, address: item.row.address, chain: checkpoint.chain, checkpoint }) : null;
+      return item ? Object.freeze({ kind: 'SECONDARY', address: item.row.address, chain: checkpoint.chain, checkpoint }) : null;
     }
     if (checkpoint.phase === 'OUTCOMES_SAMPLE') {
       const now = this.now();
@@ -316,17 +312,11 @@ export class RecoverableScanner {
         endpointIndex = 0;
       }
     } else if (current.phase === 'SECONDARY') {
-      const source = SECONDARY_SOURCES[endpointIndex];
-      if (!source) throw phaseError('secondary source cursor is exhausted');
+      // One GoPlus read per token, whatever source cursor an older checkpoint holds.
       if (!partial.queue?.selected?.[current.tokenIndex]) throw phaseError('secondary token cursor is exhausted');
-      partial.secondary ||= { sources: {} };
-      partial.secondary.sources[source] = record;
-      partial.secondary.lastCollectedAt = collectedAt;
-      endpointIndex += 1;
-      if (endpointIndex === SECONDARY_SOURCES.length) {
-        nextPhase = 'CLASSIFY_AND_COMMIT';
-        endpointIndex = 0;
-      }
+      partial.secondary = { sources: { goPlus: record }, lastCollectedAt: collectedAt };
+      nextPhase = 'CLASSIFY_AND_COMMIT';
+      endpointIndex = 0;
     } else {
       throw phaseError('current checkpoint phase does not accept a request response');
     }
@@ -501,18 +491,12 @@ export class RecoverableScanner {
     const settings = current.partial.settings || this.settings;
     const stored = this.store.readCandidate(current.chain, item.row.address);
     const token = stored || leadCandidate(item.row, item.screen, current.chain, null, now, settings);
-    const secondary = aggregateSecondarySources({
-      chain: current.chain,
-      tokenAddress: token.address,
-      primary: { market: { priceUsd: token.price, marketCap: token.marketCap, liquidityUsd: token.liquidity, website: token.info?.website || '' }, security: {} },
-      sources: current.partial.secondary?.sources || {}
-    });
+    const secondary = aggregateSecondarySources({ chain: current.chain, tokenAddress: token.address, sources: current.partial.secondary?.sources || {} });
     const supported = Object.values(secondary.sources).some(source => source?.status !== 'UNSUPPORTED');
     const vetoed = secondary.security?.verdict === 'FATAL';
     const secondaryReason = vetoed ? '第二安全源触发一票否决'
       : !supported ? '当前链暂无第二数据源，安全性未核验'
-        : secondary.status !== 'COMPLETE' || secondary.security?.verdict === 'UNKNOWN' ? '第二数据源不完整，安全性未完全核验'
-          : blockingConflicts(secondary).length ? '多源数据冲突，请人工复核' : '';
+        : secondary.status !== 'COMPLETE' || secondary.security?.verdict === 'UNKNOWN' ? '第二数据源不完整，安全性未完全核验' : '';
     const wasLead = stored?.status === 'LIVE_READY';
     const candidate = vetoed
       ? { ...token, status: 'HARD_REJECT', auditedAt: now, staleAt: now + settings.staleCandidateMs,

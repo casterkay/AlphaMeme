@@ -2,11 +2,11 @@
 // scheduler_state under `lookup:<chain>:<address>` and never enters candidates,
 // notifications, outcomes, the audit queue or the export.
 //
-// DETAILS (AVE, 5 CU through admission) → DEXSCREENER → GOPLUS → DONE, or
+// DETAILS (AVE, 5 CU through admission) → GOPLUS → DONE, or
 // NOT_FOUND / FAILED. Each step makes one request and commits its outcome in one
-// transaction; every step is a read, so a replayed step is harmless. The
-// secondary sources only see an address AVE has confirmed as a token on that
-// chain: NOT_FOUND and FAILED end the lookup first.
+// transaction; every step is a read, so a replayed step is harmless. GoPlus only
+// sees an address AVE has confirmed as a token on that chain: NOT_FOUND and FAILED
+// end the lookup first.
 //
 // A fatal GoPlus finding is a safety fact, not disposable state: the record keeps
 // it as `veto` across reruns, and pruning never drops a vetoed record. Only a later
@@ -18,8 +18,8 @@ import { AVE_CU } from './providers/ave.mjs';
 import { aggregateSecondarySources, SecondaryValidator } from './providers/secondary.mjs';
 import { safetyVerdict } from './scoring/safety.mjs';
 
-export const LOOKUP_STATES = Object.freeze(['DETAILS', 'DEXSCREENER', 'GOPLUS', 'DONE', 'NOT_FOUND', 'FAILED']);
-export const RUNNING_STATES = Object.freeze(new Set(['DETAILS', 'DEXSCREENER', 'GOPLUS']));
+export const LOOKUP_STATES = Object.freeze(['DETAILS', 'GOPLUS', 'DONE', 'NOT_FOUND', 'FAILED']);
+export const RUNNING_STATES = Object.freeze(new Set(['DETAILS', 'GOPLUS']));
 // Lookups run one at a time and each AVE read waits at least AVE_MINIMUM_GAP_MS (15 s)
 // for admission, ahead of the scan: five waiting lookups already hold the scan back
 // for over a minute and the last answer arrives that late, so more are refused.
@@ -29,7 +29,9 @@ export const RUNNING_STATES = Object.freeze(new Set(['DETAILS', 'DEXSCREENER', '
 // more than vetoesWarned is logged, never refused.
 export const LOOKUP_SETTINGS = Object.freeze({ reuseMs: 60_000, expiryMs: 24 * 60 * 60_000, kept: 20, pending: 5, verifiedMs: 15 * 60_000, vetoesWarned: 100 });
 const PREFIX = 'lookup:';
-const SECONDARY_STEPS = Object.freeze({ DEXSCREENER: ['dexScreener', 'GOPLUS'], GOPLUS: ['goPlus', 'DONE'] });
+// A run saved at the retired DexScreener step resumes at its GoPlus step: a record
+// that never reads would hold its token unbuyable and unprunable for good.
+const RETIRED_STATES = Object.freeze({ DEXSCREENER: 'GOPLUS' });
 // AVE answers that end a lookup: the key or the request is refused, or the answer is unusable.
 const AVE_REFUSALS = new Set(['AVE_AUTH', 'AVE_SCHEMA', 'AVE_SIZE', 'AVE_INPUT', 'AVE_CONFIG']);
 // Admission already holds the next request back until AVE has capacity again; waiting is not a failure.
@@ -78,6 +80,7 @@ function parse(row) {
     if (!(error instanceof SyntaxError)) throw error;
     throw corrupt('not JSON');
   }
+  if (Object.hasOwn(RETIRED_STATES, value?.state)) value.state = RETIRED_STATES[value.state];
   validateLookup(value);
   if (`${PREFIX}${value.chain}:${value.address}` !== row.key) throw corrupt('key and token differ');
   return value;
@@ -87,7 +90,7 @@ function parse(row) {
 // it does not need. A row that is not JSON is left to the full listing, which logs it.
 const field = path => `CASE WHEN json_valid(value_json) THEN json_extract(value_json,'${path}') END`;
 const SELECTIONS = Object.freeze({
-  all: '', running: ` AND ${field('$.state')} IN (${[...RUNNING_STATES].map(state => `'${state}'`).join(',')})`,
+  all: '', running: ` AND ${field('$.state')} IN (${[...RUNNING_STATES, ...Object.keys(RETIRED_STATES)].map(state => `'${state}'`).join(',')})`,
   unvetoed: ` AND ${field('$.veto')} IS NULL`, vetoed: ` AND ${field('$.veto')} IS NOT NULL`
 });
 
@@ -144,7 +147,7 @@ function marketFacts({ token, capturedAt }) {
     symbol: token.symbol, name: token.name, price: token.current_price_usd, marketCap: token.market_cap,
     liquidity: token.main_pair_tvl ?? token.tvl, holders: token.holders, createdAt: token.launch_at ?? token.created_at,
     priceChange5m: token.token_price_change_5m === null ? null : token.token_price_change_5m / 100,
-    volume5m: token.token_tx_volume_usd_5m, capturedAt
+    volume5m: token.token_tx_volume_usd_5m, website: token.website, capturedAt
   };
 }
 
@@ -210,22 +213,18 @@ export class TokenLookups {
         if (AVE_REFUSALS.has(error?.code) || error instanceof ConnectionError) return this.#commit(record, { state: 'FAILED', reason: error.code });
         throw error;
       }
-      return this.#commit(record, { state: 'DEXSCREENER', market: marketFacts(answer) });
+      return this.#commit(record, { state: 'GOPLUS', market: marketFacts(answer) });
     }
-    const [source, following] = SECONDARY_STEPS[record.state];
     let response;
     try {
-      response = { value: await request(({ signal }) => secondary.fetchSource({ source, chain: record.chain, tokenAddress: record.address, signal })), collectedAt: this.now() };
+      response = { value: await request(({ signal }) => secondary.fetchSource({ chain: record.chain, tokenAddress: record.address, signal })), collectedAt: this.now() };
     } catch (error) {
       // A source that does not answer in time is recorded as an error, as the scanner records it.
       if (error?.code !== 'SCHEDULER_REQUEST_TIMEOUT') throw error;
       response = { error: { code: 'TIMEOUT' }, collectedAt: this.now() };
     }
-    const sources = { ...record.sources, [source]: response };
-    if (following !== 'DONE') return this.#commit(record, { state: following, sources });
-    const { market } = record;
-    const checked = aggregateSecondarySources({ chain: record.chain, tokenAddress: record.address,
-      primary: { market: { priceUsd: market.price, marketCap: market.marketCap, liquidityUsd: market.liquidity }, security: {} }, sources });
+    const sources = { ...record.sources, goPlus: response };
+    const checked = aggregateSecondarySources({ chain: record.chain, tokenAddress: record.address, sources });
     return this.#commit(record, { state: 'DONE', sources, secondary: checked, veto: nextVeto(record.veto, checked) });
   }
 

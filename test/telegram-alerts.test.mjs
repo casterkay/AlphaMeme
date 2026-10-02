@@ -7,7 +7,7 @@ import { projectTelegramCandidate, projectTelegramFeedRow } from '../src/bot/sna
 const now = 1_800_000_000_000;
 const lead = (symbol, overrides = {}) => ({ chain: 'arc', address: `0x${symbol.toLowerCase().replace(/[^0-9a-z]/g, '').padStart(40, '0')}`, symbol, marketCap: null, liquidity: null, createdAt: null, fatal: [], ...overrides });
 const buttons = keyboard => keyboard.flat().map(({ text, action, params, token }) => ({ text, action, params, ...(token ? { token } : {}) }));
-const clean = { status: 'COMPLETE', security: { verdict: 'NO_FATAL_FLAGS', fatal: [] }, conflicts: [] };
+const clean = { status: 'COMPLETE', security: { verdict: 'NO_FATAL_FLAGS', fatal: [] } };
 
 // A token's alert as the 'alert' panel renders it from a snapshot; `feed` is its hot-list row.
 function alert(recorded, { locale = 'en', feed = null } = {}) {
@@ -52,7 +52,7 @@ test('a new-lead alert leaves out each missing fact instead of printing a placeh
 test('an edited alert shows each finished check with the shared badge, and a veto says buying is blocked', () => {
   for (const [secondary, extra, expected, closing] of [
     [clean, {}, '✅ No failures found', 'Checks are not a safety guarantee.'],
-    [{ ...clean, conflicts: [{ type: 'MARKET_MISMATCH', field: 'marketCap' }] }, {}, '⚠️ Needs review', 'Checks are not a safety guarantee.'],
+    [{ ...clean, status: 'DEGRADED' }, {}, '⚠️ Needs review', 'Checks are not a safety guarantee.'],
     [clean, { status: 'X_REVIEW', deep: { failed: [], blockingUnknownFields: ['lpBurned'] } }, '⚠️ Needs review', 'Checks are not a safety guarantee.'],
     [{ ...clean, security: { verdict: 'FATAL', fatal: [{ field: 'isHoneypot' }] } }, { status: 'HARD_REJECT' }, '⛔ Vetoed: Honeypot', 'Buying is blocked; selling still works.']
   ]) {
