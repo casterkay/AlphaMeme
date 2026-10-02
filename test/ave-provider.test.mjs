@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AVE_CU, AveClient, AveError, normalizeAveApiKey, verifyAveApiKey } from '../src/providers/ave.mjs';
+import { scannerSettings } from '../src/scanner-settings.mjs';
+import { discoveryScreen } from '../src/scoring/index.mjs';
 
 const NOW = 1_800_000_000_000;
 const MINUTE = 60_000;
@@ -80,6 +82,30 @@ test('trending parses rows into fresh AVE market rows with their quote clocks', 
 test('trending drops a single malformed row and keeps the valid ones', async () => {
   const other = `0x${'b'.repeat(40)}`;
   const { ave } = client(() => envelope([tokenRow(BSC_TOKEN), tokenRow(other, 'bsc', { current_price_usd: 0 })]));
+  const { rows } = await ave.trending('bsc');
+  assert.deepEqual(rows.map(row => row.address), [BSC_TOKEN]);
+});
+
+test('trending reads AVE percent taxes as rates so the screen drops only high-tax tokens before any alert', async () => {
+  const cases = [
+    { buy_tax: '1.0', sell_tax: '1.0', rates: [0.01, 0.01], rejected: false },
+    { buy_tax: '3.0', sell_tax: '5.0', rates: [0.03, 0.05], rejected: false },
+    { buy_tax: '0.0', sell_tax: '100.0', rates: [0, 1], rejected: true },
+    { buy_tax: '0', sell_tax: '5.5', rates: [0, 0.055], rejected: true },
+    { buy_tax: '0.5', sell_tax: '3.0', rates: [0.005, 0.03], rejected: true },
+    { buy_tax: '', rates: [null, null], rejected: false }
+  ].map((fields, index) => ({ ...fields, address: `0x${String(index + 1).repeat(40)}` }));
+  const { ave } = client(() => envelope(cases.map(({ address, rates, rejected, ...fields }) => tokenRow(address, 'bsc', fields))));
+  const { rows } = await ave.trending('bsc');
+  for (const [index, { rates, rejected }] of cases.entries()) {
+    assert.deepEqual([rows[index].buy_tax, rows[index].sell_tax], rates);
+    assert.equal(discoveryScreen(rows[index], scannerSettings, NOW / 1000).reasons.includes('交易税超过风险门槛'), rejected);
+  }
+});
+
+test('trending drops a row whose tax is not a percentage', async () => {
+  const other = `0x${'b'.repeat(40)}`;
+  const { ave } = client(() => envelope([tokenRow(BSC_TOKEN), tokenRow(other, 'bsc', { sell_tax: '150' })]));
   const { rows } = await ave.trending('bsc');
   assert.deepEqual(rows.map(row => row.address), [BSC_TOKEN]);
 });

@@ -1,4 +1,5 @@
 import { chartRiskScreen } from './chart-risk.mjs';
+import { taxBreaches } from './tax.mjs';
 import { validTokenAddress } from '../address.mjs';
 
 const NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
@@ -192,8 +193,7 @@ export function knownRiskReasons(row, config) {
   const buy = optionalRate(row.buy_tax), sell = optionalRate(row.sell_tax);
   const dev = optionalRate(first(row.dev_team_hold_rate, row.creator_balance_rate, row.creator_hold_rate));
   if (lp !== null && lp < config.strictLiquidity) reasons.push('流动性低于深审门槛');
-  if ((buy !== null && buy > config.maxBuyTax) || (sell !== null && sell > config.maxSellTax)
-    || (buy !== null && sell !== null && Math.abs(buy - sell) > config.maxTaxAsymmetry)) reasons.push('交易税超过风险门槛');
+  if (taxBreaches(buy, sell, config).length) reasons.push('交易税超过风险门槛');
   if (dev !== null && dev > .01) reasons.push('DEV持仓超过1%');
   // Never reinterpret the live feed's generic 1m counters as 5m activity.
   if (optionalNumber(row.volume_5m) === 0) reasons.push('近5分钟无成交，暂不进入候选');
