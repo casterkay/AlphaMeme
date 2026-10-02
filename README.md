@@ -91,6 +91,8 @@ npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 npx wrangler secret put MASTER_ENC_KEY        # long random string; see docs/development/ONBOARDING-CRYPTO.md
 npx wrangler secret put OPERATOR_TOKEN
 npx wrangler secret put TELEGRAM_BOT_USERNAME # without @
+npx wrangler secret put GOPLUS_APP_KEY       # optional, with GOPLUS_APP_SECRET: GoPlus quota of our own
+npx wrangler secret put GOPLUS_APP_SECRET
 npx wrangler deploy
 TELEGRAM_BOT_TOKEN=... node scripts/telegram-register.mjs
 ```

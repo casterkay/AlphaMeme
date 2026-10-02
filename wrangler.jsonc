@@ -56,6 +56,7 @@
     }
   ]
   // Secrets are set out of band with `wrangler secret put`, never in this file:
-  // OPERATOR_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, MASTER_ENC_KEY.
+  // OPERATOR_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, MASTER_ENC_KEY,
+  // and optionally GOPLUS_APP_KEY with GOPLUS_APP_SECRET.
   // Each user's AVE API key is entered in Telegram with /setkey and stored encrypted.
 }
