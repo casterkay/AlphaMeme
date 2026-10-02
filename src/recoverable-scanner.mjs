@@ -19,7 +19,7 @@ import { nextWatchState, promotions, watchTargets } from './onchain-watch.mjs';
 // The discovery requests for a cycle; the AVE market reads follow from what the watch found.
 // A cycle reads new pools only when it began with the on-chain source configured.
 function discoveryEndpoints(chain, partial) {
-  if (!POOL_SOURCES[chain] || partial.onchainDiscovery !== true) return ['trending'];
+  if (!POOL_SOURCES[chain] || partial.onchainOffReason !== null) return ['trending'];
   return ['trending', 'newPools', 'watch', ...(partial.discovery?.promoted || []).map((_, index) => `market:${index}`)];
 }
 const SECONDARY_SOURCES = Object.freeze(['dexScreener', 'goPlus']);
@@ -230,10 +230,11 @@ export class RecoverableScanner {
     this.now = now;
   }
 
-  begin({ cycleId, chain, keyEpoch, controlEpoch, deadlineAt, partial = {}, onchainDiscovery = false, afterBegin }) {
+  // `onchainOffReason` is null when the on-chain source is configured, else the code source health shows.
+  begin({ cycleId, chain, keyEpoch, controlEpoch, deadlineAt, partial = {}, onchainOffReason = 'ONCHAIN_NOT_CONFIGURED', afterBegin }) {
     const startedAt = this.now();
     return this.store.begin({ cycleId, chain, keyEpoch, controlEpoch, deadlineAt, phase: 'DISCOVER', tokenIndex: 0, endpointIndex: 0,
-      partial: { ...clone(partial), rootCycleId: partial.rootCycleId || cycleId, startedAt, settings: clone(this.settings), onchainDiscovery }, updatedAt: startedAt, afterBegin });
+      partial: { ...clone(partial), rootCycleId: partial.rootCycleId || cycleId, startedAt, settings: clone(this.settings), onchainOffReason }, updatedAt: startedAt, afterBegin });
   }
 
   checkpoint(cycleId) {
@@ -302,9 +303,12 @@ export class RecoverableScanner {
       partial.discovery.responses[endpoint] = record;
       partial.discovery.lastCollectedAt = collectedAt;
       if (endpoint === 'watch') {
-        const hotList = new Set(discoveryRows(partial.discovery).map(row => addressKey(row.address)));
-        partial.discovery.promoted = promotions(this.store.readWatchState(current.chain), record.value?.markets || [],
-          { now: collectedAt, settings: partial.settings || this.settings, hotList });
+        const markets = record.value?.markets || [];
+        // The hot list screens its own tokens; a vetoed token never becomes a lead again.
+        const excluded = new Set([...discoveryRows(partial.discovery).map(row => addressKey(row.address)),
+          ...markets.map(market => market.address).filter(address => this.store.readCandidate(current.chain, address)?.status === 'HARD_REJECT')]);
+        partial.discovery.promoted = promotions(this.store.readWatchState(current.chain), markets,
+          { now: collectedAt, settings: partial.settings || this.settings, excluded });
       }
       endpointIndex += 1;
       if (endpointIndex === discoveryEndpoints(current.chain, partial).length) {
@@ -457,14 +461,18 @@ export class RecoverableScanner {
     const sourceHealth = { discovery: { provider: 'AVE', complete: !discoveryError, checkedAt: now,
       trending: discoveryError ? { ok: false, code: discoveryError.code } : { ok: true, count: trending.length } } };
     let watchState = null;
-    if (POOL_SOURCES[chain] && partial.onchainDiscovery !== true) sourceHealth.discovery.newPools = { ok: false, code: 'ONCHAIN_NOT_CONFIGURED' };
+    if (POOL_SOURCES[chain] && partial.onchainOffReason !== null) sourceHealth.discovery.newPools = { ok: false, code: partial.onchainOffReason };
     else if (POOL_SOURCES[chain]) {
-      const { newPools, watch } = partial.discovery?.responses || {};
+      const { newPools, watch, ...responses } = partial.discovery?.responses || {};
+      const promoted = partial.discovery?.promoted || [];
+      const reads = promoted.map((address, index) => ({ address, record: responses[`market:${index}`] }));
+      const passed = new Set(screened.filter(({ row, screen }) => row.discoverySource === 'newPool' && screen.pass).map(({ row }) => addressKey(row.address)));
       watchState = nextWatchState(this.store.readWatchState(chain), { newPools: newPools?.value ?? null, checked: watch?.value?.addresses || [],
-        markets: watch?.value?.markets || [], promoted: partial.discovery?.promoted || [], now });
+        markets: watch?.value?.markets || [], promoted, rejected: promoted.filter(address => !passed.has(addressKey(address))), now });
       const endpoint = (response, count) => response?.error ? { ok: false, code: response.error.code } : { ok: true, count };
+      const failedRead = reads.find(read => read.record?.error);
       Object.assign(sourceHealth.discovery, { newPools: endpoint(newPools, newPools?.value?.pools?.length ?? 0),
-        watch: endpoint(watch, watchState.pools.length), promoted: { ok: true, count: (partial.discovery?.promoted || []).length } });
+        watch: endpoint(watch, watchState.pools.length), promoted: endpoint(failedRead?.record, promoted.length) });
     }
     partial.leads = leads.map(({ row, screen }) => ({ row, screen }));
     partial.prequalifiedCount = leads.length;

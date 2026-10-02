@@ -6,7 +6,7 @@ export default defineConfig({
     cloudflareTest({
       wrangler: { configPath: './wrangler.jsonc' },
       miniflare: {
-        bindings: { MASTER_ENC_KEY: 'workers-runtime-test-master-key', ALCHEMY_API_KEY: 'workers-runtime-test-alchemy-key' }
+        bindings: { MASTER_ENC_KEY: 'workers-runtime-test-master-key', ARC_RPC_URL: 'https://arc-rpc.test', KYBER_CLIENT_ID: 'radar-test' }
       }
     })
   ],

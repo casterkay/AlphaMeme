@@ -10,8 +10,10 @@ const WATCH_MS = 6 * 60 * 60_000;
 const UNLISTED_MS = 10 * 60_000;
 // Most new pools never trade; one with no trade for this long is dropped.
 const IDLE_MS = 15 * 60_000;
-// A promoted token is read from AVE again only after this long.
+// A promoted token is read from AVE again only after this long, which keeps an off-list lead current.
 const REPROMOTE_MS = 5 * 60_000;
+// One whose read failed or that failed the screen waits longer: most never pass later.
+const REJECTED_MS = 30 * 60_000;
 
 export const emptyWatchState = () => ({ cursor: null, pools: [] });
 
@@ -32,13 +34,14 @@ const traded = market => (market.buys5m ?? 0) + (market.sells5m ?? 0) > 0 || mar
 
 /**
  * Tokens worth an AVE market read: listed on DexScreener with market cap, volume, liquidity, buys and pool age
- * inside the thresholds, not on this cycle's hot list, and not read within REPROMOTE_MS. At most two, busiest first.
+ * inside the thresholds, not excluded (on this cycle's hot list, or vetoed), not read within REPROMOTE_MS and
+ * not rejected within REJECTED_MS. At most two, busiest first.
  */
-export function promotions(state, markets, { now, settings, hotList }) {
+export function promotions(state, markets, { now, settings, excluded }) {
   const pools = new Map(state.pools.map(pool => [pool.token, pool]));
   return markets.filter(market => {
     const pool = pools.get(market.address);
-    return !hotList.has(market.address) && !(pool?.promotedAt > now - REPROMOTE_MS)
+    return !excluded.has(market.address) && !(pool?.promotedAt > now - REPROMOTE_MS) && !(pool?.rejectedAt > now - REJECTED_MS)
       && market.marketCap >= settings.discoveryMinMarketCap && market.marketCap <= settings.discoveryMaxMarketCap
       && market.volume5m >= settings.onchainMinVolume5m && market.liquidity >= settings.minLiquidity && (market.buys5m ?? 0) >= settings.onchainMinBuys5m
       // AVE's screen rejects a token younger than minAgeSec, so reading one earlier would only spend credits.
@@ -46,14 +49,17 @@ export function promotions(state, markets, { now, settings, hotList }) {
   }).sort((a, b) => b.volume5m - a.volume5m).slice(0, MAX_PROMOTIONS_PER_CYCLE).map(market => market.address);
 }
 
-/** The watchlist after one cycle: new pools added, checked ones updated, promoted ones stamped, and expired ones dropped. */
-export function nextWatchState(state, { newPools = null, checked = [], markets = [], promoted = [], now }) {
+/**
+ * The watchlist after one cycle: new pools added, checked ones updated, promoted ones stamped (and
+ * `rejected` ones, whose read failed or that failed the screen, stamped again), and expired ones dropped.
+ */
+export function nextWatchState(state, { newPools = null, checked = [], markets = [], promoted = [], rejected = [], now }) {
   const found = new Map(markets.map(market => [market.address, market]));
   const pools = mergePools(state.pools, newPools?.pools ?? [], now).map(pool => {
     if (!checked.includes(pool.token)) return pool;
     const market = found.get(pool.token);
     return { ...pool, checkedAt: now, ...(market ? { listedAt: now } : {}), ...(market && traded(market) ? { tradedAt: now } : {}),
-      ...(promoted.includes(pool.token) ? { promotedAt: now } : {}) };
+      ...(promoted.includes(pool.token) ? { promotedAt: now } : {}), ...(rejected.includes(pool.token) ? { rejectedAt: now } : {}) };
   }).filter(pool => now - pool.firstSeenAt <= WATCH_MS && now - (pool.listedAt ?? pool.firstSeenAt) <= UNLISTED_MS
     && now - (pool.tradedAt ?? pool.firstSeenAt) <= IDLE_MS)
     .sort((a, b) => b.firstSeenAt - a.firstSeenAt).slice(0, MAX_WATCHED);

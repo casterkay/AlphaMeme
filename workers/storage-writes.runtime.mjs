@@ -66,7 +66,7 @@ describe('Durable Object storage writes', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
       const target = String(url);
       // On-chain discovery: the head moves each cycle and one new pool appears, which the watch then checks.
-      if (target.startsWith('https://arc-mainnet.g.alchemy.com/v2/')) {
+      if (target === 'https://arc-rpc.test') {
         const { method } = JSON.parse(init.body);
         if (method === 'eth_blockNumber') return jsonResponse({ jsonrpc: '2.0', id: 1, result: `0x${(head += 30).toString(16)}` });
         return jsonResponse({ jsonrpc: '2.0', id: 1, result: [{ address: '0xf0db7b58379503491d857db50ac9ece64c653918', blockNumber: `0x${head.toString(16)}`,

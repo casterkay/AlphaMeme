@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { RecoverableScanner } from '../src/recoverable-scanner.mjs';
 import { executeRecoverableScanStep, recoverableRequestCost } from '../src/recoverable-scan-executor.mjs';
 import { AveClient } from '../src/providers/ave.mjs';
+import { ChainLogsError } from '../src/providers/chain-logs.mjs';
 import { SecondaryValidator } from '../src/providers/secondary.mjs';
 import { scannerSettings } from '../src/scanner-settings.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
@@ -115,7 +116,7 @@ function radar({ chain = 'bsc', settings: overrides = {}, onchain = false } = {}
   });
   fixture.begin = (cycleId, deadlineAt = clock.now + settings.auditCycleBudgetMs) => {
     const control = fixture.control();
-    return scanner.begin({ cycleId, chain, keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch, deadlineAt, onchainDiscovery: onchain });
+    return scanner.begin({ cycleId, chain, keyEpoch: control.keyEpoch, controlEpoch: control.controlEpoch, deadlineAt, onchainOffReason: onchain ? null : 'ONCHAIN_NOT_CONFIGURED' });
   };
   fixture.runCycle = async (cycleId, { onFinalized } = {}) => {
     fixture.begin(cycleId);
@@ -340,6 +341,59 @@ test('the log cursor advances only when the screen commits, so an interrupted cy
   await radarFixture.step('cycle-replay');
   assert.equal(radarFixture.store.read('cycle-replay').phase, 'BUILD_QUEUE');
   assert.equal(radarFixture.state('discovery.pools:arc').cursor, 1_000);
+});
+
+test('a promoted token whose AVE read fails or that fails the screen is not read again for thirty minutes', async () => {
+  for (const [scenario, row] of [['fails the screen', A => ({ ...A, market_cap: 5_000_000 })], ['read fails', () => undefined]]) {
+    const radarFixture = radar({ chain: 'arc', onchain: true });
+    radarFixture.chainLogs = { newPools: newPool(A) };
+    radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [busyMarket(A)] : [] });
+    const answer = row(radarFixture.quote(A));
+    if (answer) radarFixture.marketRows.set(A, answer);
+    const tag = scenario.replaceAll(' ', '-');
+    for (const [cycle, at, reads] of [[1, NOW, 1], [2, NOW + 6 * MINUTE, 1], [3, NOW + 31 * MINUTE, 2]]) {
+      radarFixture.clock.now = at;
+      await radarFixture.runCycle(`cycle-rejected-${tag}-${cycle}`);
+      assert.equal(radarFixture.marketRequests.length, reads, `${scenario}, cycle ${cycle}`);
+    }
+    assert.equal(radarFixture.candidate(A)?.status === 'LIVE_READY', false, scenario);
+    if (!answer) assert.equal(radarFixture.state('runtime.sourceHealth').discovery.promoted.ok, false, 'a failed read shows in source health');
+  }
+});
+
+test('a token vetoed as a lead is never promoted from the watch again', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  radarFixture.verdicts.set(A, 'FATAL');
+  radarFixture.hotList = [radarFixture.quote(A)];
+  radarFixture.chainLogs = { newPools: newPool(A) };
+  radarFixture.dexMarkets = async () => ({ capturedAt: radarFixture.clock.now, markets: [] });
+  await radarFixture.runCycle('cycle-vetoed-1');
+  assert.equal(radarFixture.candidate(A).status, 'HARD_REJECT');
+
+  radarFixture.hotList = [];
+  radarFixture.clock.now = NOW + MINUTE;
+  radarFixture.dexMarkets = async () => ({ capturedAt: radarFixture.clock.now, markets: [busyMarket(A)] });
+  await radarFixture.runCycle('cycle-vetoed-2');
+  assert.deepEqual(radarFixture.marketRequests, []);
+});
+
+test('a failed new-pool read still screens the hot list, keeps the cursor and shows in source health', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  radarFixture.chainLogs = { newPools: newPool(A) };
+  radarFixture.dexMarkets = async () => ({ capturedAt: radarFixture.clock.now, markets: [] });
+  await radarFixture.runCycle('cycle-log-failure-1');
+  assert.equal(radarFixture.state('discovery.pools:arc').cursor, 1_000);
+
+  radarFixture.clock.now = NOW + MINUTE;
+  radarFixture.hotList = [radarFixture.quote(B)];
+  radarFixture.chainLogs = { newPools: async () => { throw new ChainLogsError('ONCHAIN_HTTP_429'); } };
+  radarFixture.dexMarkets = async () => { throw Object.assign(new Error('DexScreener unavailable'), { code: 'HTTP_503' }); };
+  await radarFixture.runCycle('cycle-log-failure-2');
+  assert.equal(radarFixture.candidate(B).status, 'LIVE_READY', 'the hot list is screened as usual');
+  assert.equal(radarFixture.state('discovery.pools:arc').cursor, 1_000);
+  const health = radarFixture.state('runtime.sourceHealth').discovery;
+  assert.deepEqual(health.newPools, { ok: false, code: 'ONCHAIN_HTTP_429' });
+  assert.equal(health.watch.ok, false);
 });
 
 test('a cycle that began without the on-chain key reads only the hot list and reports the source as not configured', async () => {
