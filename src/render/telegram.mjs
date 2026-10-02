@@ -131,7 +131,7 @@ export function finishPanel(title, blocks, keyboard, snapshot, session, locale, 
   const footer = [
     ...footerStart,
     refresh ? button(`${ICONS.refresh} ${localize(locale, '刷新', 'Refresh')}`, 'panel.refresh') : null,
-    !root && session.query?.returnTo ? button(`${ICONS.back} ${localize(locale, '返回', 'Back')}`, 'panel.back') : null,
+    !root && session.panel !== 'settings' && session.query?.returnTo ? button(`${ICONS.back} ${localize(locale, '返回', 'Back')}`, 'panel.back') : null,
     root ? null : button(`${ICONS.home} ${localize(locale, '首页', 'Home')}`, 'panel.open', { panel: 'radar' })
   ];
   const body = blocks.filter(value => value !== undefined && value !== null);

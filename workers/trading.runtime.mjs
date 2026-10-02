@@ -199,7 +199,7 @@ async function withTrading(name, operation) {
     const trades = () => listTrades(storage, tenantId);
     const tradeOf = session => trades().find(trade => trade.id === runtime.commands.sessions.get(session.id).query.tradeId);
     // Open a token detail, tap a buy (or sell) and wait for the confirm screen.
-    const quote = async (chain = 'bsc', action = 'trade.buy', predicate = params => params.usd === 10) => {
+    const quote = async (chain = 'bsc', action = 'trade.buy', predicate = params => params.usd === 1) => {
       const detail = await openDetail(chain);
       await click(link(detail, action, predicate));
       await run(() => ['QUOTED', 'FAILED'].includes(tradeOf(detail).state));
@@ -230,29 +230,52 @@ async function withTrading(name, operation) {
 }
 
 describe('one-tap trading', () => {
+  it('buys from alert controls in the same message and returns through the warning to the alert keyboard', async () => {
+    await withTrading('alert-controls', async ({ runtime, storage, click, link, seed, createWallet, trades, sent, drain }) => {
+      await createWallet();seed('arc', 'LIVE_READY', null);
+      const commands=runtime().commands;
+      const alert=storage.transactionSync(()=>commands.renderInTransaction(commands.sessions.createInTransaction('alert','arc',{selectedToken:{chain:'arc',address:TOKEN}})));
+      await drain();
+      const current=()=>commands.sessions.get(alert.id),messageId=current().messageId;
+      await click(link(current(),'panel.open',params=>params.panel==='detail'));
+      expect(sent.at(-1)).toMatchObject({method:'editMessageReplyMarkup',params:{message_id:messageId}});
+      await click(link(current(),'trade.buy',params=>params.usd===1));
+      expect(current()).toMatchObject({panel:'trade_unverified',query:{unverifiedBuy:{usdCents:100}}});
+      expect(sent.at(-1)).toMatchObject({method:'editMessageText',params:{message_id:messageId}});
+      await click(link(current(),'trade.decline_unverified'));
+      expect(current()).toMatchObject({panel:'alert',query:{tokenControls:true}});
+      expect(sent.at(-1).params.text).toContain('New lead · MEME');
+      await click(link(current(),'panel.back'));
+      expect(current().query.tokenControls).toBeUndefined();
+      expect(sent.at(-1)).toMatchObject({method:'editMessageReplyMarkup',params:{message_id:messageId}});
+      expect(sent.at(-1).params.reply_markup.inline_keyboard[0][0].text).toBe('Open MEME');
+      expect(trades()).toEqual([]);
+    });
+  });
+
   it('buys on Arc end to end: quote, confirm, exact approval, swap, receipt and a filled edit of the same message', async () => {
     await withTrading('arc-e2e', async ({ runtime, network, sent, click, link, run, seed, createWallet, openDetail, trades, lastText }) => {
       seed();await createWallet();
       network.fund('arc', 50n * 10n ** 18n, { [ARC_USDC_ERC20]: 50_000_000n });
       const detail = await openDetail();
-      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      await click(link(detail, 'trade.buy', params => params.usd === 1));
       const [trade] = trades();
-      expect(trade).toMatchObject({ state: 'QUOTING', side: 'buy', usdCents: 1000, tokenIn: ARC_USDC_ERC20 });
+      expect(trade).toMatchObject({ state: 'QUOTING', side: 'buy', usdCents: 100, tokenIn: ARC_USDC_ERC20 });
       await run(() => trades()[0].state === 'QUOTED');
       const route = network.kyber.find(item => item.path === '/arc/api/v1/routes');
-      expect(route).toMatchObject({ clientId: 'radar-test', query: { tokenIn: ARC_USDC_ERC20, tokenOut: TOKEN, amountIn: '10000000' } });
+      expect(route).toMatchObject({ clientId: 'radar-test', query: { tokenIn: ARC_USDC_ERC20, tokenOut: TOKEN, amountIn: '1000000' } });
       const confirm = lastText();
-      expect(confirm).toContain('Spend');expect(confirm).toContain('$10 = 10 USDC');expect(confirm).toContain('$100');
+      expect(confirm).toContain('Spend');expect(confirm).toContain('$1 = 1 USDC');expect(confirm).toContain('$100');
       const session = runtime().commands.sessions.get(detail.id);
       expect(sent.filter(row => row.method === 'editMessageText').at(-1).params.message_id).toBe(detail.messageId);
       await click(link(session, 'trade.confirm'));
       expect(trades()[0].state).toBe('CONFIRMED');
       await run(() => ['FILLED', 'FAILED', 'UNKNOWN'].includes(trades()[0].state));
       const done = trades()[0];
-      expect(done.state).toBe('FILLED');expect(done.result).toMatchObject({ received: '4000000000000', spent: '10000000' });
+      expect(done.state).toBe('FILLED');expect(done.result).toMatchObject({ received: '4000000000000', spent: '1000000' });
       const [approval, swap] = network.chains.arc.sent;
       expect(approval.tx.to.toLowerCase()).toBe(ARC_USDC_ERC20.toLowerCase());
-      expect(decodeFunctionData({ abi: erc20Abi, data: approval.tx.data })).toEqual({ functionName: 'approve', args: [KYBER_ROUTER, 10_000_000n] });
+      expect(decodeFunctionData({ abi: erc20Abi, data: approval.tx.data })).toEqual({ functionName: 'approve', args: [KYBER_ROUTER, 1_000_000n] });
       expect(swap.tx).toMatchObject({ to: KYBER_ROUTER.toLowerCase(), nonce: 1, chainId: 5042 });expect(swap.tx.value ?? 0n).toBe(0n);
       expect(lastText()).toContain('Filled');expect(lastText()).toContain('Received: 4000 MEME');
       expect(sent.filter(row => row.method === 'editMessageText').at(-1).params.message_id).toBe(detail.messageId);
@@ -263,11 +286,11 @@ describe('one-tap trading', () => {
     await withTrading('bsc-native', async ({ runtime, network, click, link, run, seed, createWallet, openDetail, trades, lastText }) => {
       seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
       const detail = await openDetail('bsc');
-      await click(link(detail, 'trade.buy', params => params.usd === 20));
+      await click(link(detail, 'trade.buy', params => params.usd === 2));
       await run(() => trades()[0].state === 'QUOTED');
       expect(network.kyber[0].query).toMatchObject({ tokenIn: KYBER_NATIVE_TOKEN, amountIn: String(10n ** 15n) });
-      expect(trades()[0]).toMatchObject({ priceMicroUsd: '600000000', amountIn: String(2000n * 10_000n * 10n ** 18n / 600_000_000n) });
-      expect(lastText()).toContain('$20 ≈ 0.0333333 BNB (at $600/BNB)');
+      expect(trades()[0]).toMatchObject({ priceMicroUsd: '600000000', amountIn: String(200n * 10_000n * 10n ** 18n / 600_000_000n) });
+      expect(lastText()).toContain('$2 ≈ 0.00333333 BNB (at $600/BNB)');
       await click(link(runtime().commands.sessions.get(detail.id), 'trade.confirm'));
       await run(() => trades()[0].state === 'FILLED');
       expect(network.chains.bsc.sent).toHaveLength(1);expect(network.chains.bsc.sent[0].tx.value).toBe(BigInt(trades()[0].amountIn));
@@ -278,7 +301,7 @@ describe('one-tap trading', () => {
     await withTrading('veto', async ({ runtime, storage, tenantId, network, click, link, run, seed, createWallet, openDetail, trades, sent }) => {
       seed();await createWallet();network.fund('arc', 50n * 10n ** 18n, { [ARC_USDC_ERC20]: 50_000_000n });
       const detail = await openDetail();
-      const buy = link(detail, 'trade.buy', params => params.usd === 10);
+      const buy = link(detail, 'trade.buy', params => params.usd === 1);
       seed('arc', 'HARD_REJECT');
       await click(buy);
       // The refusal is a banner on the detail it came from, and the next render drops it.
@@ -290,7 +313,7 @@ describe('one-tap trading', () => {
 
       seed('arc', 'LIVE_READY');
       const fresh = await openDetail();
-      await click(link(fresh, 'trade.buy', params => params.usd === 10));
+      await click(link(fresh, 'trade.buy', params => params.usd === 1));
       await run(() => trades()[0].state === 'QUOTED');
       seed('arc', 'HARD_REJECT');
       await click(link(runtime().commands.sessions.get(fresh.id), 'trade.confirm'));
@@ -298,7 +321,7 @@ describe('one-tap trading', () => {
 
       storage.sql.exec("UPDATE candidates SET status='LIVE_READY' WHERE tenant_id=?", tenantId);
       const third = await openDetail();
-      await click(link(third, 'trade.buy', params => params.usd === 10));
+      await click(link(third, 'trade.buy', params => params.usd === 1));
       const current = () => trades().find(trade => trade.id === runtime().commands.sessions.get(third.id).query.tradeId);
       await run(() => current().state === 'QUOTED');
       await click(link(runtime().commands.sessions.get(third.id), 'trade.confirm'));
@@ -327,7 +350,7 @@ describe('one-tap trading', () => {
     await withTrading('expiry', async ({ runtime, network, click, link, run, seed, createWallet, openDetail, trades, clock }) => {
       seed();await createWallet();network.fund('arc', 50n * 10n ** 18n, { [ARC_USDC_ERC20]: 50_000_000n });
       const detail = await openDetail();
-      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      await click(link(detail, 'trade.buy', params => params.usd === 1));
       await run(() => trades()[0].state === 'QUOTED');
       const confirm = link(runtime().commands.sessions.get(detail.id), 'trade.confirm');
       clock.advance(30_000);
@@ -344,7 +367,7 @@ describe('one-tap trading', () => {
     await withTrading(`replay-${state}`, async ({ runtime, restart, network, click, link, run, seed, createWallet, openDetail, trades }) => {
       seed();await createWallet();network.fund('arc', 50n * 10n ** 18n, { [ARC_USDC_ERC20]: 50_000_000n });
       const detail = await openDetail();
-      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      await click(link(detail, 'trade.buy', params => params.usd === 1));
       await run(() => trades()[0].state === 'QUOTED');
       await click(link(runtime().commands.sessions.get(detail.id), 'trade.confirm'));
       await run(() => trades()[0].state === state);
@@ -365,7 +388,7 @@ describe('one-tap trading', () => {
     await withTrading('lost-broadcast', async ({ runtime, network, click, link, run, seed, createWallet, openDetail, trades }) => {
       seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
       const detail = await openDetail('bsc');
-      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      await click(link(detail, 'trade.buy', params => params.usd === 1));
       await run(() => trades()[0].state === 'QUOTED');
       await click(link(runtime().commands.sessions.get(detail.id), 'trade.confirm'));
       network.chains.bsc.sendFault = 'lost';
@@ -380,7 +403,7 @@ describe('one-tap trading', () => {
     await withTrading('unknown', async ({ runtime, network, click, link, run, seed, createWallet, openDetail, trades, lastText }) => {
       seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
       const detail = await openDetail('bsc');
-      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      await click(link(detail, 'trade.buy', params => params.usd === 1));
       await run(() => trades()[0].state === 'QUOTED');
       await click(link(runtime().commands.sessions.get(detail.id), 'trade.confirm'));
       network.chains.bsc.mine = false;
@@ -396,7 +419,7 @@ describe('one-tap trading', () => {
     await withTrading('revert', async ({ runtime, network, click, link, run, seed, createWallet, openDetail, trades, lastText }) => {
       seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
       const detail = await openDetail('bsc');
-      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      await click(link(detail, 'trade.buy', params => params.usd === 1));
       await run(() => trades()[0].state === 'QUOTED');
       await click(link(runtime().commands.sessions.get(detail.id), 'trade.confirm'));
       await run(() => trades()[0].state === 'SWAP_SENT');
@@ -410,17 +433,17 @@ describe('one-tap trading', () => {
     await withTrading('concurrent', async ({ runtime, network, click, link, run, seed, createWallet, openDetail, trades, sent }) => {
       seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
       const first = await openDetail('bsc');
-      await click(link(first, 'trade.buy', params => params.usd === 10));
+      await click(link(first, 'trade.buy', params => params.usd === 1));
       await run(() => trades()[0].state === 'QUOTED');
       network.chains.bsc.mine = false;
       await click(link(runtime().commands.sessions.get(first.id), 'trade.confirm'));
       const second = await openDetail('bsc');
-      await click(link(second, 'trade.buy', params => params.usd === 20));
-      await run(() => trades().find(trade => trade.usdCents === 2000)?.state === 'QUOTED');
-      const executing = trades().find(trade => trade.usdCents === 1000);
+      await click(link(second, 'trade.buy', params => params.usd === 2));
+      await run(() => trades().find(trade => trade.usdCents === 200)?.state === 'QUOTED');
+      const executing = trades().find(trade => trade.usdCents === 100);
       expect(executing.state).not.toBe('QUOTED');
       await click(link(runtime().commands.sessions.get(second.id), 'trade.confirm'));
-      expect(trades().find(trade => trade.usdCents === 2000).state).toBe('QUOTED');
+      expect(trades().find(trade => trade.usdCents === 200).state).toBe('QUOTED');
       expect(sent.some(row => row.params.text?.includes('Another trade is executing'))).toBe(true);
     });
   });
@@ -510,8 +533,8 @@ describe('buying before the safety check verified a token', () => {
       await createWallet();network.fund('arc', 50n * 10n ** 18n, { [ARC_USDC_ERC20]: 50_000_000n });
       const detail = await paste(TOKEN), session = () => runtime().commands.sessions.get(detail.id);
       expect(lastText()).toContain('Looking up on Arc');
-      await click(link(detail, 'trade.buy', params => params.usd === 10));
-      expect(session()).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { chain: 'arc', token: TOKEN, usdCents: 1000 } } });
+      await click(link(detail, 'trade.buy', params => params.usd === 1));
+      expect(session()).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { chain: 'arc', token: TOKEN, usdCents: 100 } } });
       expect(trades()).toEqual([]);expect(network.kyber).toEqual([]);
       await click(link(session(), 'trade.decline_unverified'));
       const details = async () => ({ token: { symbol: 'MEME', name: 'Meme', current_price_usd: 0.001, market_cap: 1000, main_pair_tvl: 500, tvl: null, holders: 10, launch_at: null, created_at: null, token_price_change_5m: null, token_tx_volume_usd_5m: null }, capturedAt: Date.now() });
@@ -545,7 +568,7 @@ describe('buying before the safety check verified a token', () => {
       clock.advance(1);
       const list = await open();
       expect(lastText()).toMatch(/✅ No failures found · checked 15m ago · stale, paste the address again to re-check\n/);
-      await click(link(list, 'trade.buy', params => params.usd === 10));
+      await click(link(list, 'trade.buy', params => params.usd === 1));
       expect(runtime().commands.sessions.get(list.id).panel).toBe('trade_unverified');
       expect(lastText()).toMatch(/⚠️ Safety check is stale[\s\S]*GoPlus and DexScreener checked this token 15m ago; that check is stale\./);
       expect(trades()).toEqual([]);
@@ -575,19 +598,19 @@ describe('buying before the safety check verified a token', () => {
     await withTrading('unverified-preset', async ({ runtime, network, sent, click, link, run, seed, createWallet, openDetail, trades, tradeOf, lastText }) => {
       seed('arc', 'LIVE_READY', null);await createWallet();network.fund('arc', 50n * 10n ** 18n, { [ARC_USDC_ERC20]: 50_000_000n });
       const detail = await openDetail();
-      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      await click(link(detail, 'trade.buy', params => params.usd === 1));
       const session = () => runtime().commands.sessions.get(detail.id);
-      expect(session()).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { chain: 'arc', token: TOKEN, usdCents: 1000 } } });
-      expect(lastText()).toContain('Safety check not finished');expect(lastText()).toContain('MEME · Arc — buy $10?');
-      expect(sent.at(-1).params.reply_markup.inline_keyboard[0].map(item => item.text)).toEqual(['Yes', 'No']);
+      expect(session()).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { chain: 'arc', token: TOKEN, usdCents: 100 } } });
+      expect(lastText()).toContain('Safety check not finished');expect(lastText()).toContain('MEME · Arc — buy $1?');
+      expect(sent.at(-1).params.reply_markup.inline_keyboard[0].map(item => item.text)).toEqual(['✅ Yes', '❌ No']);
       expect(trades()).toEqual([]);expect(network.kyber).toEqual([]);
 
       await click(link(session(), 'trade.decline_unverified'));
       expect(session().panel).toBe('detail');expect(trades()).toEqual([]);expect(network.kyber).toEqual([]);
 
-      await click(link(session(), 'trade.buy', params => params.usd === 10));
+      await click(link(session(), 'trade.buy', params => params.usd === 1));
       await click(link(session(), 'trade.acknowledge_unverified'));
-      expect(tradeOf(detail)).toMatchObject({ state: 'QUOTING', usdCents: 1000, unverifiedAtRequest: true });
+      expect(tradeOf(detail)).toMatchObject({ state: 'QUOTING', usdCents: 100, unverifiedAtRequest: true });
       await run(() => tradeOf(detail).state === 'QUOTED');
       expect(lastText()).toContain('Requested before the safety check verified it.');expect(lastText()).toContain('Confirm');
       expect(session().query.returnTo.panel).toBe('detail');
@@ -613,8 +636,8 @@ describe('buying before the safety check verified a token', () => {
     await withTrading('unverified-conflict', async ({ runtime, click, link, seed, createWallet, openDetail, trades }) => {
       seed('arc', 'LIVE_READY', conflicted('SECURITY_MISMATCH'));await createWallet();
       const detail = await openDetail();
-      await click(link(detail, 'trade.buy', params => params.usd === 10));
-      expect(runtime().commands.sessions.get(detail.id)).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { usdCents: 1000 } } });
+      await click(link(detail, 'trade.buy', params => params.usd === 1));
+      expect(runtime().commands.sessions.get(detail.id)).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { usdCents: 100 } } });
       expect(trades()).toEqual([]);
     });
   });
@@ -653,17 +676,17 @@ describe('buying before the safety check verified a token', () => {
       seed('arc', 'LIVE_READY', null);await createWallet();
       const detail = await openDetail();
       const session = () => runtime().commands.sessions.get(detail.id);
-      await click(link(detail, 'trade.buy', params => params.usd === 10));
+      await click(link(detail, 'trade.buy', params => params.usd === 1));
       const yesFor10 = link(session(), 'trade.acknowledge_unverified');
       await click(link(session(), 'trade.decline_unverified'));
-      await click(link(session(), 'trade.buy', params => params.usd === 20));
+      await click(link(session(), 'trade.buy', params => params.usd === 2));
       await click(yesFor10);
       expect(trades()).toEqual([]);expect(sent.at(-1).params.text).toMatch(/old action was not applied/);
-      expect(session()).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { usdCents: 2000 } } });
+      expect(session()).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { usdCents: 200 } } });
       const yesFor20 = link(session(), 'trade.acknowledge_unverified');
       await click(yesFor20);
       await click(yesFor20);
-      expect(trades()).toEqual([expect.objectContaining({ usdCents: 2000, unverifiedAtRequest: true })]);
+      expect(trades()).toEqual([expect.objectContaining({ usdCents: 200, unverifiedAtRequest: true })]);
     });
   });
 
@@ -671,14 +694,14 @@ describe('buying before the safety check verified a token', () => {
     await withTrading('unverified-meanwhile', async ({ runtime, click, link, seed, createWallet, openDetail, trades, sent }) => {
       seed('arc', 'LIVE_READY', null);await createWallet();
       const first = await openDetail();
-      await click(link(first, 'trade.buy', params => params.usd === 10));
+      await click(link(first, 'trade.buy', params => params.usd === 1));
       seed('arc', 'LIVE_READY', VERIFIED);
       await click(link(runtime().commands.sessions.get(first.id), 'trade.acknowledge_unverified'));
-      expect(trades()).toEqual([expect.objectContaining({ usdCents: 1000, unverifiedAtRequest: false })]);
+      expect(trades()).toEqual([expect.objectContaining({ usdCents: 100, unverifiedAtRequest: false })]);
 
       seed('arc', 'LIVE_READY', null);
       const second = await openDetail();
-      await click(link(second, 'trade.buy', params => params.usd === 20));
+      await click(link(second, 'trade.buy', params => params.usd === 2));
       seed('arc', 'LIVE_READY', FATAL);
       await click(link(runtime().commands.sessions.get(second.id), 'trade.acknowledge_unverified'));
       expect(trades()).toHaveLength(1);
@@ -697,7 +720,7 @@ describe('buying before the safety check verified a token', () => {
 
       seed('arc', 'LIVE_READY', VERIFIED);
       const verified = await openDetail();
-      await click(link(verified, 'trade.buy', params => params.usd === 10));
+      await click(link(verified, 'trade.buy', params => params.usd === 1));
       expect(runtime().commands.sessions.get(verified.id).panel).toBe('trade');
       expect(tradeOf(verified)).toMatchObject({ side: 'buy', unverifiedAtRequest: false });
     });
@@ -707,7 +730,7 @@ describe('buying before the safety check verified a token', () => {
     await withTrading('unverified-requote', async ({ runtime, network, click, link, run, seed, createWallet, openDetail, confirm, tradeOf, trades, clock }) => {
       seed('bsc', 'LIVE_READY', null);await createWallet();network.fund('bsc', 10n ** 18n);
       const acknowledged = await openDetail('bsc');
-      await click(link(acknowledged, 'trade.buy', params => params.usd === 10));
+      await click(link(acknowledged, 'trade.buy', params => params.usd === 1));
       await click(link(runtime().commands.sessions.get(acknowledged.id), 'trade.acknowledge_unverified'));
       await run(() => tradeOf(acknowledged).state === 'QUOTED');
       clock.advance(30_000);
@@ -717,14 +740,14 @@ describe('buying before the safety check verified a token', () => {
 
       seed('bsc', 'LIVE_READY', VERIFIED);
       const verified = await openDetail('bsc');
-      await click(link(verified, 'trade.buy', params => params.usd === 20));
+      await click(link(verified, 'trade.buy', params => params.usd === 2));
       await run(() => tradeOf(verified).state === 'QUOTED');
       const expiring = tradeOf(verified).id;
       seed('bsc', 'LIVE_READY', check({ dex: 'ERROR' }));
       clock.advance(30_000);
       await confirm(verified);
       expect(trades().find(trade => trade.id === expiring).state).toBe('EXPIRED');
-      expect(runtime().commands.sessions.get(verified.id)).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { chain: 'bsc', usdCents: 2000 } } });
+      expect(runtime().commands.sessions.get(verified.id)).toMatchObject({ panel: 'trade_unverified', query: { unverifiedBuy: { chain: 'bsc', usdCents: 200 } } });
     });
   });
 });
@@ -950,7 +973,7 @@ describe('trading safety on review', () => {
     await withTrading('cap-mismatch', async ({ network, seed, createWallet, quote, tradeOf }) => {
       seed('bsc');await createWallet();network.fund('bsc', 10n ** 18n);
       network.knobs.nativeUsd = 60n;network.knobs.routeUsd = '150';
-      const detail = await quote('bsc', 'trade.buy', params => params.usd === 50);
+      const detail = await quote('bsc', 'trade.buy', params => params.usd === 5);
       expect(tradeOf(detail)).toMatchObject({ state: 'FAILED', result: { reason: 'OVER_CAP' }, quote: null });
     });
   });

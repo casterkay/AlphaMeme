@@ -51,7 +51,7 @@ export class TelegramRuntime {
         if (value.payload.purpose === 'secret') this.afterSecretSentInTransaction(value);
         this.commands.sessions.confirmPromptInTransaction(value);
         if (value.payload.notification) this.notifications.acknowledgeInTransaction(value.payload.notification);
-        if (value.payload.token && value.payload.purpose !== 'prompt') this.saveRenderedProjection(value);
+        if (value.payload.token && value.payload.purpose !== 'prompt' && value.payload.method !== 'editMessageReplyMarkup') this.saveRenderedProjection(value);
       },
       onFailedInTransaction: value => { if (value.payload.notification) this.notifications.failInTransaction(value.payload.notification); }
     });

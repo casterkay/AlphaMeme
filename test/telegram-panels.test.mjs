@@ -77,7 +77,7 @@ test('every panel ends with the standard footer and keeps navigation out of its 
     assert.ok(!result.keyboard.slice(0,-1).flat().some(nav),label);
     const order=footer.map(item=>item.action==='panel.refresh'?0:item.action==='panel.back'?1:2);
     assert.deepEqual(order,[...order].sort(),label);
-    assert.equal(footer.some(item=>item.action==='panel.back'),returning&&panel!=='radar',label);
+    assert.equal(footer.some(item=>item.action==='panel.back'),returning&&panel!=='radar'&&panel!=='settings',label);
     assert.equal(footer.some(home),panel!=='radar',label);
     assert.equal(footer.some(item=>item.action==='panel.refresh'),!STATIC_PANELS.has(panel),label);
     assert.match(result.text,locale==='en'?/\n\nUpdated [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2} UTC$/:/\n\n更新于 \d{1,2}月\d{1,2}日 \d{2}:\d{2} UTC$/,label);
@@ -147,6 +147,11 @@ test('five-row pagination clamps after deletion and token buttons bind identitie
   const buttons=result.keyboard.flat().filter(item=>item.token);
   assert.equal(buttons.length,3);assert.equal(buttons[0].token.address,snapshot.candidates[10].address);
   assert.match(result.text,/11–13 of 13/);
+  assert.match(result.text,/Page 3\/3/);
+  for(const [locale,labels] of [['en',['◀️ Previous','▶️ Next']],['zh',['◀️ 上一页','▶️ 下一页']]]) {
+    const middle=renderPanel(snapshot,session('audits',{page:1}),locale);
+    assert.deepEqual(middle.keyboard.flat().filter(item=>item.action==='page.set').map(item=>item.text),labels);
+  }
 });
 
 test('search precedes sorting and live top-15 truncation, with stable volume ties',()=>{
@@ -521,12 +526,12 @@ test('the AVE token page is built from the chain and address, and left out when 
   for(const [chain,address] of [['stable',evm],['arc','not-an-address'],['sol',evm],['constructor',evm]]) assert.equal(aveTokenUrl(chain,address),'',`${chain} ${address}`);
 });
 
-test('the token detail link row reads X, Site, Chart, AVE, then Evidence',()=>{
+test('the token detail link row reads X, Site, Chart, Profile, then Evidence',()=>{
   const snapshot=fixture();
   snapshot.candidates=[candidate(0,{address:'0x59a0d858b0825098b5218f08e09901381c25a57d',info:{website:'https://coin.example',twitter:'coin'},secondary:{status:'COMPLETE',market:{pairUrl:'https://dexscreener.com/robinhood/pair',websites:[]},security:{verdict:'NO_FATAL_FLAGS'},conflicts:[]}})];
   const detail=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
   const row=detail.keyboard.find(items=>items.some(item=>item.url?.startsWith('https://ave.ai/')));
-  assert.deepEqual(row.map(item=>item.text),['𝕏','🌐 Site','📊 Chart','🔭 AVE','🔎 Evidence']);
+  assert.deepEqual(row.map(item=>item.text),['𝕏','🌐 Site','📊 Chart','🔭 Profile','🔎 Evidence']);
   assert.equal(row[3].url,'https://ave.ai/token/0x59a0d858b0825098b5218f08e09901381c25a57d-robinhood');
 });
 

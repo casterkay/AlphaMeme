@@ -139,7 +139,7 @@ function unverifiedBuyPanel(snapshot, session, locale) {
     checked ? L(`GoPlus 和 DexScreener 于${checked}核验此代币，结果已过期。`, `GoPlus and DexScreener checked this token ${checked}; that check is stale.`)
       : L('GoPlus 和 DexScreener 尚未核验此代币。', 'GoPlus and DexScreener have not verified this token yet.'),
     L('它可能是貔貅盘，或含隐藏税费。', 'It could be a honeypot or carry hidden taxes.')],
-  [[button(L('是', 'Yes'), 'trade.acknowledge_unverified'), button(L('否', 'No'), 'trade.decline_unverified')]], snapshot, session, locale, { refresh: false });
+  [[button(L('✅ 是', '✅ Yes'), 'trade.acknowledge_unverified'), button(L('❌ 否', '❌ No'), 'trade.decline_unverified')]], snapshot, session, locale, { refresh: false });
 }
 
 function walletPanel(snapshot, session, locale) {
