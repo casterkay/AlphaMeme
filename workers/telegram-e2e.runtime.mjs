@@ -262,8 +262,8 @@ describe('Telegram complete command and delivery flows',()=>{
       expect(sent.at(-1).params.text).toContain('PEPE failed the safety check');
       expect(sent.at(-1).params.reply_markup.inline_keyboard.flat().some(button=>button.text==='⬅️ Back')).toBe(true);
       await click(link(runtime.commands.sessions.get(alert.id),'panel.back'));
-      expect(sent.at(-1)).toMatchObject({method:'editMessageReplyMarkup',params:{message_id:alert.messageId}});
-      expect(sent.at(-1).params.text).toBeUndefined();
+      expect(sent.at(-1)).toMatchObject({method:'editMessageText',params:{message_id:alert.messageId}});
+      expect(sent.at(-1).params.text).toContain('PEPE failed the safety check');
       expect(sent.at(-1).params.reply_markup.inline_keyboard.map(row=>row.map(button=>button.text))).toEqual([['Open PEPE'],['🎯 All leads','🔕 Mute alerts']]);
       expect(runtime.commands.sessions.get(alert.id).query.tokenControls).toBeUndefined();
       const stale=await click(oldFavorite);
@@ -312,6 +312,28 @@ describe('Telegram complete command and delivery flows',()=>{
       storage.sql.exec('DELETE FROM candidates WHERE tenant_id=? AND address=?',tenantId,address);
       const settled=sent.length;reconcile();await drain();
       expect(sent.length).toBe(settled);
+    });
+  });
+
+  it('threads later safety notices to the original alert while showing evidence and after Home clears navigation',async()=>{
+    for(const [tenant,destination] of [['229451','evidence'],['229452','radar']]) await withRuntime(tenant,async({runtime,storage,tenantId,sent,sessions,link,click,drain})=>{
+      runtime.commands.setPreference('language','en');
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());
+      const address='0x'+'7'.repeat(40);
+      storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,market_cap,audited_at,stale_at,review_revision,secondary_json) VALUES (?,?,?,?,?,?,?,?,?,?)',tenantId,'arc',address,'THREADED','LIVE_READY',50_000,at,at+600_000,'lead-1','null');
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
+      const alert=sessions().find(session=>session.panel==='alert');
+      const current=()=>runtime.commands.sessions.get(alert.id);
+      await click(link(current(),'panel.open',params=>params.panel==='detail'));
+      await click(link(current(),'panel.open',params=>params.panel==='evidence'));
+      if(destination==='radar') await click(link(current(),'panel.open',params=>params.panel==='radar'));
+      expect(current().panel).toBe(destination);
+      const fatal={status:'COMPLETE',security:{verdict:'FATAL',fatal:[{field:'isHoneypot'}],fields:{isHoneypot:true}},conflicts:[]};
+      storage.sql.exec("UPDATE candidates SET status='HARD_REJECT',review_revision='veto-1',secondary_json=? WHERE tenant_id=? AND address=?",JSON.stringify(fatal),tenantId,address);
+      storage.sql.exec('INSERT INTO events (tenant_id,id,at,type,chain,address) VALUES (?,?,?,?,?,?)',tenantId,'risk-1',at+1,'RISK_WORSENED','arc',address);
+      storage.transactionSync(()=>runtime.reconcileNotificationsInTransaction());await drain();
+      expect(sent.at(-1)).toMatchObject({method:'sendMessage',params:{reply_parameters:{message_id:Number(alert.messageId),allow_sending_without_reply:true}}});
+      expect(sent.at(-1).params.text).toContain('THREADED failed the safety check');
     });
   });
 
