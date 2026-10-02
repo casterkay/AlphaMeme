@@ -36,6 +36,12 @@ Live facts below were read from AVE, GoPlus, DexScreener and GeckoTerminal on
    Arc. It still needs a secondary check source (defect 2).
 5. **The buy–sell tax gap rule is removed** (PR #112). The 5% buy and sell
    limits remain.
+6. **Arc may reach `PASSED` on distinct-seller evidence.** Where GoPlus omits
+   `cannot_sell_all` (Arc), distinct sellers in the AVE row stand in for it, and
+   the token detail labels the check as passed on that weaker evidence (defect
+   1).
+7. **New-pool promotions read DexScreener, not AVE.** The promoted row is built
+   from the market the watch already fetched (defect 3).
 
 ## Where things stand
 
@@ -93,14 +99,19 @@ before, so its checks stay in shadow until it proves stable from the VPS IP.
    `INCOMPLETE`. Arc is the default chain. Distinct sellers in the AVE row are
    **not** a substitute: some wallets selling some amount does not rule out
    maximum-sell limits or rules that let holders sell only part of a balance,
-   which is what `cannot_sell_all` catches. The check stays `UNKNOWN` on Arc
-   until there is equivalent evidence: a simulated sale of a holder's full
-   balance (`eth_call` against the pool), which needs the Arc RPC the VPS move
-   fixes. Until then the token detail says what stands in for it (decision A).
+   which is what `cannot_sell_all` catches. Fix (decision 6): on a chain where
+   GoPlus omits the field, distinct sellers stand in for it, and the token
+   detail labels the check as passed on that weaker evidence. A simulated sale
+   of a holder's full balance (`eth_call` against the pool), which needs the Arc
+   RPC the VPS move fixes, later replaces the stand-in with equivalent evidence.
 2. **Robinhood has no secondary check.** GoPlus has no Robinhood chain id, so its
    leads stay unchecked. GMGN's token security is the candidate source.
 3. **New-pool promotions delay the hot list.** Each promotion takes one of AVE's
-   15 s request slots (see the budget above). Decision B.
+   15 s request slots (see the budget above). Fix (decision 7): build the
+   promoted row from the DexScreener market the watch already fetched. It
+   carries everything the screen gates on (pool creation stands in for launch
+   time) except taxes, which stay unknown so GoPlus decides after the alert, and
+   AVE's source clock, for which our read time stands in.
 
 ## How the issues fit
 
@@ -125,7 +136,7 @@ before, so its checks stay in shadow until it proves stable from the VPS IP.
 | D1 name blacklist | screen | row `name`/`symbol` | buildable now |
 | D2 creator > 20 launches in 24 h | after alert | #107 ledger | needs per-token launch times, never a lifetime count |
 | D3 bundler/insider > 30% | after alert | GMGN | GoPlus has no bundler tags |
-| D4 can only buy | after alert, partly screen | GoPlus honeypot and `cannot_sell_all`; row distinct sellers as a hint | on Arc, full-balance sell simulation after the VPS (defect 1) |
+| D4 can only buy | after alert, partly screen | GoPlus honeypot and `cannot_sell_all`; on Arc, row distinct sellers (labelled) | full-balance sell simulation after the VPS (defect 1) |
 | D5 one-sided 5 m trading | screen | row | already enforced |
 | D5b self-trading | after alert | GMGN | |
 | K2 holders growing | screen | #106 history | |
@@ -140,8 +151,8 @@ before, so its checks stay in shadow until it proves stable from the VPS IP.
 | LP locked or burned ≥ 80% | GoPlus `lp_holders` | now; V3/V4 NFT positions need their own reading |
 | top-10 ≤ 30%, dev ≤ 1% | GoPlus holders and creator percent, excluding pool/burn/locked | now |
 | liquidity ≥ $8k | AVE row | now |
-| empirical sellability | AVE row distinct sellers | now, as evidence that someone can sell; not a substitute for `cannot_sell_all` |
-| sell-all on Arc | full-balance sell simulation over Arc RPC | after VPS |
+| empirical sellability | AVE row distinct sellers | now; on Arc it also stands in for `cannot_sell_all`, labelled as weaker evidence |
+| sell-all on Arc | full-balance sell simulation over Arc RPC | after VPS, replacing the stand-in |
 | 5-minute observation, chart risk | GMGN or GeckoTerminal candles | after VPS |
 | rug ratio, insider, bundler, sniper, wash, wallet analysis, market behavior | GMGN | after VPS; shadow `UNKNOWN` until then |
 
@@ -150,8 +161,8 @@ before, so its checks stay in shadow until it proves stable from the VPS IP.
 Each step is one issue, one branch, one PR. Items in the same step can run in
 parallel.
 
-1. **Now:** merge PR #112. Settle decisions A and B and apply them (Arc's
-   unknown sell-all shown as such; promotions off AVE or behind the hot list).
+1. **Now:** merge PR #112. Fix defects 1 and 3 (decisions 6 and 7), one PR
+   each.
 2. **Foundation:** #105 rule table with a parity test over recorded rows,
    folding in #76 and rescoped #103. In parallel: #102's rejected cohort and
    cohort split, which need no new reads.
@@ -175,17 +186,3 @@ parallel.
 - Screening work stays out of `src/host/`; the VPS work stays out of
   `src/scoring/` and `src/providers/`.
 
-## Open decisions
-
-- **A. Arc and `PASSED`.** Recommended: an Arc token cannot reach `PASSED`
-  while its sell-all check is unknown, so `PASSED` means the same on every
-  chain; the sell simulation after the VPS move closes the gap. The alternative
-  lets Arc pass on the weaker distinct-seller evidence, labelled as such in the
-  token detail.
-- **B. Promotion reads.** Recommended: build the promoted row from the
-  DexScreener market the watch already fetched and stop calling AVE there. It
-  carries everything the screen gates on (pool creation stands in for launch
-  time) except taxes (unknown, so GoPlus decides after the alert) and AVE's
-  source clock (our read time stands in). The
-  alternative keeps the AVE read but lets promotions use only slots the hot list
-  does not need, which slows new-pool discovery instead.
