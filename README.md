@@ -18,13 +18,14 @@ uses a separate hot wallet the bot generates for you, and every trade needs a co
   流动性、币龄、5 分钟成交、已知风险字段）。通过筛选的代币立即成为**市场线索**并推送提醒。
   Each cycle reads the chain's AVE hot list and applies upstream's AVE market screen;
   every passing token becomes a **market lead** and alerts immediately.
-- 在 Arc 与 Robinhood 上，每轮还读取链上新建的资金池（Uniswap v2/v3/v4、SushiSwap v3、flap.sh 毕业池），
-  在 DexScreener 上观察；5 分钟成交、买单与流动性达标后读取 AVE 行情（5 个额度单位）并与热榜一同筛选。
-  需要 `ALCHEMY_API_KEY`（在 Alchemy 应用中启用 Arc 与 Robinhood 主网）；未设置时 /status 的来源显示“未配置”。
-  On Arc and Robinhood each cycle also reads the pools the chain just created, watches
-  them on DexScreener, and screens the ones that trade enough with the hot list (an
-  AVE market read, 5 credits). This needs `ALCHEMY_API_KEY`, with Arc and Robinhood
-  mainnet enabled on the Alchemy app; without it the source shows as not configured.
+- 在 Arc 上，每轮还读取链上新建的资金池（Uniswap v3/v4），在 DexScreener 上观察；
+  5 分钟成交、买单与流动性达标后读取 AVE 行情（5 个额度单位）并与热榜一同筛选。
+  读取使用 `ARC_RPC_URL`（与交易共用）；未设置时 /status 的来源显示“未配置”。
+  On Arc each cycle also reads the pools the chain just created, watches them on
+  DexScreener, and screens the ones that trade enough with the hot list (an AVE market
+  read, 5 credits). It reads through `ARC_RPC_URL`, the RPC trading uses; without it
+  the source shows as not configured. The RPC must serve `eth_getLogs` over 500-block
+  ranges (Arc's public RPC does; Alchemy's free plan allows 10).
 - 线索随后由 GoPlus 与 DexScreener 免费核验（Arc：GoPlus 链 5042、DexScreener `arc`）。
   貔貅、异常税率等一票否决会撤销线索并推送“风险恶化”。
   Leads are then checked on GoPlus and DexScreener; a fatal finding vetoes the lead
@@ -90,18 +91,20 @@ npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 npx wrangler secret put MASTER_ENC_KEY        # long random string; see docs/development/ONBOARDING-CRYPTO.md
 npx wrangler secret put OPERATOR_TOKEN
 npx wrangler secret put TELEGRAM_BOT_USERNAME # without @
-npx wrangler secret put ALCHEMY_API_KEY       # optional: new-pool discovery on Arc and Robinhood
 npx wrangler deploy
 TELEGRAM_BOT_TOKEN=... node scripts/telegram-register.mjs
 ```
 
-交易默认关闭。要启用某条链，在 `wrangler.jsonc` 的 `vars` 中设置它的 RPC URL 和 `KYBER_CLIENT_ID`：
-Trading is off by default. To enable a chain, set its RPC URL and `KYBER_CLIENT_ID` in `wrangler.jsonc` `vars`:
+每条链只有一个 RPC URL，链上读取与交易共用；设置后，用户在 /wallet 创建钱包即可在该链交易。
+在 `wrangler.jsonc` 的 `vars` 中设置 RPC URL 与 `KYBER_CLIENT_ID`：
+Each chain has one RPC URL, shared by chain reads and trading; once it is set, a user
+who creates a wallet under /wallet can trade on that chain. Set the RPC URL and
+`KYBER_CLIENT_ID` in `wrangler.jsonc` `vars`:
 
 | Var | Meaning |
 | --- | --- |
 | `KYBER_CLIENT_ID` | `x-client-id` sent to the KyberSwap Aggregator; required once any chain is enabled |
-| `ARC_RPC_URL`, `BSC_RPC_URL`, `BASE_RPC_URL`, `ETH_RPC_URL` | https JSON-RPC endpoint; empty disables that chain |
+| `ARC_RPC_URL`, `BSC_RPC_URL`, `BASE_RPC_URL`, `ETH_RPC_URL` | https JSON-RPC endpoint; empty disables that chain's reads and trading. A URL holding a provider key belongs in a secret instead of `vars` |
 | `BSC_EXPLORER_URL`, `BASE_EXPLORER_URL`, `ETH_EXPLORER_URL` | optional; default bscscan.com, basescan.org, etherscan.io |
 | `ARC_EXPLORER_URL` | optional, no default; without it Arc trades show the transaction hash only |
 

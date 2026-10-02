@@ -5,8 +5,7 @@ const DEX_CHAIN_IDS = Object.freeze({ bsc: 'bsc', base: 'base', eth: 'ethereum',
 // Fast overlays must use the same verified chain map as deep validation.
 // Robinhood Chain currently has no verified DexScreener chain id here; a
 // speculative request only wastes time and makes the UI overstate coverage.
-// The new-pool watch also reads DexScreener on Robinhood, where the secondary check stays unsupported.
-const DEX_BATCH_CHAIN_IDS = Object.freeze({ ...DEX_CHAIN_IDS, robinhood: 'robinhood' });
+const DEX_BATCH_CHAIN_IDS = DEX_CHAIN_IDS;
 // Arc ids as DexScreener (dexscreener.com/arc) and GoPlus (chain 5042) publish them.
 const GOPLUS_EVM_CHAIN_IDS = Object.freeze({ eth: '1', bsc: '56', base: '8453', arc: '5042' });
 

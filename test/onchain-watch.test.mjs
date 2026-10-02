@@ -7,7 +7,7 @@ const NOW = 1_800_000_000_000, MINUTE = 60_000;
 const token = index => `0x${index.toString(16).padStart(40, '0')}`;
 const pool = (index, changes = {}) => ({ token: token(index), pool: `0x${'9'.repeat(64)}`, venue: 'Uniswap v4', firstSeenAt: NOW - index * MINUTE, ...changes });
 const market = (index, changes = {}) => ({ address: token(index), marketCap: 50_000, liquidity: 20_000, volume5m: 2_000, buys5m: 20, sells5m: 5, pairCreatedAt: NOW - 30 * MINUTE, ...changes });
-const promote = (state, markets, hotList = []) => promotions(state, markets, { now: NOW, settings: scannerSettings, hotList: new Set(hotList) });
+const promote = (state, markets, excluded = []) => promotions(state, markets, { now: NOW, settings: scannerSettings, excluded: new Set(excluded) });
 
 test('the watch checks the tokens checked longest ago first, newest pools first among equals, one batch at a time', () => {
   const state = { cursor: 1, pools: [pool(1, { checkedAt: NOW - MINUTE }), pool(2), pool(3, { checkedAt: NOW - 2 * MINUTE })] };
@@ -16,7 +16,7 @@ test('the watch checks the tokens checked longest ago first, newest pools first 
   assert.equal(watchTargets(many, [], NOW).length, WATCH_BATCH);
 });
 
-test('a watched token is promoted only inside every threshold, off the hot list and not read recently', () => {
+test('a watched token is promoted only inside every threshold, when not excluded, and not read or rejected recently', () => {
   const state = { cursor: 1, pools: [pool(1)] };
   assert.deepEqual(promote(state, [market(1)]), [token(1)]);
   for (const [scenario, changes] of [
@@ -28,9 +28,11 @@ test('a watched token is promoted only inside every threshold, off the hot list 
     ['too few buys', { buys5m: scannerSettings.onchainMinBuys5m - 1 }],
     ['pool too young for the screen', { pairCreatedAt: NOW - scannerSettings.minAgeSec * 1000 + 1 }]
   ]) assert.deepEqual(promote(state, [market(1, changes)]), [], scenario);
-  assert.deepEqual(promote(state, [market(1)], [token(1)]), [], 'the hot list already screens it');
+  assert.deepEqual(promote(state, [market(1)], [token(1)]), [], 'excluded: on the hot list, or vetoed');
   assert.deepEqual(promote({ cursor: 1, pools: [pool(1, { promotedAt: NOW - 4 * MINUTE })] }, [market(1)]), [], 'read four minutes ago');
   assert.deepEqual(promote({ cursor: 1, pools: [pool(1, { promotedAt: NOW - 6 * MINUTE })] }, [market(1)]), [token(1)], 'read six minutes ago');
+  assert.deepEqual(promote({ cursor: 1, pools: [pool(1, { promotedAt: NOW - 6 * MINUTE, rejectedAt: NOW - 29 * MINUTE })] }, [market(1)]), [], 'rejected 29 minutes ago');
+  assert.deepEqual(promote({ cursor: 1, pools: [pool(1, { promotedAt: NOW - 31 * MINUTE, rejectedAt: NOW - 31 * MINUTE })] }, [market(1)]), [token(1)], 'rejected 31 minutes ago');
   const busiest = promote(state, [market(1, { volume5m: 500 }), market(2, { volume5m: 9_000 }), market(3, { volume5m: 3_000 })]);
   assert.deepEqual(busiest, [token(2), token(3)].slice(0, MAX_PROMOTIONS_PER_CYCLE));
 });
@@ -45,12 +47,12 @@ test('the watchlist adds new pools, records what a check found, and drops unlist
     pool(6, { firstSeenAt: NOW - 5 * MINUTE })
   ] };
   const next = nextWatchState(state, { newPools: { toBlock: 200, pools: [{ token: token(7), pool: 'p', venue: 'Uniswap v3' }, { token: token(6), pool: 'q', venue: 'x' }] },
-    checked: [token(5), token(6)], markets: [market(5), market(6, { volume5m: 0, buys5m: 0, sells5m: 0 })], promoted: [token(5)], now: NOW });
+    checked: [token(5), token(6)], markets: [market(5), market(6, { volume5m: 0, buys5m: 0, sells5m: 0 })], promoted: [token(5)], rejected: [token(5)], now: NOW });
   assert.equal(next.cursor, 200);
   assert.deepEqual(next.pools.map(item => item.token), [token(7), token(6), token(5)], 'unlisted (1, 2), idle (3) and old (4) pools leave; new and checked ones stay');
   assert.deepEqual(next.pools[0], { token: token(7), pool: 'p', venue: 'Uniswap v3', firstSeenAt: NOW });
   assert.deepEqual(next.pools[1], { ...pool(6, { firstSeenAt: NOW - 5 * MINUTE }), checkedAt: NOW, listedAt: NOW }, 'listed but not traded; its first pool is kept');
-  assert.deepEqual(next.pools[2], { ...state.pools[4], checkedAt: NOW, listedAt: NOW, tradedAt: NOW, promotedAt: NOW });
+  assert.deepEqual(next.pools[2], { ...state.pools[4], checkedAt: NOW, listedAt: NOW, tradedAt: NOW, promotedAt: NOW, rejectedAt: NOW });
 });
 
 test('a failed log read keeps the cursor, and the watchlist is capped at its newest 500 pools', () => {

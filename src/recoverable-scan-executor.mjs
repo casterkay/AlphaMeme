@@ -44,7 +44,7 @@ async function record(request, operation, onValue, onError) {
   return onValue(value);
 }
 
-export async function executeRecoverableScanStep({ scanner, cycleId, ave, secondary = new SecondaryValidator(), chainLogs = new ChainLogs({ apiKey: null }), dexMarkets = fetchDexMarkets, request, onFinalized = null, now = Date.now }) {
+export async function executeRecoverableScanStep({ scanner, cycleId, ave, secondary = new SecondaryValidator(), chainLogs = new ChainLogs({ rpcUrls: {} }), dexMarkets = fetchDexMarkets, request, onFinalized = null, now = Date.now }) {
   if (!scanner || typeof scanner.nextRequest !== 'function' || typeof scanner.advanceLocal !== 'function'
     || typeof scanner.recordRequest !== 'function' || typeof scanner.commitClassification !== 'function'
     || typeof scanner.recordOutcomeSample !== 'function' || !ave || !secondary || typeof secondary.fetchSource !== 'function'

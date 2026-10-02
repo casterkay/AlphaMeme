@@ -58,16 +58,23 @@ function optionalVar(env, name) {
   return value.trim();
 }
 
-/** The chains with an RPC URL are tradable; an empty RPC var disables its chain. */
+/** Each chain's one JSON-RPC URL, shared by chain reads (new-pool discovery) and trading; an empty var leaves the chain out. */
+export function chainRpcUrls(env) {
+  const urls = {};
+  for (const [chain, facts] of Object.entries(TRADE_CHAINS)) {
+    const rpc = optionalVar(env, facts.rpcVar);
+    if (rpc) urls[chain] = httpsUrl(facts.rpcVar, rpc);
+  }
+  return Object.freeze(urls);
+}
+
+/** The chains with an RPC URL are tradable, once the user has a wallet; an empty RPC var disables its chain. */
 export function parseTradingConfig(env) {
   const clientId = optionalVar(env, 'KYBER_CLIENT_ID');
   const chains = {};
-  for (const [chain, facts] of Object.entries(TRADE_CHAINS)) {
-    const rpc = optionalVar(env, facts.rpcVar);
-    if (!rpc) continue;
-    const explorer = optionalVar(env, facts.explorerVar);
-    chains[chain] = Object.freeze({ ...facts, chain, rpcUrl: httpsUrl(facts.rpcVar, rpc),
-      explorerUrl: explorer ? httpsUrl(facts.explorerVar, explorer) : facts.defaultExplorer });
+  for (const [chain, rpcUrl] of Object.entries(chainRpcUrls(env))) {
+    const facts = TRADE_CHAINS[chain], explorer = optionalVar(env, facts.explorerVar);
+    chains[chain] = Object.freeze({ ...facts, chain, rpcUrl, explorerUrl: explorer ? httpsUrl(facts.explorerVar, explorer) : facts.defaultExplorer });
   }
   if (Object.keys(chains).length && !/^[\x21-\x7e]{1,128}$/.test(clientId)) {
     throw new TradingError('TRADING_CONFIG_INVALID', 'KYBER_CLIENT_ID is required when any chain RPC URL is set');

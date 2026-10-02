@@ -12,9 +12,7 @@ than GMGN deep-audit passes. Current interface changes are tracked in the
 ## Configuration
 
 Keep these secrets out of source control: `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_WEBHOOK_SECRET`, `MASTER_ENC_KEY`, and `OPERATOR_TOKEN`, and the optional
-`ALCHEMY_API_KEY`, which turns on new-pool discovery from chain logs on Arc and
-Robinhood. It is separate from the trading RPC URLs, so setting it does not enable trading.
+`TELEGRAM_WEBHOOK_SECRET`, `MASTER_ENC_KEY`, and `OPERATOR_TOKEN`.
 Set `TELEGRAM_BOT_USERNAME` to the username verified with Telegram for this bot
 (without `@`). Commands without a mention work without that setting; mentioned
 commands are rejected until the username is configured. The worker does not
@@ -22,9 +20,11 @@ accept an AVE key from an environment fallback: each owner connects through
 Telegram onboarding. `AVE_MONTHLY_CU` and `AVE_CU_RESET_DAY` in `wrangler.jsonc`
 set the plan allowance that admission paces requests against.
 
-Trading is configured by `vars`: `KYBER_CLIENT_ID` and one https RPC URL per chain
-(`ARC_RPC_URL`, `BSC_RPC_URL`, `BASE_RPC_URL`, `ETH_RPC_URL`; empty disables the
-chain), plus optional explorer bases (`ARC_EXPLORER_URL` has no default). The
+Chain reads and trading share one https RPC URL per chain (`ARC_RPC_URL`,
+`BSC_RPC_URL`, `BASE_RPC_URL`, `ETH_RPC_URL`; empty disables the chain). New-pool
+discovery reads Arc's pool factories through `ARC_RPC_URL`, which must serve
+`eth_getLogs` over 500-block ranges; a user trades on a chain once they create a
+wallet. Trading also needs `KYBER_CLIENT_ID`, plus optional explorer bases (`ARC_EXPLORER_URL` has no default). The
 config is parsed when the Telegram runtime starts; a malformed value fails every
 request loudly rather than disabling a chain silently. The KyberSwap `arc` slug
 and ERC-20 USDC quoting on Arc are unverified from the development sandbox and
