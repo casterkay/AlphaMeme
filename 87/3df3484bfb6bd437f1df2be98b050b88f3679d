@@ -1,0 +1,21 @@
+test/telegram-panels.test.mjs
+  s_c497d5c9be8144::t_8823aa3de196ea 450
+src/bot/panels.mjs
+  s_c497d5c9be8144::t_8823aa3de196ea 487
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "873df3484bfb6bd437f1df2be98b050b88f3679d",
+  "prompts": {},
+  "sessions": {
+    "s_c497d5c9be8144": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8085513b-ad2a-4dd3-8a17-ea2aaa056937",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
