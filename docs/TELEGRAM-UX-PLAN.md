@@ -485,7 +485,10 @@ time per tenant; scheduler priority equals `command`.
 - **A clean lookup verifies only while fresh** (amended in #87 review):
   `safetyState` treats it as `VERIFIED` for 15 minutes from its GoPlus read, then
   `UNVERIFIED`, so a later buy asks Yes/No again. The detail keeps its verdict
-  with "checked 20m ago". A veto never goes stale.
+  and says the check is stale: "✅ No failures found · checked 20m ago · stale,
+  paste the address again to re-check". The Yes/No question then reads
+  "⚠️ Safety check is stale" and "GoPlus and DexScreener checked this token 20m
+  ago; that check is stale." (amended in #92). A veto never goes stale.
 - Detail shows the source and age: "AVE · 20s ago".
 - DexScreener and GoPlus receive an address only after AVE has confirmed it as a
   token on that chain; `NOT_FOUND` and `FAILED` end the lookup first. (The 32-byte

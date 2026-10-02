@@ -13,6 +13,7 @@ import { safetyState, TradeRefusal } from '../src/trading/engine.mjs';
 import { aggregateSecondarySources } from '../src/providers/secondary.mjs';
 import { swapCalldata } from '../test/fixtures/kyber-calldata.mjs';
 import { revealTradingKey, tradingWalletEnvelope } from '../src/trading/wallet.mjs';
+import { LOOKUP_SETTINGS } from '../src/lookup.mjs';
 
 const start = 1_800_000_000_000;
 const masterKey = { activeVersion: '1', keys: { '1': 'trading-runtime-master-key' } };
@@ -526,6 +527,31 @@ describe('buying before the safety check verified a token', () => {
     });
   });
 
+  it('says a pasted token\'s clean check is stale once it is too old to verify a buy, on the detail and in the Buy question', async () => {
+    await withTrading('lookup-stale-question', async ({ runtime, paste, lookupStep, click, link, command, sessions, createWallet, trades, lastText, clock }) => {
+      await createWallet();
+      const detail = await paste(TOKEN);
+      // Open the detail afresh from the Watchlist; an older panel's buttons have expired by then.
+      const open = async () => { await command('watchlist');const list = sessions().at(-1);await click(link(list, 'panel.open', params => params.panel === 'detail'));return list; };
+      const details = async () => ({ token: { symbol: 'MEME', name: 'Meme', current_price_usd: 0.001, market_cap: 1000, main_pair_tvl: 500, tvl: null, holders: 10, launch_at: null, created_at: null, token_price_change_5m: null, token_tx_volume_usd_5m: null }, capturedAt: clock.now() });
+      const secondary = { fetchSource: async ({ source }) => source === 'dexScreener'
+        ? { source: { status: 'OK' }, market: { complete: true, priceUsd: 0.001, marketCap: 1000, liquidityUsd: 500, pairUrl: '', websites: [] } }
+        : { source: { status: 'OK' }, security: VERIFIED.security } };
+      for (let index = 0; index < 3; index++) await lookupStep({ details, secondary });
+      await click(link(runtime().commands.sessions.get(detail.id), 'favorite.set'));
+      clock.advance(LOOKUP_SETTINGS.verifiedMs);
+      await open();
+      expect(lastText()).toMatch(/✅ No failures found · checked 15m ago\n/);
+      clock.advance(1);
+      const list = await open();
+      expect(lastText()).toMatch(/✅ No failures found · checked 15m ago · stale, paste the address again to re-check\n/);
+      await click(link(list, 'trade.buy', params => params.usd === 10));
+      expect(runtime().commands.sessions.get(list.id).panel).toBe('trade_unverified');
+      expect(lastText()).toMatch(/⚠️ Safety check is stale[\s\S]*GoPlus and DexScreener checked this token 15m ago; that check is stale\./);
+      expect(trades()).toEqual([]);
+    });
+  });
+
   it('offers no buy of a watched token whose lookup was vetoed more than 24 h ago', async () => {
     await withTrading('lookup-veto-watched', async ({ runtime, paste, lookupStep, click, link, has, command, sessions, createWallet, clock }) => {
       await createWallet();
@@ -536,7 +562,7 @@ describe('buying before the safety check verified a token', () => {
         : { source: { status: 'OK' }, security: FATAL.security } };
       for (let index = 0; index < 3; index++) await lookupStep({ details, secondary });
       await click(link(runtime().commands.sessions.get(detail.id), 'favorite.set'));
-      clock.advance(24 * 60 * 60_000 + 1);
+      clock.advance(LOOKUP_SETTINGS.expiryMs + 1);
       await command('watchlist');
       const list = sessions().at(-1);
       await click(link(list, 'panel.open', params => params.panel === 'detail'));

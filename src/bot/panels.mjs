@@ -114,7 +114,8 @@ function safetyLine(safety,snapshot,locale) {
   const L = (zh,en) => localize(locale,zh,en);
   if (!safety.verdict) return `${ICONS.unknown} ${L('未经安全核验','Not safety-checked')}`;
   if (safety.verdict === 'PENDING') return safetyBadge('PENDING',locale);
-  const checked = present(safety.checkedAt) ? ` · ${L(`${relativeTime(safety.checkedAt,snapshot.at,locale)}核验`,`checked ${relativeTime(safety.checkedAt,snapshot.at,locale)}`)}` : '';
+  // A lookup's clean check too old to verify a buy says so, as the Buy question does.
+  const checked = present(safety.checkedAt) ? ` · ${L(`${relativeTime(safety.checkedAt,snapshot.at,locale)}核验`,`checked ${relativeTime(safety.checkedAt,snapshot.at,locale)}`)}${safety.stale ? ` · ${L('已过期，重新粘贴地址即可重新核验','stale, paste the address again to re-check')}` : ''}` : '';
   const { failed, blocking, goPlusMissing, unknown, conflicts } = safety.counts, plural = (count,one,many) => count === 1 ? one : many;
   const details = safety.verdict === 'VETOED' ? [...new Set(safety.reasons)].map(value => fieldLabels[value] ? L(...fieldLabels[value]) : safeTelegramText(value,48))
     : safety.verdict === 'PASSED' ? [] : [
@@ -215,7 +216,7 @@ const LOOKUP_CHECK_FAILURES = { DEXSCREENER:['DexScreener 检查未完成','the 
 function lookupDetail(snapshot,session,locale,lookup,listed) {
   const L = (zh,en) => localize(locale,zh,en), identity = token(lookup), annotation = annotationFor(snapshot,lookup);
   // A recorded veto stands until a later complete check clears it, whatever this run's state.
-  const safety = lookup.veto ? { verdict:'VETOED', checkedAt:lookup.veto.checkedAt, reasons:lookup.veto.fields, counts:{} } : tokenSafety(lookup);
+  const safety = lookup.veto ? { verdict:'VETOED', checkedAt:lookup.veto.checkedAt, reasons:lookup.veto.fields, counts:{} } : { ...tokenSafety(lookup), stale:lookup.stale };
   const where = chainLabel(lookup.chain), others = SCAN_CHAINS.filter(chain => chain !== lookup.chain);
   const status = ['DETAILS','DEXSCREENER','GOPLUS'].includes(lookup.state)
     ? lookup.state === 'DETAILS' && snapshot.ave?.readyAt > snapshot.at ? `${ICONS.checking} ${L('等待AVE额度','Waiting for AVE capacity')}` : `${ICONS.checking} ${L(`正在 ${where} 上查询…`,`Looking up on ${where}…`)}`

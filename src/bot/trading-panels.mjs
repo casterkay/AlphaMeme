@@ -124,16 +124,20 @@ function tradePanel(snapshot, session, locale) {
   return finishPanel(L('交易', 'Trade'), blocks, keyboard, snapshot, session, locale);
 }
 
-/** The Yes/No question before buying a token the safety check has not verified. */
+/** The Yes/No question before buying a token the safety check has not verified, or verified too long ago. */
 function unverifiedBuyPanel(snapshot, session, locale) {
-  const L = L_(locale), request = session.query?.unverifiedBuy, title = `${ICONS.unknown} ${L('安全核验未完成', 'Safety check not finished')}`;
+  const L = L_(locale), request = session.query?.unverifiedBuy;
+  const same = row => row.chain === request.chain && row.address?.toLowerCase() === request.token.toLowerCase();
+  // As in safetyState, a candidate's check outranks a lookup's.
+  const candidate = request && snapshot.candidates.find(same), lookup = request && !candidate ? (snapshot.lookups ?? []).find(same) : null;
+  const title = `${ICONS.unknown} ${lookup?.stale ? L('安全核验已过期', 'Safety check is stale') : L('安全核验未完成', 'Safety check not finished')}`;
   if (!request) return finishPanel(title, [L('此买入请求已不可用。', 'This buy request is no longer available.')], [], snapshot, session, locale, { refresh: false });
-  const known = [...snapshot.candidates, ...Object.values(snapshot.feedByChain ?? {}).flatMap(feed => feed.rows)]
-    .find(row => row.chain === request.chain && row.address?.toLowerCase() === request.token.toLowerCase());
+  const known = candidate ?? Object.values(snapshot.feedByChain ?? {}).flatMap(feed => feed.rows).find(same);
   const name = known?.symbol ? userText(known.symbol, 30) : `<code>${userText(request.token, 42)}</code>`;
-  const amount = centsText(request.usdCents);
+  const amount = centsText(request.usdCents), checked = lookup?.stale ? relativeTime(lookup.secondary?.checkedAt, snapshot.at, locale) : null;
   return finishPanel(title, [`${name} · ${chainLabel(request.chain)} — ${L(`买入 ${amount}？`, `buy ${amount}?`)}`,
-    L('GoPlus 和 DexScreener 尚未核验此代币。', 'GoPlus and DexScreener have not verified this token yet.'),
+    checked ? L(`GoPlus 和 DexScreener 于${checked}核验此代币，结果已过期。`, `GoPlus and DexScreener checked this token ${checked}; that check is stale.`)
+      : L('GoPlus 和 DexScreener 尚未核验此代币。', 'GoPlus and DexScreener have not verified this token yet.'),
     L('它可能是貔貅盘，或含隐藏税费。', 'It could be a honeypot or carry hidden taxes.')],
   [[button(L('是', 'Yes'), 'trade.acknowledge_unverified'), button(L('否', 'No'), 'trade.decline_unverified')]], snapshot, session, locale, { refresh: false });
 }

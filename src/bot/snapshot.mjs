@@ -3,7 +3,7 @@ import { CHART_RISK_VERSION, applyRiskExclusion } from '../scoring/chart-risk.mj
 import { effectiveStatus } from '../scoring/manual-review.mjs';
 import { DEFAULT_SCAN_CHAIN, SCAN_CHAINS } from '../chains.mjs';
 import { readSchedulerStateInTransaction } from '../storage/scheduler-state.mjs';
-import { listLookups, lookupVerdict, LOOKUP_SETTINGS } from '../lookup.mjs';
+import { listLookups, lookupVerdict, lookupVerified, LOOKUP_SETTINGS } from '../lookup.mjs';
 import { normalizeTenantId } from '../storage/tenant-id.mjs';
 
 export const tokenIdentity = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
@@ -91,7 +91,7 @@ function projectSecondary(source) {
 }
 
 /** A pasted token's lookup: its progress, AVE market facts and, once done, its check. */
-export function projectTelegramLookup(record) {
+export function projectTelegramLookup(record, now) {
   const market = record.market || {};
   const numbers = ['price','marketCap','liquidity','holders','createdAt','priceChange5m','volume5m','capturedAt'];
   return {
@@ -100,7 +100,10 @@ export function projectTelegramLookup(record) {
     failedStep: record.state !== 'FAILED' ? null : !record.market ? 'DETAILS' : !record.sources.dexScreener ? 'DEXSCREENER' : 'GOPLUS',
     symbol: safeTelegramText(market.symbol, 30), name: safeTelegramText(market.name, 80),
     ...Object.fromEntries(numbers.map(key => [key, typeof market[key] === 'number' && Number.isFinite(market[key]) ? market[key] : null])),
-    verdict: lookupVerdict(record), secondary: record.secondary ? projectSecondary(record.secondary) : null,
+    verdict: lookupVerdict(record),
+    // A clean check that is too old to verify a buy (safetyState's rule), so a buy asks again.
+    stale: lookupVerdict(record) === 'PASSED' && !lookupVerified(record, now),
+    secondary: record.secondary ? projectSecondary(record.secondary) : null,
     veto: record.veto && { checkedAt: record.veto.checkedAt, fields: record.veto.fatal.map(item => safeTelegramText(item.field, 48)) }
   };
 }
@@ -164,7 +167,7 @@ export function readTelegramSnapshot(storage, tenant, now = Date.now()) {
     return {
       at: now, language: preferences['telegram.language'] === 'en' ? 'en' : 'zh', control,
       candidates, annotations, marks, events, queue, delivery, metrics,
-      lookups: listLookups(storage, tenantId).filter(record => record.veto || now - record.startedAt < LOOKUP_SETTINGS.expiryMs).map(projectTelegramLookup),
+      lookups: listLookups(storage, tenantId).filter(record => record.veto || now - record.startedAt < LOOKUP_SETTINGS.expiryMs).map(record => projectTelegramLookup(record, now)),
       sourceHealth: projectSourceHealth(state['runtime.sourceHealth'] || {}),
       feedByChain: Object.fromEntries(SCAN_CHAINS.filter(chain => state['feed.snapshot:'+chain]).map(chain => {
         const feed=state['feed.snapshot:'+chain];
