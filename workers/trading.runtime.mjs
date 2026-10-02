@@ -526,6 +526,25 @@ describe('buying before the safety check verified a token', () => {
     });
   });
 
+  it('offers no buy of a watched token whose lookup was vetoed more than 24 h ago', async () => {
+    await withTrading('lookup-veto-watched', async ({ runtime, paste, lookupStep, click, link, has, command, sessions, createWallet, clock }) => {
+      await createWallet();
+      const detail = await paste(TOKEN);
+      const details = async () => ({ token: { symbol: 'MEME', name: 'Meme', current_price_usd: 0.001, market_cap: 1000, main_pair_tvl: 500, tvl: null, holders: 10, launch_at: null, created_at: null, token_price_change_5m: null, token_tx_volume_usd_5m: null }, capturedAt: clock.now() });
+      const secondary = { fetchSource: async ({ source }) => source === 'dexScreener'
+        ? { source: { status: 'OK' }, market: { complete: true, priceUsd: 0.001, marketCap: 1000, liquidityUsd: 500, pairUrl: '', websites: [] } }
+        : { source: { status: 'OK' }, security: FATAL.security } };
+      for (let index = 0; index < 3; index++) await lookupStep({ details, secondary });
+      await click(link(runtime().commands.sessions.get(detail.id), 'favorite.set'));
+      clock.advance(24 * 60 * 60_000 + 1);
+      await command('watchlist');
+      const list = sessions().at(-1);
+      await click(link(list, 'panel.open', params => params.panel === 'detail'));
+      expect(runtime().commands.sessions.get(list.id).panel).toBe('detail');
+      expect(has(list, 'trade.buy')).toBe(false);expect(has(list, 'trade.sell')).toBe(true);
+    });
+  });
+
   it('asks Yes/No before a preset buy of an unverified token: No requests nothing, Yes quotes with a warning', async () => {
     await withTrading('unverified-preset', async ({ runtime, network, sent, click, link, run, seed, createWallet, openDetail, trades, tradeOf, lastText }) => {
       seed('arc', 'LIVE_READY', null);await createWallet();network.fund('arc', 50n * 10n ** 18n, { [ARC_USDC_ERC20]: 50_000_000n });
