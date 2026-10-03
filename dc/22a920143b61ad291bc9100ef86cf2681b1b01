@@ -1,0 +1,33 @@
+docs/reports/2026-10-03-arc-baseline-468-backtest.json
+  s_02320cd7492a13::t_a809adaaa36034 413-414,1395-1907
+docs/reports/2026-10-03-arc-baseline-468-backtest.md
+  s_02320cd7492a13::t_931a2644661818 15,318-365,368,375,387
+docs/reports/2026-10-03-arc-followup-studies.json
+  s_02320cd7492a13::t_dc082709b6e52a 1-512
+docs/reports/2026-10-03-arc-followup-studies.md
+  s_02320cd7492a13::t_28e502bd777326 1-80
+scripts/arc-backtest/README.md
+  s_02320cd7492a13::t_deffee637b5cfd 24
+scripts/arc-backtest/replay.mjs
+  s_02320cd7492a13::t_5cf18dcb34bb2a 78,92,125-131
+scripts/arc-backtest/run.mjs
+  s_02320cd7492a13::t_251c4ccc264ad6 21,37-39,111,119,126
+test/arc-backtest-replay.test.mjs
+  s_02320cd7492a13::t_3bebd69b57a2b7 167-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "dc22a920143b61ad291bc9100ef86cf2681b1b01",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
