@@ -8,6 +8,7 @@ import { RecoverableScannerError } from './storage/recoverable-scanner.mjs';
 import { completeScannerSettings } from './scanner-settings.mjs';
 import { POOL_SOURCES } from './providers/chain-logs.mjs';
 import { nextWatchState, promotions, watchTargets } from './onchain-watch.mjs';
+import { withStages } from './lead-stages.mjs';
 
 // One cycle reads the chain's AVE trending list, screens it with upstream's
 // AVE market screen, and turns every passing token into a lead immediately.
@@ -142,12 +143,30 @@ function feedRow(row, screen) {
 // The screen's ruleset and per-rule verdicts, stored with each candidate and outcome row it decided.
 const screenRecord = screen => ({ ruleset: screen.ruleset, verdicts: screen.verdicts });
 
+// What a lead's launchedAt stage reads, by the screen's age basis: AVE's launch time, AVE's token creation, or the
+// creation of the token's first pool on DexScreener (seconds; not the block time of the pool the logs showed).
+const LAUNCH_BASIS = Object.freeze({ launch: 'launch', token: 'tokenCreation', pool: 'firstPool' });
+
+// A new lead's stage times up to its creation: its launch, the watch's first sightings of its pool when it
+// watched one, and its first screen (with that screen's reasons), else this one.
+function leadStages(row, screen, pool, chain, now) {
+  const stages = withStages({}, { launchedAt: screen.createdAt > 0 ? screen.createdAt * 1000 : null, logSeenAt: pool?.firstSeenAt,
+    listedAt: pool?.firstListedAt, promotableAt: pool?.firstPromotableAt, screenedAt: pool?.firstScreenedAt ?? now, leadCreatedAt: now },
+  { chain, address: row.address });
+  return { stages, ...(Object.hasOwn(stages, 'launchedAt') ? { launchedAtBasis: LAUNCH_BASIS[screen.ageBasis] } : {}),
+    firstScreenReasons: pool?.firstScreenedAt !== undefined ? pool.firstScreenReasons : screen.reasons };
+}
+
 // A lead's clock is its quote's observation time; retaining it never refreshes that evidence.
-function leadCandidate(row, screen, chain, previous, observedAt, settings) {
+// A new lead takes `stages`; a retained one keeps the stage record it has, if any.
+function leadCandidate(row, screen, chain, previous, observedAt, settings, stages = null) {
   const token = publicToken(row, screen, chain);
-  const qualifiedAt = previous?.status === 'LIVE_READY' && Number.isSafeInteger(previous.metadata?.qualifiedAt)
+  const retained = previous?.status === 'LIVE_READY';
+  const { stages: kept, launchedAtBasis, firstScreenReasons } = previous?.metadata ?? {};
+  const staged = retained ? kept && { stages: kept, ...(launchedAtBasis ? { launchedAtBasis } : {}), firstScreenReasons } : stages;
+  const qualifiedAt = retained && Number.isSafeInteger(previous.metadata?.qualifiedAt)
     ? previous.metadata.qualifiedAt : observedAt;
-  const revision = previous?.status === 'LIVE_READY' ? previous.reviewRevision : `lead-${chain}-${qualifiedAt}`;
+  const revision = retained ? previous.reviewRevision : `lead-${chain}-${qualifiedAt}`;
   return {
     ...token,
     status: 'LIVE_READY',
@@ -159,7 +178,7 @@ function leadCandidate(row, screen, chain, previous, observedAt, settings) {
     deep: {},
     social: socialFrom(token),
     info: { twitter: token.twitter, website: '' },
-    metadata: { qualifiedAt, lastConfirmedAt: observedAt, screen: screenRecord(screen) }
+    metadata: { qualifiedAt, lastConfirmedAt: observedAt, screen: screenRecord(screen), ...staged }
   };
 }
 
@@ -335,8 +354,8 @@ export class RecoverableScanner {
         // The hot list screens its own tokens; a vetoed token never becomes a lead again.
         const excluded = new Set([...discoveryRows(partial.discovery).map(row => addressKey(row.address)),
           ...markets.map(market => market.address).filter(address => this.store.readCandidate(current.chain, address)?.status === 'HARD_REJECT')]);
-        partial.discovery.promoted = promotions(this.store.readWatchState(current.chain), markets,
-          { now: collectedAt, settings: this.#cycleSettings(current), excluded });
+        Object.assign(partial.discovery, promotions(this.store.readWatchState(current.chain), markets,
+          { now: collectedAt, settings: this.#cycleSettings(current), excluded }));
       }
       endpointIndex += 1;
       if (endpointIndex === discoveryEndpoints(current.chain, partial).length) {
@@ -443,11 +462,19 @@ export class RecoverableScanner {
     // A promoted row's clock is the watch's DexScreener read, not the hot list's.
     const observedFor = row => row.discoverySource === 'newPool' ? num(row.capturedAt, observedAt) : observedAt;
     const screened = rows.map(row => ({ row, screen: discoveryScreen(row, { ...settings, chain }, now / 1000) }));
+    // The watchlist after this screen, from which a new lead reads its pool's first sightings.
+    const watching = POOL_SOURCES[chain] && partial.onchainOffReason === null;
+    const { newPools, watch } = partial.discovery?.responses || {}, promoted = partial.discovery?.promoted || [];
+    const watchState = watching ? nextWatchState(this.store.readWatchState(chain), { newPools: newPools?.value ?? null, checked: watch?.value?.addresses || [],
+      markets: watch?.value?.markets || [], promotable: partial.discovery?.promotable || [],
+      screened: new Map(screened.filter(({ row }) => row.discoverySource === 'newPool').map(({ row, screen }) => [row.address, screen.reasons])), now }) : null;
+    const watched = new Map((watchState?.pools || []).map(pool => [addressKey(pool.token), pool]));
     const leads = [], eliminated = [], events = [], rejected = [];
     for (const { row, screen } of screened) {
       const previous = this.store.readCandidate(chain, row.address);
       if (screen.pass && previous?.status !== 'HARD_REJECT') {
-        const lead = leadCandidate(row, screen, chain, previous, observedFor(row), settings);
+        const lead = leadCandidate(row, screen, chain, previous, observedFor(row), settings,
+          previous?.status === 'LIVE_READY' ? null : leadStages(row, screen, watched.get(addressKey(row.address)), chain, now));
         leads.push({ row, screen, candidate: lead, previous });
         if (previous?.status !== 'LIVE_READY') {
           events.push({ address: lead.address, effectType: 'CANDIDATE_NEW', type: 'CANDIDATE_NEW',
@@ -510,14 +537,8 @@ export class RecoverableScanner {
     };
     const sourceHealth = { discovery: { provider: 'AVE', complete: !discoveryError, checkedAt: now,
       trending: discoveryError ? { ok: false, code: discoveryError.code } : { ok: true, count: trending.length } } };
-    let watchState = null;
-    if (POOL_SOURCES[chain] && partial.onchainOffReason !== null) sourceHealth.discovery.newPools = { ok: false, code: partial.onchainOffReason };
-    else if (POOL_SOURCES[chain]) {
-      const { newPools, watch } = partial.discovery?.responses || {};
-      const promoted = partial.discovery?.promoted || [];
-      const passed = new Set(screened.filter(({ row, screen }) => row.discoverySource === 'newPool' && screen.pass).map(({ row }) => addressKey(row.address)));
-      watchState = nextWatchState(this.store.readWatchState(chain), { newPools: newPools?.value ?? null, checked: watch?.value?.addresses || [],
-        markets: watch?.value?.markets || [], promoted, passed: promoted.filter(address => passed.has(addressKey(address))), now });
+    if (POOL_SOURCES[chain] && !watching) sourceHealth.discovery.newPools = { ok: false, code: partial.onchainOffReason };
+    else if (watching) {
       const endpoint = (response, count) => response?.error ? { ok: false, code: response.error.code } : { ok: true, count };
       // The watch's DexScreener requests this cycle, and how many failed; their tokens wait for the next read.
       Object.assign(sourceHealth.discovery, { newPools: endpoint(newPools, newPools?.value?.pools?.length ?? 0),
@@ -568,6 +589,10 @@ export class RecoverableScanner {
       : { ...token };
     candidate.secondary = secondary;
     candidate.decisionReason = [vetoed ? '' : token.decisionReason, secondaryReason].filter(Boolean).join('；');
+    // A lead's first complete GoPlus check is one of its stages.
+    if (secondary.complete && token.metadata?.stages) {
+      candidate.metadata = { ...token.metadata, stages: withStages(token.metadata.stages, { goPlusCompleteAt: now }, { chain: current.chain, address: candidate.address }) };
+    }
     const queue = {
       ...item,
       lastAuditedAt: now,

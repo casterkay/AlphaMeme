@@ -1,6 +1,7 @@
 import { AVE_CU } from '../providers/ave.mjs';
 import { VOICE_TTL } from '../../public/voice-alerts.mjs';
 import { emptyWatchState } from '../onchain-watch.mjs';
+import { withStages } from '../lead-stages.mjs';
 import { DISCOVERY_REJECT } from '../scoring/outcomes.mjs';
 import { completeScannerSettings } from '../scanner-settings.mjs';
 import { assertCheckpointGeneration, SqliteControlStateStore } from './control-state.mjs';
@@ -23,6 +24,28 @@ const MAX_PUBLIC_CANDIDATES = 200;
 // so an alert never points at a token the radar has forgotten. Binds tenant, chain, tenant, chain, tenant, alerted-since.
 const KEPT_TOKEN = `address NOT IN (SELECT address FROM annotations WHERE tenant_id = ? AND chain = ? AND favorite = 1)
   AND (? || ':' || address) NOT IN (SELECT key FROM json_each(COALESCE((SELECT json_extract(value_json, '$.notified') FROM scheduler_state WHERE tenant_id = ? AND key = 'notification.baseline'), '{}')) WHERE value >= ?)`;
+
+/**
+ * Record a stage reached after a lead's creation (its alert enqueued or delivered) on the stored lead, inside the
+ * caller's transaction. A token with no stage record is left as is; one whose record cannot be read is logged
+ * and skipped, since a measurement never holds an alert back. Writes the row only when the stage is new.
+ */
+export function recordLeadStageInTransaction(storage, tenantId, { chain: chainName, address }, stage, at) {
+  const row = storage.sql.exec('SELECT metadata_json FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ?', tenantId, chainName, address).toArray()[0];
+  let stages;
+  try {
+    stages = row?.metadata_json ? JSON.parse(row.metadata_json)?.stages : null;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    console.log(JSON.stringify({ event: 'lead_stage_unreadable', chain: chainName, address, stage }));
+    return;
+  }
+  if (!stages || typeof stages !== 'object') return;
+  const next = withStages(stages, { [stage]: at }, { chain: chainName, address });
+  if (next[stage] === stages[stage]) return;
+  storage.sql.exec("UPDATE candidates SET metadata_json = json_set(metadata_json, '$.stages', json(?)) WHERE tenant_id = ? AND chain = ? AND address = ?",
+    JSON.stringify(next), tenantId, chainName, address);
+}
 
 export class RecoverableScannerError extends Error {
   constructor(code, message) {

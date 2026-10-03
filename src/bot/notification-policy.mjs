@@ -1,6 +1,7 @@
 import { voiceEligible, voiceKey, VOICE_TTL } from '../../public/voice-alerts.mjs';
 import { DEFAULT_SCAN_CHAIN } from '../chains.mjs';
 import { readSchedulerStateInTransaction } from '../storage/scheduler-state.mjs';
+import { recordLeadStageInTransaction } from '../storage/recoverable-scanner.mjs';
 
 const STATE_KEY = 'notification.baseline';
 const EVENT_TTL = 30 * 60_000;
@@ -158,6 +159,7 @@ export class NotificationPolicy {
       for (const row of sending) {
         const descriptor = enqueue('CANDIDATE_NEW', [{ chain: row.chain, address: row.address, revision: row.revision }]);
         console.log(JSON.stringify({ event: 'notification_enqueued', id: descriptor.id, actionReason: 'CANDIDATE_NEW', addresses: [row.address] }));
+        recordLeadStageInTransaction(this.storage, this.tenantId, row, 'alertEnqueuedAt', now);
       }
       const events = this.query("SELECT id,at,chain,address FROM events WHERE tenant_id=? AND type='RISK_WORSENED' AND at>? ORDER BY at,id", Math.max(state.at, now - EVENT_TTL));
       for (const event of events) {
@@ -189,7 +191,10 @@ export class NotificationPolicy {
     for (const member of descriptor.members) {
       const key = voiceKey(member);
       state.eventDedup[`${descriptor.actionReason}:${key}`] = now;
-      if (descriptor.actionReason === 'CANDIDATE_NEW') { if (delivered) state.notified[key] = now; state.quiet[key] = now; }
+      if (descriptor.actionReason === 'CANDIDATE_NEW') {
+        if (delivered) { state.notified[key] = now; recordLeadStageInTransaction(this.storage, this.tenantId, member, 'alertDeliveredAt', now); }
+        state.quiet[key] = now;
+      }
       if (descriptor.actionReason === 'RISK_WORSENED') state.riskNotified[`${key}:${member.revision}`] = now;
     }
     if (descriptor.issue) state.problemNotified[descriptor.issue.key] = now;

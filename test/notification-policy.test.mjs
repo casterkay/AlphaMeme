@@ -250,3 +250,28 @@ test('only the selected scan chain alerts', () => {
   f.candidate('lead', { status: 'LIVE_READY' });
   assert.equal(f.policy.reconcileInTransaction().notifications.length, 0);
 });
+
+test('a new lead\'s alert records when it was enqueued and delivered on the lead, once; a failed delivery records none', t => {
+  t.mock.method(console, 'log', () => {});
+  const f = fixture(); f.policy.baselineInTransaction(); f.advance(1);
+  const created = f.now();
+  const stages = address => JSON.parse(f.sql('SELECT metadata_json FROM candidates WHERE tenant_id=? AND address=?', '123', address).toArray()[0].metadata_json ?? 'null')?.stages;
+  for (const address of ['delivered', 'failed']) {
+    f.candidate(address);
+    f.sql('UPDATE candidates SET metadata_json=? WHERE tenant_id=? AND address=?', JSON.stringify({ stages: { leadCreatedAt: created } }), '123', address);
+  }
+  f.candidate('unstaged'); f.candidate('unreadable');
+  f.sql('UPDATE candidates SET metadata_json=? WHERE tenant_id=? AND address=?', '{"stages":', '123', 'unreadable');
+  f.advance(1_000);
+  const enqueuedAt = f.now(), alerts = f.policy.reconcileInTransaction().notifications;
+  assert.equal(alerts.length, 4, 'an unreadable stage record never holds an alert back');
+  f.advance(2_000);
+  const deliveredAt = f.now();
+  f.policy.acknowledgeInTransaction(alerts.find(alert => alert.members[0].address === 'delivered'));
+  f.policy.failInTransaction(alerts.find(alert => alert.members[0].address === 'failed'));
+  f.policy.acknowledgeInTransaction(alerts.find(alert => alert.members[0].address === 'unstaged'));
+  f.advance(1_000); f.policy.reconcileInTransaction();
+  assert.deepEqual(stages('delivered'), { leadCreatedAt: created, alertEnqueuedAt: enqueuedAt, alertDeliveredAt: deliveredAt });
+  assert.deepEqual(stages('failed'), { leadCreatedAt: created, alertEnqueuedAt: enqueuedAt }, 'delivery unknown, not zero');
+  assert.equal(stages('unstaged'), undefined, 'a lead from before stage records is left as is');
+});
