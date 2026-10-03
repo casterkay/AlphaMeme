@@ -1,0 +1,29 @@
+test/radar-agent.test.mjs
+  s_e9d978d309853c::t_5aade5b6f031e2 499-529
+src/onchain-watch.mjs
+  s_e9d978d309853c::t_ba4c2b766ea947 19-28
+src/recoverable-scan-executor.mjs
+  s_e9d978d309853c::t_78c41af917675b 4,25,29-41
+src/recoverable-scanner.mjs
+  s_e9d978d309853c::t_cd645261dd368e 238,299,522,524-525
+src/scanner-settings.mjs
+  s_e9d978d309853c::t_b9bcb1cece84df 27-30
+test/onchain-watch.test.mjs
+  s_e9d978d309853c::t_c9d4f16eed17ec 12,14-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9965c382df415769396a21423c2e168d40034669",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
