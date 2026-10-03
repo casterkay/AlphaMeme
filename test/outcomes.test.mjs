@@ -78,6 +78,13 @@ test('coverage reports each cohort\'s missing rate beside its median and average
   assert.equal(summarizeOutcomes(vetoedOnly.map(item => ({ ...item, latestDecision: 'PASSED' })), horizons.h24).calibrationReady, true);
 });
 
+test('rejection sampling is pinned: 203 of 1,000 fixed addresses, so a hash change cannot silently reshape the sample', () => {
+  const tokens = Array.from({ length: 1000 }, (_, index) => `0x${index.toString(16).padStart(40, '0')}`);
+  const sampled = tokens.filter(token => sampledForRejection('bsc', token));
+  assert.equal(sampled.length, 203);
+  assert.deepEqual(sampled.slice(0, 5).map(token => Number(BigInt(token))), [2, 8, 11, 17, 20]);
+});
+
 test('rejection sampling keeps about one token in five, stably and whatever the address suffix', () => {
   const tokens = Array.from({ length: 5000 }, (_, index) => `0x${index.toString(16).padStart(36, '0')}4444`);
   const rate = tokens.filter(token => sampledForRejection('arc', token)).length / tokens.length;
