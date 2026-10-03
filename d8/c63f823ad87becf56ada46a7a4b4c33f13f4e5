@@ -1,0 +1,21 @@
+docs/reports/2026-10-03-arc-immediate-baseline-backtest.json
+  s_02320cd7492a13::t_0182a52f98223b 1
+docs/reports/2026-10-03-arc-immediate-baseline-backtest.md
+  s_02320cd7492a13::t_92b1fe1d19a3cb 1-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d8c63f823ad87becf56ada46a7a4b4c33f13f4e5",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
