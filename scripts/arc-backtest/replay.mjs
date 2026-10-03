@@ -141,26 +141,32 @@ export function replay(pool, security, delay, policy, blockSeconds, costs = DEFA
   return result;
 }
 
-export function runMatrix(dataset, snapshots, costs = DEFAULT_COSTS) {
+export function summarizeTrades(cohort, delay, policyName) {
+  const entered = cohort.filter(trade => trade.entered);
+  const total = key => cohort.reduce((sum, trade) => sum + trade[key], 0);
+  const reasons = {};
+  for (const trade of cohort) reasons[trade.exitReason] = (reasons[trade.exitReason] ?? 0) + 1;
+  return { delayBlocks: delay, policy: policyName, discovered: cohort.length, entered: entered.length,
+    unentered: cohort.length - entered.length, spentUsd: total('spentUsd'), proceedsUsd: total('proceedsUsd'), gasUsd: total('gasUsd'),
+    netUsd: total('netUsd'), conservativeNetUsd: total('conservativeNetUsd'), evPerEntryUsd: entered.length ? total('netUsd') / entered.length : null,
+    winRate: entered.length ? entered.filter(trade => trade.netUsd > 0).length / entered.length : null,
+    failedExits: total('failedExits'), securityUnknown: entered.filter(trade => trade.securityUnknown).length, exitReasons: reasons };
+}
+
+export function runMatrix(dataset, snapshots, costs = DEFAULT_COSTS, { delays = DELAYS, policies = POLICIES, entryFeatures = [] } = {}) {
   costs = { ...DEFAULT_COSTS, ...costs, captureToTimestamp: dataset.manifest.captureToTimestamp };
   const rows = [], trades = [];
-  for (const delay of DELAYS) for (const policy of POLICIES) {
+  const featuresByEntry = new Map(entryFeatures.map(feature => [`${feature.token}:${feature.delayBlocks}`, feature]));
+  for (const delay of delays) for (const policy of policies) {
     const cohort = dataset.pools.map(pool => {
       const security = normalizeSecurity(snapshots[pool.token]?.data);
       const main = replay(pool, security, delay, policy, dataset.manifest.blockSeconds, costs);
       const conservative = main.securityUnknown ? replay(pool, security, delay, policy, dataset.manifest.blockSeconds, costs, 'conservative') : main;
-      return { ...main, conservativeNetUsd: conservative.netUsd };
+      const feature = featuresByEntry.get(`${pool.token}:${delay}`);
+      return { ...main, conservativeNetUsd: conservative.netUsd, ...(feature ? { entryFeatureKey: `${pool.token}:${delay}` } : {}) };
     });
     trades.push(...cohort);
-    const entered = cohort.filter(trade => trade.entered);
-    const total = key => cohort.reduce((sum, trade) => sum + trade[key], 0);
-    const reasons = {};
-    for (const trade of cohort) reasons[trade.exitReason] = (reasons[trade.exitReason] ?? 0) + 1;
-    rows.push({ delayBlocks: delay, policy: policy.name, discovered: cohort.length, entered: entered.length,
-      unentered: cohort.length - entered.length, spentUsd: total('spentUsd'), proceedsUsd: total('proceedsUsd'), gasUsd: total('gasUsd'),
-      netUsd: total('netUsd'), conservativeNetUsd: total('conservativeNetUsd'), evPerEntryUsd: entered.length ? total('netUsd') / entered.length : null,
-      winRate: entered.length ? entered.filter(trade => trade.netUsd > 0).length / entered.length : null,
-      failedExits: total('failedExits'), securityUnknown: cohort.filter(trade => trade.securityUnknown).length, exitReasons: reasons });
+    rows.push(summarizeTrades(cohort, delay, policy.name));
   }
   return { rows, trades };
 }

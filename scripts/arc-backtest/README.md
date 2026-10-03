@@ -1,6 +1,6 @@
 # Arc immediate baseline
 
-Read-only research CLI for the five entry delays and three exit policies discussed in the report. Stake is fixed at $2. No screening, signing, deployment, or production integration.
+Read-only research CLI with selectable block delays and take-profit policies. Stake is fixed at $2. No screening, signing, deployment, or production integration.
 
 ```sh
 node scripts/arc-backtest/run.mjs --hours 72 --env-file .dev.vars
@@ -21,4 +21,18 @@ node scripts/arc-backtest/run.mjs \
 
 Model inputs: `--slippage-bps 50`, `--swap-gas-units 250000`, `--approval-gas-units 50000`. Gas price comes from the dataset's sampled Arc header. Slippage is an adverse fill haircut, separate from price impact and pool/token fees. A failed exit pays gas and writes off remaining inventory after one attempt. Active-range virtual reserves approximate concentrated-liquidity execution; this is not a forked-chain emulator.
 
-Outputs: generated Markdown report, 15-row CSV matrix, summary JSON and per-token fill ledger. Missing current security/taxes are retained with explicit optimistic/conservative scenarios, rather than dropping tokens. LP locking is not an exit rule.
+Outputs: generated Markdown report, CSV comparison matrix, summary JSON and per-token fill ledger. Missing current security/taxes are retained with explicit optimistic/conservative scenarios, rather than dropping tokens. LP locking is not an exit rule.
+
+
+For the full +4/+6/+8 block comparison:
+
+```sh
+node scripts/arc-backtest/run.mjs \
+  --dataset .runtime/arc-backtest/dataset72h-enriched.json \
+  --security-file .runtime/arc-backtest/security72h-gmgn.json \
+  --delays 4,6,8 --take-profit-multiples 2.5,2 \
+  --capture-entry-features --env-file .dev.vars \
+  --output .runtime/arc-backtest/results468
+```
+
+Historical pool and Transfer logs use Arc RPC. When configured, Alchemy handles batched historical token metadata calls. Entry features are saved separately and joined to trades by `entryFeatureKey`, so screening rules can filter the existing ledger without another chain download or execution replay. See [feature definitions and offline filtering](features-README.md). To replay saved features, replace `--capture-entry-features` with `--features-file ENTRY_FEATURES.json`.

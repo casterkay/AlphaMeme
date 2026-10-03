@@ -124,3 +124,17 @@ test('positions without a full holding horizon are reported without fabricated l
   assert.equal(result.netUsd, 0);
   assert.equal(result.gasUsd, 0);
 });
+
+test('requested grid produces six cells and joins entry features without changing execution', () => {
+  const source = pool([point(0, 1), point(10, 4), point(11, 4), point(12, 3)]);
+  const dataset = { manifest: { blockSeconds: 1 }, pools: [source] };
+  const snapshots = { token: { data: { is_honeypot: false, buy_tax: '0', sell_tax: '0' } } };
+  const grid = { delays: [4, 6, 8], policies: [POLICIES[2], POLICIES[0]] };
+  const baseline = runMatrix(dataset, snapshots, costs, grid);
+  const joined = runMatrix(dataset, snapshots, costs, { ...grid,
+    entryFeatures: grid.delays.map(delayBlocks => ({ token: 'token', delayBlocks, entryBlock: delayBlocks, poolSizeUsd: 100 })) });
+  assert.equal(joined.rows.length, 6);
+  assert.deepEqual(joined.rows, baseline.rows);
+  assert.deepEqual(joined.rows.map(row => [row.delayBlocks, row.policy]), grid.delays.flatMap(delay => grid.policies.map(policy => [delay, policy.name])));
+  assert.ok(joined.trades.every(trade => trade.entryFeatureKey === `token:${trade.delayBlocks}`));
+});
