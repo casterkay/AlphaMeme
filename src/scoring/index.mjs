@@ -98,21 +98,11 @@ function taggedWalletSignals(holders, chain) {
 }
 
 function discoverySignalView(row = {}) {
-  const smartDegenCount = optionalCount(row.smart_degen_count);
-  const renownedCount = optionalCount(row.renowned_count);
-  const holders = optionalCount(row.holder_count);
-  // AVE's generic counters have no verified five-minute window.
-  const ave = row.marketProvider === 'AVE';
-  const swaps5m = optionalCount(ave ? row.swaps_5m : first(row.swaps_5m, row.swaps));
-  const buys5m = optionalCount(ave ? row.buys_5m : first(row.buys_5m, row.buys));
-  const sells5m = optionalCount(ave ? row.sells_5m : first(row.sells_5m, row.sells));
-  const volume5m = optionalNonNegativeNumber(ave ? row.volume_5m : first(row.volume_5m, row.volume));
-  const priceChange5m = optionalSignedRate(first(row.price_change_percent5m, row.price_change_percent_5m, row.price_change_percent));
-  const smartBoost = smartDegenCount === null ? 0 : smartDegenCount >= 3 ? 14 : smartDegenCount === 2 ? 7 : 0;
-  const kolOnly = smartDegenCount !== null && smartDegenCount <= 1 && renownedCount !== null && renownedCount > 0;
   return {
-    smartDegenCount, renownedCount, holders, swaps5m, buys5m, sells5m, volume5m, priceChange5m,
-    smartBoost, kolOnly, scoreAdjustment: smartBoost - (kolOnly ? 4 : 0)
+    smartDegenCount: optionalCount(row.smart_degen_count), renownedCount: optionalCount(row.renowned_count),
+    holders: optionalCount(row.holder_count), swaps5m: optionalCount(row.swaps_5m), buys5m: optionalCount(row.buys_5m),
+    sells5m: optionalCount(row.sells_5m), volume5m: optionalNonNegativeNumber(row.volume_5m),
+    priceChange5m: optionalSignedRate(row.price_change_percent5m)
   };
 }
 
@@ -127,12 +117,16 @@ export function createdAt(row) {
   return num(first(row.creation_timestamp, row.created_timestamp, row.open_timestamp));
 }
 
-// AVE discovery is a market-only shortlist screened on token-level facts; it
-// does not screen by pool, so a pool's type, hook or history never decides it.
-// Missing proprietary GMGN fields do not block the shortlist, but are never
-// fabricated into a deep-audit pass. A promoted new pool's DexScreener row is
-// screened the same way; it has no launch time, so its pool's creation dates it.
-export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
+// Discovery is a market-only shortlist of AVE hot-list rows screened on
+// token-level facts; it does not screen by pool, so a pool's type, hook or
+// history never decides it. Missing proprietary GMGN fields do not block the
+// shortlist, but are never fabricated into a deep-audit pass. A promoted new
+// pool's DexScreener row is screened the same way; it has no launch time, so
+// its pool's creation dates it. No other provider builds discovery rows.
+export function discoveryScreen(row, config, nowSec = Date.now() / 1000) {
+  if (row?.marketProvider !== 'AVE' && row?.marketProvider !== 'DEXSCREENER') {
+    throw new TypeError(`discovery row from an unsupported market provider: ${String(row?.marketProvider)}`);
+  }
   const now = nowSec * 1000, chain = config.chain, dexScreener = row.marketProvider === 'DEXSCREENER';
   const mcValue = optionalNonNegativeNumber(row.market_cap), liquidityValue = optionalNonNegativeNumber(row.liquidity);
   const fallbackBasis = dexScreener ? 'pool' : 'token';
@@ -188,8 +182,7 @@ export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
       insider: optionalRate(row.rat_trader_amount_rate), wash: optionalBoolean(row.is_wash_trading), honeypot: optionalBoolean(row.is_honeypot) })[field] === null) };
 }
 
-// Known adverse facts are shared by both discovery entrances. Missing facts
-// remain unknown and must still pass the complete deep audit before alerting.
+// Known adverse facts in a discovery row. Missing facts remain unknown.
 export function knownRiskReasons(row, config) {
   const reasons = [];
   const lp = optionalNumber(row.liquidity);
@@ -201,60 +194,6 @@ export function knownRiskReasons(row, config) {
   // Never reinterpret the live feed's generic 1m counters as 5m activity.
   if (optionalNumber(row.volume_5m) === 0) reasons.push('近5分钟无成交，暂不进入候选');
   return reasons;
-}
-
-export function discoveryScreen(row, config, nowSec = Date.now() / 1000) {
-  if (row?.marketProvider === 'AVE' || row?.marketProvider === 'DEXSCREENER') return aveDiscoveryScreen(row, config, nowSec);
-  const mcValue = optionalNumber(first(row.market_cap, row.usd_market_cap, row.mcp));
-  const createdValue = optionalNumber(first(row.creation_timestamp, row.created_timestamp, row.open_timestamp));
-  const liquidityValue = optionalNumber(row.liquidity);
-  const rug = optionalRate(row.rug_ratio);
-  const bundler = optionalRate(first(row.bundler_rate, row.bundler_trader_amount_rate));
-  const insider = optionalRate(first(row.rat_trader_amount_rate, row.suspected_insider_hold_rate));
-  const wash = optionalBoolean(row.is_wash_trading);
-  const honeypot = optionalBoolean(row.is_honeypot);
-  const mc = mcValue ?? 0;
-  const created = createdValue ?? 0;
-  const ageSec = created > 0 ? nowSec - created : 0;
-  const liquidity = liquidityValue ?? 0;
-  const reasons = knownRiskReasons(row, config);
-  if (!validTokenAddress(row.address)) reasons.push('地址格式异常');
-  if (createdValue === null || created <= 0) reasons.push('创建时间未知');
-  else if (!(ageSec >= config.minAgeSec)) reasons.push('创建不足5分钟');
-  else if (ageSec > config.maxAgeSec) reasons.push('超过观察年龄上限');
-  if (mcValue === null) reasons.push('市值数据未知');
-  else if (!(mc >= config.discoveryMinMarketCap && mc <= config.discoveryMaxMarketCap)) reasons.push('市值不在发现范围');
-  if (liquidityValue === null) reasons.push('流动性数据未知');
-  else if (liquidity < config.minLiquidity) reasons.push('流动性不足');
-  if (rug === null) reasons.push('rug风险数据未知');
-  else if (rug > 0.30) reasons.push('rug风险过高');
-  if (bundler === null) reasons.push('捆绑机器人数据未知');
-  else if (bundler > 0.30) reasons.push('捆绑机器人占比过高');
-  if (insider === null) reasons.push('内幕数据未知');
-  else if (insider > 0.30) reasons.push('内幕/老鼠仓占比过高');
-  if (wash === null) reasons.push('刷量数据未知');
-  else if (wash) reasons.push('检测到刷量');
-  if (honeypot === null) reasons.push('貔貅数据未知');
-  else if (honeypot) reasons.push('检测到貔貅盘');
-  const priorityBand = mc >= config.priorityMinMarketCap && mc <= config.priorityMaxMarketCap;
-  const volume = num(first(row.volume_1h, row.volume, row.volume_24h));
-  const holders = num(row.holder_count);
-  const signals = discoverySignalView(row);
-  const score = (priorityBand ? 35 : 10) + Math.min(25, liquidity / 1000) + Math.min(20, volume / 1000)
-    + Math.min(20, holders / 10) + signals.scoreAdjustment;
-  return {
-    pass: reasons.length === 0, reasons, priorityBand, score, mc, liquidity, ageSec, signals,
-    unknownFields: [
-      mcValue === null ? 'marketCap' : null,
-      createdValue === null ? 'createdAt' : null,
-      liquidityValue === null ? 'liquidity' : null,
-      rug === null ? 'rugRatio' : null,
-      bundler === null ? 'bundler' : null,
-      insider === null ? 'insider' : null,
-      wash === null ? 'wash' : null,
-      honeypot === null ? 'honeypot' : null
-    ].filter(Boolean)
-  };
 }
 
 function securityView(source = {}, discovery = {}, info = {}) {
