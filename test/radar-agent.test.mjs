@@ -7,6 +7,7 @@ import { AveClient } from '../src/providers/ave.mjs';
 import { ChainLogsError } from '../src/providers/chain-logs.mjs';
 import { SecondaryValidator } from '../src/providers/secondary.mjs';
 import { scannerSettings } from '../src/scanner-settings.mjs';
+import { safetyVerdict } from '../src/scoring/safety.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
 import { SqliteRecoverableScannerStore, stableEffectId } from '../src/storage/recoverable-scanner.mjs';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
@@ -433,6 +434,19 @@ test('a non-fatal secondary result keeps the lead status and revision and record
   assert.equal(checked.secondary.security.verdict, 'NO_FATAL_FLAGS');
   assert.deepEqual(radarFixture.secondaryCalls, [{ tokenAddress: A }]);
   assert.deepEqual(radarFixture.events().map(event => event.type), ['CANDIDATE_NEW']);
+});
+
+test('on Arc, the hot-list row\'s distinct sellers stand in for the cannot_sell_all GoPlus omits; without sellers the check stays incomplete', async () => {
+  const radarFixture = radar({ chain: 'arc' });
+  radarFixture.hotList = [{ ...radarFixture.quote(A), token_sellers_24h: 410 }, radarFixture.quote(B)];
+  radarFixture.secondary = { fetchSource: async () => ({ source: { status: 'OK' },
+    security: { complete: false, verdict: 'UNKNOWN', fatal: [], unknownFields: ['cannotSellAll'], fields: { cannotSellAll: null }, buyTax: 0, sellTax: 0 } }) };
+  await radarFixture.runCycle('cycle-arc-sellers');
+  const [sold, unsold] = [A, B].map(token => radarFixture.candidate(token));
+  assert.equal(safetyVerdict(sold), 'PASSED');
+  assert.deepEqual(sold.secondary.security.standIns, { cannotSellAll: { distinctSellers24h: 410 } });
+  assert.equal(safetyVerdict(unsold), 'INCOMPLETE');
+  assert.deepEqual(unsold.secondary.security.unknownFields, ['cannotSellAll']);
 });
 
 test('a checkpoint left between the retired DexScreener and GoPlus steps finishes with one GoPlus read', async () => {

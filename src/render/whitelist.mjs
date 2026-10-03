@@ -78,7 +78,9 @@ export function publicSecondary(source = {}) {
       unknownFields: Array.isArray(security.unknownFields) ? security.unknownFields.slice(0, 32).map(value => text(value, 48)) : [],
       fields: securityFields,
       buyTax: finiteOrNull(security.buyTax),
-      sellTax: finiteOrNull(security.sellTax)
+      sellTax: finiteOrNull(security.sellTax),
+      ...(Number.isSafeInteger(security.standIns?.cannotSellAll?.distinctSellers24h)
+        ? { standIns: { cannotSellAll: { distinctSellers24h: security.standIns.cannotSellAll.distinctSellers24h } } } : {})
     }
   };
 }

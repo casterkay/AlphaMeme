@@ -491,7 +491,9 @@ export class RecoverableScanner {
     const settings = current.partial.settings || this.settings;
     const stored = this.store.readCandidate(current.chain, item.row.address);
     const token = stored || leadCandidate(item.row, item.screen, current.chain, null, now, settings);
-    const secondary = aggregateSecondarySources({ chain: current.chain, tokenAddress: token.address, sources: current.partial.secondary?.sources || {} });
+    // Seller evidence comes only from this cycle's row: a stored token off the hot list has none.
+    const secondary = aggregateSecondarySources({ chain: current.chain, tokenAddress: token.address,
+      sources: current.partial.secondary?.sources || {}, distinctSellers24h: item.row.sellers_24h });
     const supported = Object.values(secondary.sources).some(source => source?.status !== 'UNSUPPORTED');
     const vetoed = secondary.security?.verdict === 'FATAL';
     const secondaryReason = vetoed ? '第二安全源触发一票否决'

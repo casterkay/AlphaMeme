@@ -265,6 +265,21 @@ test('evidence pages keep the exact audit time while the detail summary shows it
 
 const complete={status:'COMPLETE',complete:true,checkedAt:now-120_000,sources:{},security:{complete:true,verdict:'NO_FATAL_FLAGS',fatal:[],unknownFields:[]}};
 const lead=(changes={})=>candidate(0,{status:'LIVE_READY',deep:{},...changes});
+test('an Arc check that passed on AVE sellers names the stand-in in the detail, the alert and the evidence, not GoPlus',()=>{
+  const standIn={...complete,security:{...complete.security,fields:{cannotSellAll:null},standIns:{cannotSellAll:{distinctSellers24h:410}}}};
+  const snapshot=fixture();snapshot.candidates=[lead({chain:'arc',secondary:standIn})];
+  const selectedToken={chain:'arc',address:snapshot.candidates[0].address}, view=(panel,locale,query={})=>renderPanel(snapshot,{...session(panel,{selectedToken,...query}),viewChain:'arc'},locale).text;
+  assert.equal(view('detail','en').split('\n')[1],"✅ No failures found: Cannot sell all: no GoPlus answer; AVE's 24h seller count (410) stands in · checked 2m ago");
+  assert.equal(view('detail','zh').split('\n')[1],'✅ 未发现问题：无法全部卖出：GoPlus 无结果，以 AVE 24小时卖家数（410）代替 · 2分钟前核验');
+  assert.match(view('alert','en'),/\n✅ No failures found: Cannot sell all: no GoPlus answer; AVE's 24h seller count \(410\) stands in\n/);
+  const evidence=Array.from({length:6},(_,detailPage)=>view('evidence','en',{detailPage})).join('\n');
+  assert.match(evidence,/Security · fields · Cannot sell all: Unknown\n/);
+  assert.match(evidence,/Security · Stand-in evidence · Cannot sell all · AVE distinct sellers \(24h\): 410\n/);
+  // The same check without the stand-in passes with no qualifier.
+  snapshot.candidates=[lead({chain:'arc',secondary:complete})];
+  assert.equal(view('detail','en').split('\n')[1],'✅ No failures found · checked 2m ago');
+});
+
 test('the safety verdict leads the detail and marks each list row, from the recorded check',()=>{
   const fatal=(fields,status='HARD_REJECT')=>lead({status,secondary:{...complete,security:{complete:true,verdict:'FATAL',fatal:fields.map(field=>({field})),unknownFields:[]}}});
   const degraded=security=>lead({secondary:{...complete,status:'DEGRADED',complete:false,...(security?{security}:{})}});

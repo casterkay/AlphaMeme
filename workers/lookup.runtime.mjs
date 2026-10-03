@@ -362,6 +362,23 @@ describe('pasted contract-address lookup', () => {
     });
   });
 
+  it('on Arc, lets AVE\'s distinct sellers stand in for the cannot_sell_all GoPlus omits, and says so; without sellers the check stays open', async () => {
+    await withLookups('26831', async ({ storage, tenantId, net, connect, paste, step, lastText, clock }) => {
+      await connect();
+      const SOLD = '0x' + 'a1'.repeat(20), UNSOLD = '0x' + 'a2'.repeat(20);
+      net.knobs.goPlus = { ...CLEAN, cannot_sell_all: undefined };
+      net.knobs.ave = (address, apiChain) => json({ status: 1, data: { pairs: [], token: { token: address, chain: apiChain, symbol: 'LOOK', current_price_usd: '0.0012',
+        ...(address === SOLD ? { token_sellers_24h: 7 } : {}) } } });
+      const state = address => safetyState(storage, tenantId, 'arc', address, clock.now());
+      await paste(SOLD);for (let index = 0; index < 2; index++) await step();
+      expect(state(SOLD)).toBe('VERIFIED');
+      expect(lastText()).toMatch(/\n✅ No failures found: Cannot sell all: no GoPlus answer; AVE's 24h seller count \(7\) stands in · checked just now\n/);
+      await paste(UNSOLD);for (let index = 0; index < 2; index++) await step();
+      expect(state(UNSOLD)).toBe('UNVERIFIED');
+      expect(lastText()).toMatch(/\n⚠️ Needs review: 1 field unknown · checked just now\n/);
+    });
+  });
+
   it('keeps a recorded veto through a rerun until a complete clean GoPlus check replaces it', async () => {
     await withLookups('26817', async ({ storage, tenantId, net, connect, paste, step, lookups, lastText, clock }) => {
       await connect();

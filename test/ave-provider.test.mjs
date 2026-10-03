@@ -102,6 +102,14 @@ test('trending reads AVE percent taxes as rates so the screen drops only high-ta
   }
 });
 
+test('trending reads distinct 24-hour sellers as a count, absent as unknown, and drops a row whose count is malformed', async () => {
+  const [counted, absent, malformed] = ['1', '2', '3'].map(digit => `0x${digit.repeat(40)}`);
+  const { ave } = client(() => envelope([tokenRow(counted, 'bsc', { token_sellers_24h: 410 }), tokenRow(absent, 'bsc', { token_sellers_24h: null }),
+    tokenRow(malformed, 'bsc', { token_sellers_24h: 2.5 })]));
+  const { rows } = await ave.trending('bsc');
+  assert.deepEqual(rows.map(row => [row.address, row.sellers_24h]), [[counted, 410], [absent, null]]);
+});
+
 test('trending drops a row whose tax is not a percentage', async () => {
   const other = `0x${'b'.repeat(40)}`;
   const { ave } = client(() => envelope([tokenRow(BSC_TOKEN), tokenRow(other, 'bsc', { sell_tax: '150' })]));
