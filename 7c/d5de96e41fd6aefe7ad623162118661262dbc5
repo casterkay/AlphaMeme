@@ -1,0 +1,33 @@
+src/bot/runtime.mjs
+  s_e9d978d309853c::t_26945977b0718b 231
+src/radar-agent.mjs
+  s_e9d978d309853c::t_147016ac483489 14,121,258-259,296
+src/recoverable-scanner.mjs
+  s_e9d978d309853c::t_eaea472507dba9 8,236,251-259,336,363,546,621
+src/scanner-settings.mjs
+  s_e9d978d309853c::t_8845048292fcac 52-55
+src/storage/recoverable-scanner.mjs
+  s_e9d978d309853c::t_e3a5f508bc24c7 5,217-218,223-225,252
+test/radar-agent.test.mjs
+  s_e9d978d309853c::t_7228317223a2b6 422-445
+workers/control-generations.runtime.mjs
+  s_e9d978d309853c::t_12abf9a7faf35b 343,355-360
+workers/radar-agent.runtime.mjs
+  s_e9d978d309853c::t_2c623b3f0e6b72 223-249
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7cd5de96e41fd6aefe7ad623162118661262dbc5",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
