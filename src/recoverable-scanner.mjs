@@ -517,7 +517,7 @@ export class RecoverableScanner {
       const promoted = partial.discovery?.promoted || [];
       const passed = new Set(screened.filter(({ row, screen }) => row.discoverySource === 'newPool' && screen.pass).map(({ row }) => addressKey(row.address)));
       watchState = nextWatchState(this.store.readWatchState(chain), { newPools: newPools?.value ?? null, checked: watch?.value?.addresses || [],
-        markets: watch?.value?.markets || [], promoted, rejected: promoted.filter(address => !passed.has(addressKey(address))), now });
+        markets: watch?.value?.markets || [], promoted, passed: promoted.filter(address => passed.has(addressKey(address))), now });
       const endpoint = (response, count) => response?.error ? { ok: false, code: response.error.code } : { ok: true, count };
       Object.assign(sourceHealth.discovery, { newPools: endpoint(newPools, newPools?.value?.pools?.length ?? 0),
         watch: endpoint(watch, watchState.pools.length), promoted: { ok: true, count: promoted.length } });
