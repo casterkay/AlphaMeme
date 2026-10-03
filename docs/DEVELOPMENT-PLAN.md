@@ -42,10 +42,12 @@ Live facts below were read from AVE, GoPlus, DexScreener and GeckoTerminal on
    1).
 7. **New-pool promotions read DexScreener, not AVE.** The promoted row is built
    from the market the watch already fetched (defect 3).
-8. **Promoted leads' outcomes wait for a DexScreener sampler.** A promoted lead's
-   baseline price is DexScreener's, so AVE candles never sample it; it is
-   sampled once #102 adds DexScreener sampling. How Performance counts these
-   leads until then is still open.
+8. **Promoted leads' outcomes wait for a DexScreener sampler.** Only AVE samples
+   outcomes, so a lead promoted from DexScreener records no outcome and does not
+   count in Performance until #102 adds DexScreener sampling. If the token later
+   appears on the AVE hot list, that sighting records its AVE baseline and it is
+   tracked normally; the baseline is then later than the alert, typically after
+   the price has moved.
 9. **A promoted Arc lead may stand in DexScreener sells for `cannot_sell_all`.**
    For a row promoted from DexScreener, at least one sell transaction in
    DexScreener's 24-hour window stands in for the field GoPlus omits on Arc,
