@@ -193,18 +193,20 @@ function parseDexBatch(payload, { dexChainId, tokenAddresses, capturedAt }) {
     throw error;
   }
   const requested = new Set(tokenAddresses.map(value => normalizedAddress(value)));
-  const best = new Map();
+  const best = new Map(), firstCreatedAt = new Map();
   for (const pair of payload) {
     if (!pair || typeof pair !== 'object' || cleanString(pair.chainId, 32) !== dexChainId) continue;
     const baseAddress = normalizedAddress(pair.baseToken?.address);
     const members = [baseAddress, normalizedAddress(pair.quoteToken?.address)].filter(value => requested.has(value));
     if (!members.length || !validPairAddress(pair.pairAddress)) continue;
+    const createdAt = optionalNonNegative(pair.pairCreatedAt);
+    if (!Number.isSafeInteger(createdAt) || createdAt <= 0 || createdAt > capturedAt + 300_000) continue;
+    // A token is at least as old as its first pool, which need not be its deepest.
+    for (const tokenAddress of members) firstCreatedAt.set(tokenAddress, Math.min(createdAt, firstCreatedAt.get(tokenAddress) ?? createdAt));
     const liquidity = optionalNonNegative(pair.liquidity?.usd);
     const volume5m = optionalNonNegative(pair.volume?.m5);
     const buys5m = optionalCount(pair.txns?.m5?.buys), sells5m = optionalCount(pair.txns?.m5?.sells);
-    const createdAt = optionalNonNegative(pair.pairCreatedAt);
-    if (liquidity === null || volume5m === null || !Number.isSafeInteger(createdAt)
-      || createdAt <= 0 || createdAt > capturedAt + 300_000) continue;
+    if (liquidity === null || volume5m === null) continue;
     const poolMarket = {
       pairAddress: cleanString(pair.pairAddress, 128), dexId: cleanString(pair.dexId, 64),
       liquidity, volume5m, pairCreatedAt: createdAt,
@@ -225,6 +227,7 @@ function parseDexBatch(payload, { dexChainId, tokenAddresses, capturedAt }) {
       if (!previous || market.liquidity > previous.liquidity) best.set(tokenAddress, market);
     }
   }
+  for (const [tokenAddress, market] of best) market.firstPairCreatedAt = firstCreatedAt.get(tokenAddress);
   return best;
 }
 

@@ -42,6 +42,15 @@ Live facts below were read from AVE, GoPlus, DexScreener and GeckoTerminal on
    1).
 7. **New-pool promotions read DexScreener, not AVE.** The promoted row is built
    from the market the watch already fetched (defect 3).
+8. **Promoted leads' outcomes wait for a DexScreener sampler.** A promoted lead's
+   baseline price is DexScreener's, so AVE candles never sample it; it is
+   sampled once #102 adds DexScreener sampling. How Performance counts these
+   leads until then is still open.
+9. **A promoted Arc lead may stand in DexScreener sells for `cannot_sell_all`.**
+   For a row promoted from DexScreener, at least one DexScreener sell transaction
+   stands in for the field GoPlus omits on Arc, labeled as DexScreener's sell
+   count (decision 6's counterpart for rows without AVE's distinct sellers).
+   It lands after PR #118.
 
 ## Where things stand
 
@@ -50,8 +59,9 @@ Discovery has two entrances, both screened by `aveDiscoveryScreen`:
 - **Hot list:** AVE trending (one chain, every cycle).
 - **New pools** (Arc only, `POOL_SOURCES`): chain logs find new pools → a
   DexScreener batch read watches them → up to two busy enough pools a cycle are
-  promoted with an AVE market read (`ave.market`, 5 CU,
-  `src/recoverable-scan-executor.mjs:26`).
+  promoted and screened from that DexScreener market, with no AVE request
+  (`promotedRows`, `src/recoverable-scanner.mjs`). The token's first pool dates
+  it; holders and taxes stay unknown.
 
 A passing token becomes a lead and is alerted → GoPlus check (at most 3 per
 cycle) → a fatal flag vetoes the lead and edits the alert. Nothing else runs
@@ -73,8 +83,8 @@ AVE's binding limit is request spacing, not credits. Admission
 (`src/ave-admission.mjs`) keeps every AVE request at least 15 s apart and paces
 spending so the 1,000,000 CU monthly allowance lasts the period. The hot list
 alone fills that one-request-per-15 s slot (about 864,000 CU a month), so **every
-other AVE read delays the hot list**: two promotions stretch a 15 s cycle to
-about 45 s. Credits run out only if requests cost more than 5 CU on average.
+other AVE read delays the hot list**: two promotions stretched a 15 s cycle to
+about 45 s until they stopped reading AVE (defect 3). Credits run out only if requests cost more than 5 CU on average.
 
 ### Per-token data: chosen sources
 
@@ -106,12 +116,12 @@ before, so its checks stay in shadow until it proves stable from the VPS IP.
    RPC the VPS move fixes, later replaces the stand-in with equivalent evidence.
 2. **Robinhood has no secondary check.** GoPlus has no Robinhood chain id, so its
    leads stay unchecked. GMGN's token security is the candidate source.
-3. **New-pool promotions delay the hot list.** Each promotion takes one of AVE's
-   15 s request slots (see the budget above). Fix (decision 7): build the
-   promoted row from the DexScreener market the watch already fetched. It
-   carries everything the screen gates on (pool creation stands in for launch
-   time) except taxes, which stay unknown so GoPlus decides after the alert, and
-   AVE's source clock, for which our read time stands in.
+3. **New-pool promotions delay the hot list** (fixed, #117). Each promotion took
+   one of AVE's 15 s request slots (see the budget above). Fix (decision 7): the
+   promoted row is built from the DexScreener market the watch already fetched.
+   It carries everything the screen gates on (the token's first pool's creation
+   stands in for launch time) except taxes, which stay unknown so GoPlus decides
+   after the alert, and AVE's source clock, for which our read time stands in.
 
 ## How the issues fit
 

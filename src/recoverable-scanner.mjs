@@ -19,6 +19,16 @@ import { nextWatchState, promotions, watchTargets } from './onchain-watch.mjs';
 function discoveryEndpoints(chain, partial) {
   return !POOL_SOURCES[chain] || partial.onchainOffReason !== null ? ['trending'] : ['trending', 'newPools', 'watch'];
 }
+
+// One-release upgrade step; remove once no checkpoint from before promotions stopped reading AVE remains.
+// The previous release appended a `market:<n>` AVE read per promoted token after the watch, so its
+// checkpoint can wait on DISCOVER past the last request. Its watch response and promotions are
+// recorded, so it screens; any other cursor past the end has no local transition and fails loudly.
+function pendingLegacyMarketRead(checkpoint) {
+  const { discovery } = checkpoint.partial, endpoints = discoveryEndpoints(checkpoint.chain, checkpoint.partial);
+  return checkpoint.phase === 'DISCOVER' && endpoints.length === 3 && Boolean(discovery?.responses?.watch)
+    && Array.isArray(discovery.promoted) && checkpoint.endpointIndex >= 3 && checkpoint.endpointIndex < 3 + discovery.promoted.length;
+}
 const OUTCOME_SAMPLE_GRACE_MS = 25_000;
 // Upstream samples an outcome horizon from a later hot-list quote within this lag.
 const TRENDING_SAMPLE_GRACE_MS = 5 * 60_000;
@@ -99,16 +109,17 @@ function discoveryRows(discovery) {
 }
 
 // Promoted new pools as rows the screen reads, built from the DexScreener market the watch read.
-// DexScreener dates a pool, not a token, and keeps no source clock: the pool's creation stands in
-// for launch time (age basis 'pool') and our read time for the source clock. It has no holder
-// count, taxes or distinct traders, so those stay unknown; GoPlus checks taxes after the alert.
+// DexScreener dates pools, not tokens, and keeps no source clock: the token's first pool's creation
+// stands in for launch time (age basis 'pool'; its deepest pool, shown, may be younger) and our read
+// time for the source clock. It has no holder count, taxes or distinct traders, so those stay
+// unknown; GoPlus checks taxes after the alert.
 function promotedRows(discovery, chain) {
   const watch = discovery?.responses?.watch?.value;
   const markets = new Map((watch?.markets || []).map(market => [market.address, market]));
   return (discovery?.promoted || []).map(address => markets.get(address)).map(market => ({
     address: market.address, chain, symbol: market.symbol, name: market.name, marketProvider: 'DEXSCREENER', discoverySource: 'newPool',
     price: market.priceUsd, market_cap: market.marketCap, liquidity: market.liquidity, holder_count: null, buy_tax: null, sell_tax: null,
-    creation_timestamp: Math.floor(market.pairCreatedAt / 1000), launch_at: null, ageBasis: 'pool',
+    creation_timestamp: Math.floor(market.firstPairCreatedAt / 1000), launch_at: null, ageBasis: 'pool',
     pairAddress: market.pairAddress, poolCreatedAt: market.pairCreatedAt,
     volume_5m: market.volume5m, swaps_5m: market.swaps5m, buys_5m: market.buys5m, sells_5m: market.sells5m,
     capturedAt: watch.capturedAt, sourceUpdatedAt: watch.capturedAt
@@ -348,9 +359,7 @@ export class RecoverableScanner {
       delete partial.outcomes;
       partial.outcomeDeadlineAt = outcomeSampleDeadline(current, now);
       nextPhase = 'OUTCOMES_SAMPLE';
-    } else if (current.phase === 'DISCOVER' && !discoveryEndpoints(current.chain, partial)[current.endpointIndex]) {
-      // A checkpoint written while promotions still read AVE can stand past the last discovery request.
-      // Its watch response and promotions are already recorded, so it screens like any other.
+    } else if (pendingLegacyMarketRead(current)) {
       nextPhase = 'SCREEN';
     } else if (current.phase === 'SCREEN') {
       return this.#screen(current, partial, settings, now, expected);

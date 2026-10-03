@@ -6,7 +6,7 @@ import { scannerSettings } from '../src/scanner-settings.mjs';
 const NOW = 1_800_000_000_000, MINUTE = 60_000;
 const token = index => `0x${index.toString(16).padStart(40, '0')}`;
 const pool = (index, changes = {}) => ({ token: token(index), pool: `0x${'9'.repeat(64)}`, venue: 'Uniswap v4', firstSeenAt: NOW - index * MINUTE, ...changes });
-const market = (index, changes = {}) => ({ address: token(index), marketCap: 50_000, liquidity: 20_000, volume5m: 2_000, buys5m: 20, sells5m: 5, pairCreatedAt: NOW - 30 * MINUTE, ...changes });
+const market = (index, changes = {}) => ({ address: token(index), marketCap: 50_000, liquidity: 20_000, volume5m: 2_000, buys5m: 20, sells5m: 5, pairCreatedAt: NOW - 30 * MINUTE, firstPairCreatedAt: NOW - 30 * MINUTE, ...changes });
 const promote = (state, markets, excluded = []) => promotions(state, markets, { now: NOW, settings: scannerSettings, excluded: new Set(excluded) });
 
 test('the watch checks the tokens checked longest ago first, newest pools first among equals, one batch at a time', () => {
@@ -26,8 +26,9 @@ test('a watched token is promoted only inside every threshold, when not excluded
     ['volume too low', { volume5m: scannerSettings.onchainMinVolume5m - 1 }],
     ['liquidity too thin', { liquidity: scannerSettings.minLiquidity - 1 }],
     ['too few buys', { buys5m: scannerSettings.onchainMinBuys5m - 1 }],
-    ['pool too young for the screen', { pairCreatedAt: NOW - scannerSettings.minAgeSec * 1000 + 1 }]
+    ['first pool too young for the screen', { pairCreatedAt: NOW - scannerSettings.minAgeSec * 1000 + 1, firstPairCreatedAt: NOW - scannerSettings.minAgeSec * 1000 + 1 }]
   ]) assert.deepEqual(promote(state, [market(1, changes)]), [], scenario);
+  assert.deepEqual(promote(state, [market(1, { pairCreatedAt: NOW - MINUTE })]), [token(1)], 'a young deepest pool of a token whose first pool is old enough');
   assert.deepEqual(promote(state, [market(1)], [token(1)]), [], 'excluded: on the hot list, or vetoed');
   assert.deepEqual(promote({ cursor: 1, pools: [pool(1, { promotedAt: NOW - 4 * MINUTE })] }, [market(1)]), [], 'read four minutes ago');
   assert.deepEqual(promote({ cursor: 1, pools: [pool(1, { promotedAt: NOW - 6 * MINUTE })] }, [market(1)]), [token(1)], 'read six minutes ago');

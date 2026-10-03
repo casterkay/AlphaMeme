@@ -136,6 +136,17 @@ test('a watch market names each requested token by its own side of the pair', as
     [[evmAddress, 'DOG', 'Test Dog', 0.000012], [otherEvmAddress, 'QUOTE', 'Quote', null]]);
 });
 
+test('a watch market keeps its deepest pool but dates the token by its first pool, even one without liquidity figures', async () => {
+  const at = 1_800_000_000_000, deep = '0x' + '3'.repeat(40);
+  const fetchImpl = async () => jsonResponse([
+    completeDexPair({ pairAddress: deep, liquidity: { usd: 90_000 }, pairCreatedAt: at - 30 * 60_000 }),
+    completeDexPair({ pairAddress: '0x' + '4'.repeat(40), liquidity: { usd: 500 }, pairCreatedAt: at - 8 * 86_400_000 }),
+    completeDexPair({ pairAddress: '0x' + '5'.repeat(40), liquidity: undefined, pairCreatedAt: at - 9 * 86_400_000 })
+  ]);
+  const { markets: [market] } = await fetchDexMarkets('bsc', [evmAddress], { fetchImpl, now: () => at });
+  assert.deepEqual([market.pairAddress, market.pairCreatedAt, market.firstPairCreatedAt], [deep, at - 30 * 60_000, at - 9 * 86_400_000]);
+});
+
 test('batch overlay never mixes a different Dex pool with pair-scoped AVE evidence', async () => {
   const at = 1_800_000_000_000, avePair = '0x' + 'a'.repeat(40), dexPair = '0x' + 'b'.repeat(40);
   const fetchImpl = async () => jsonResponse([completeDexPair({
