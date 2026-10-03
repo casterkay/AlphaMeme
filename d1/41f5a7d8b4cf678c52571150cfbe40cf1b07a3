@@ -1,0 +1,19 @@
+docs/DEVELOPMENT-PLAN.md
+  s_03ebd0efd53ab5::t_02dbc0be06b8b5 3,6,10-12,27-29,62-73,90-106,162-163,169-170,180,214-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d141f5a7d8b4cf678c52571150cfbe40cf1b07a3",
+  "prompts": {},
+  "sessions": {
+    "s_03ebd0efd53ab5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34373ce1-9e55-4e5c-9162-cf40c8df360e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
