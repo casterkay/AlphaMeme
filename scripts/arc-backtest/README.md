@@ -21,7 +21,7 @@ node scripts/arc-backtest/run.mjs \
 
 Full session findings: [consolidated backtesting report](../../docs/reports/2026-10-03-arc-baseline-468-backtest.md).
 
-Time stop: `--time-stop-minutes 20` (default). Longer timers need a dataset covering the full holding horizon; this session’s 15/20/25/30-minute runs use `dataset72h-30m.json` at `--trailing-ath-fraction 0.98`.
+Time stop: `--time-stop-minutes 20` (default). Optionally set `--time-stop-after-tp-minutes 20` or `30` to switch deadlines once partial TP actually fills; both deadlines are measured from entry. Longer timers need a dataset covering the full holding horizon; this session’s 15/20/25/30-minute runs use `dataset72h-30m.json` at `--trailing-ath-fraction 0.98`.
 
 Trailing stop: `--trailing-ath-fraction 0.9` (default). Use `0.8` or `0.85` for a wider stop, retaining activation after take-profit and ATH since entry.
 

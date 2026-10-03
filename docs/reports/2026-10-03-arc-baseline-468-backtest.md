@@ -12,6 +12,7 @@ Consolidated findings from the 2026-10-03 session. This is a read-only historica
 - Entry-only LightGBM models ranked winners and >5% losses well on the chronological holdout (ROC AUC 0.929 / 0.911). High-precision winner screening caught 90.8% of failed exits but sacrificed enough winners to reduce total P&L. Classification quality, avoidance of failed exits and maximization of total P&L are different objectives.
 - Optuna TPE found an explicit rule with 98.92% precision when rejecting negative positions, but only 33.22% negative-position recall and 3.9% failed-exit recall. Its observed 90%-ATH improvement was $194.73 (+4.18%); the separately development-selected rule improved held-out P&L by just $0.83.
 - At 98% ATH, a **15-minute time stop** outperformed 5/10/20/25/30 minutes: **$6,224.55 unfiltered / $6,416.98 with fixed screening**, the highest observed combination tested. Its gain over 20 minutes is modest ($76.52 / $72.63); heavy-loss positions fall from 537 to 521. These timer comparisons also use the full observed cohort.
+- Follow-up tests did not improve the control: split TP timers reduce P&L, 30/60/90s pool-age limits add no protection, and a perfect known-honeypot check with four blocks of delay loses $118.34 when admission is held fixed.
 - Unknown honeypot flags materially affect conclusions: 2,988 tokens lack classification. The 98%-ATH unknown-blocked scenario is **−$3,893.99 unfiltered / −$1,649.26 with fixed screening**. Main-case P&L assumes those unknown flags are clear; taxes are available for every token.
 
 ## Dataset and scope
@@ -314,15 +315,64 @@ This test addresses current sell blocking; later liquidity disappearance is a se
 
 The replay deliberately uses inexpensive active-range reserve fills instead of a full fork/tick-crossing/hook emulator. Gas comes from one sampled header; fills use a fixed 0.5% adverse slippage haircut plus size impact, pool fees and current token taxes. These are consistent assumptions across variants. Current security applied throughout history, missing honeypot flags, and the concentrated-liquidity approximation are the material assumptions; finer gas variation is secondary at $2 stake under this model. No routes were validated, no swaps signed, and no live tradability claim is made.
 
+## Follow-up studies: TP state, pool age and honeypot-check delay
+
+All three experiments isolate one change against the 98%-ATH / flat-15m control; fixed-rule P&L is $6,416.98.
+
+### Conditional time stops
+
+Both deadlines start at entry. Switch from the unfilled deadline to the filled deadline only when partial TP actually fills.
+
+| TP not filled deadline | TP filled deadline | Unfiltered P&L | Fixed-rule P&L | Change vs flat 15m | Screened losses ≥$1 |
+|---|---|---:|---:|---:|---:|
+| 15m | 15m (control) | $6,224.55 | $6,416.98 | $0.00 | 451 |
+| 5m | 20m | $5,888.71 | $6,081.69 | $-335.29 | 413 |
+| 5m | 30m | $5,807.36 | $6,000.34 | $-416.64 | 413 |
+| 10m | 20m | $6,077.83 | $6,270.02 | $-146.96 | 440 |
+| 10m | 30m | $5,995.37 | $6,187.56 | $-229.42 | 440 |
+| 15m | 20m | $6,155.81 | $6,348.24 | $-68.74 | 451 |
+| 15m | 30m | $6,082.12 | $6,274.55 | $-142.43 | 451 |
+
+The best split policy (15m / 20m) still loses $68.74 versus flat 15m. Extending filled winners to 30m is worse than 20m for all three early deadlines.
+
+### Pool creation age
+
+Age is measured at entry from pool creation, as clarified by the user.
+
+| Maximum pool age at entry | Entries | Net P&L | Change vs no age limit | Win rate | Failed exits | Losses ≥$1 |
+|---|---:|---:|---:|---:|---:|---:|
+| None | 4626 | $6,416.98 | $0.00 | 41.03% | 267 | 451 |
+| 30s | 4607 | $6,414.94 | $-2.04 | 41.15% | 267 | 451 |
+| 60s | 4612 | $6,414.71 | $-2.27 | 41.11% | 267 | 451 |
+| 90s | 4615 | $6,414.54 | $-2.44 | 41.08% | 267 | 451 |
+
+Each limit removes two winners and no failed exits or >5% losses. This extra filter slightly reduces P&L without reducing the targeted losses.
+
+### Four-block perfect-honeypot-check delay
+
+Primary comparison: hold the +4 approved token set fixed, reject all 16 modeled known honeypots before buying, and move passed entries to +8 after first active liquidity. No check fee or false positives are assumed.
+
+| Entry delay | Perfect check | Unfiltered P&L | Same +4 approved tokens: P&L | Screened entries | Screened failed exits | Screened losses ≥$1 |
+|---|---|---:|---:|---:|---:|---:|
+| +4 | No | $6,224.55 | $6,416.98 | 4626 | 267 | 451 |
+| +4 | Yes | $6,256.73 | $6,421.00 | 4624 | 265 | 449 |
+| +8 | No | $6,095.51 | $6,294.62 | 4619 | 282 | 469 |
+| +8 | Yes | $6,127.69 | $6,298.64 | 4617 | 280 | 467 |
+
+The fixed rule already excludes 14/16 known honeypots. Saving $4.02 on the remaining two does not cover the $122.36 cost of delaying approved entries: screened P&L falls $118.34. Re-evaluating screening at +8 gives a secondary $6,341.89 result (−$75.09 versus the control), because it changes the admitted set. Unfiltered, the delay plus perfect check loses $96.86. Unknown labels stay clear in main-case results; the check does not model future LP disappearance.
+
+The detailed [follow-up report](2026-10-03-arc-followup-studies.md) and JSON companion retain all rejection counts, missing-security scenarios, precise definitions and both admission interpretations.
+
 ## Evidence, validation and reproduction
 
-The original six-cell replay contains 40,620 trade records and 20,310 feature snapshots. Independent reviews reproduced the full matrix/features, LightGBM predictions and importance, both explicit rules, all rule metrics, and the maxima of four 5,000-trial CSVs. Original implementation checks passed 517 Node tests and five Python regression tests; after making ATH and time-stop thresholds configurable, all 24 replay tests passed, including timer and capture-horizon boundaries for 15/20/25/30 minutes. The 90% re-run reproduced every one of the 6,770 original records exactly.
+The original six-cell replay contains 40,620 trade records and 20,310 feature snapshots. Independent reviews reproduced the full matrix/features, LightGBM predictions and importance, both explicit rules, all rule metrics, and the maxima of four 5,000-trial CSVs. Original implementation checks passed 517 Node tests and five Python regression tests; after making ATH and time-stop thresholds configurable, all 30 replay tests passed, including timer/capture-horizon boundaries and the six TP-dependent timer combinations. The 90% re-run reproduced every one of the 6,770 original records exactly.
 
 | Artifact | Purpose |
 |---|---|
 | [This report’s JSON](2026-10-03-arc-baseline-468-backtest.json) | Original matrix, coverage and consolidated session diagnostics |
 | [LightGBM report](2026-10-03-arc-chain-screening-lightgbm.md) | Full feature gains, operating points and combined filters; JSON companion |
 | [Explicit screening report](2026-10-03-arc-explicit-screening-rule.md) | Exact rule thresholds, missing-data treatment and fit/holdout results; JSON companion |
+| [Follow-up studies](2026-10-03-arc-followup-studies.md) | TP-dependent timers, pool-age limits and perfect-check delay; JSON companion |
 | [Time-stop comparison report](2026-10-03-arc-time-stop-comparison.md) | Six timers at 98% ATH, time-exit profits, extended capture and missing-security scenarios; JSON companion |
 | [ATH comparison report](2026-10-03-arc-ath-trailing-comparison.md) | All nine ATH settings, exit reasons and unknown-blocked scenarios; JSON companion |
 | [Feature definitions](../../scripts/arc-backtest/features-README.md) | Historical feature semantics and offline joins |
@@ -334,4 +384,4 @@ Replay the original matrix with `node scripts/arc-backtest/run.mjs --dataset DAT
 
 For timer reproduction, use the extended dataset and `--trailing-ath-fraction 0.98 --time-stop-minutes MINUTES` for MINUTES 5, 10, 15, 20, 25 or 30.
 
-The best observed configuration among the settings tested is **+4 blocks, 40% at 2.5x, 98% ATH after TP, 50% hard stop and 15-minute time stop**, with the existing full-sample screening rule if optimizing observed total P&L. The session has not independently validated that combined configuration on a new cohort, retrained models for 98%-ATH labels, tested the full ATH × timer interaction, or tested other TP/delay combinations at 98%. The models and explicit-rule optimization retain their original 90%-ATH / 20-minute labels.
+The best observed configuration among the settings tested is **+4 blocks, 40% at 2.5x, 98% ATH after TP, 50% hard stop and 15-minute time stop**, with the existing full-sample screening rule if optimizing observed total P&L. The session has not independently validated that combined configuration on a new cohort, retrained models for 98%-ATH labels, tested the full ATH × timer interaction, or tested other TP/delay combinations at 98%. The models and explicit-rule optimization retain their original 90%-ATH / 20-minute labels. The three follow-up studies support retaining the unconditional 15-minute timer and existing screening rule, without an age cutoff or four-block check under the modeled honeypot labels.

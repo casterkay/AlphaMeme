@@ -410,7 +410,8 @@
       "2026-10-03-arc-chain-screening-lightgbm.json",
       "2026-10-03-arc-explicit-screening-rule.json",
       "2026-10-03-arc-ath-trailing-comparison.json",
-      "2026-10-03-arc-time-stop-comparison.json"
+      "2026-10-03-arc-time-stop-comparison.json",
+      "2026-10-03-arc-followup-studies.json"
     ],
     "orderedPoolStates": 947660,
     "lossDiagnostics": {
@@ -1391,6 +1392,518 @@
       }
     },
     "bestObservedTimeStopMinutes": 15,
-    "minimumRounded30MinuteHorizonSlackSeconds": 99.37499989509593
+    "minimumRounded30MinuteHorizonSlackSeconds": 99.37499989509593,
+    "followupStudies": {
+      "configuration": {
+        "delayBlocks": 4,
+        "takeProfitFraction": 0.4,
+        "takeProfitMultiple": 2.5,
+        "trailingAthFraction": 0.98,
+        "baselineTimeStopMinutes": 15,
+        "stakeUsd": 2,
+        "fixedScreenRule": {
+          "usdcMin": 0.0,
+          "usdcShareMin": 1.1e-05,
+          "usdcShareMax": 0.5,
+          "holderMax": 0.49942,
+          "feeMaxPips": 10000.0,
+          "marketCapMin": 300.0,
+          "marketCapMax": 9941.18,
+          "allowMissingHolder": true,
+          "allowMissingFee": false
+        },
+        "poolAgeDefinition": "Entry timestamp minus original pool creation timestamp",
+        "conditionalDeadlines": "Both measured from entry; switch to filled-TP deadline only after actual partial sale fills",
+        "perfectCheckDefinition": "Reject all 16 known modeled honeypots before entry, with no check fee or false positives. Unknown flags remain clear in main case. Delay is measured from first active liquidity, as in all previous runs.",
+        "delayedScreeningInterpretation": "Primary: screen at original +4 decision and delay those entries to +8. Also show secondary screening re-evaluated with +8 features."
+      },
+      "control": {
+        "all": {
+          "entries": 6200,
+          "netUsd": 6224.5490075806565,
+          "conservativeNetUsd": -3820.379465756503,
+          "gasUsd": 77.46,
+          "winRate": 0.3090322580645161,
+          "failedExits": 296,
+          "lossOver5Pct": 689,
+          "heavyLoss": 521,
+          "lossUsd": 1247.6853544704627,
+          "positivePositions": 1916,
+          "negativePositions": 4284
+        },
+        "fixedScreen": {
+          "entries": 4626,
+          "netUsd": 6416.980645467403,
+          "conservativeNetUsd": -1576.5081883174144,
+          "gasUsd": 60.080999999999996,
+          "winRate": 0.4102896670990056,
+          "failedExits": 267,
+          "lossOver5Pct": 608,
+          "heavyLoss": 451,
+          "lossUsd": 1008.6641104367869,
+          "positivePositions": 1898,
+          "negativePositions": 2728
+        }
+      },
+      "conditionalTimers": [
+        {
+          "unfilledTpMinutes": 5,
+          "filledTpMinutes": 20,
+          "all": {
+            "entries": 6200,
+            "netUsd": 5888.7143603820305,
+            "conservativeNetUsd": -4156.633438681622,
+            "gasUsd": 76.905,
+            "winRate": 0.31548387096774194,
+            "failedExits": 296,
+            "lossOver5Pct": 630,
+            "heavyLoss": 481,
+            "lossUsd": 1178.2020856233557,
+            "positivePositions": 1956,
+            "negativePositions": 4244
+          },
+          "fixedScreen": {
+            "entries": 4626,
+            "netUsd": 6081.691772653304,
+            "conservativeNetUsd": -1909.874769781362,
+            "gasUsd": 59.536,
+            "winRate": 0.4180717682663208,
+            "failedExits": 267,
+            "lossOver5Pct": 551,
+            "heavyLoss": 413,
+            "lossUsd": 942.363263154733,
+            "positivePositions": 1934,
+            "negativePositions": 2692
+          },
+          "fixedScreenTpFilled": 1730
+        },
+        {
+          "unfilledTpMinutes": 5,
+          "filledTpMinutes": 30,
+          "all": {
+            "entries": 6200,
+            "netUsd": 5807.358613863151,
+            "conservativeNetUsd": -4237.9891852005,
+            "gasUsd": 76.905,
+            "winRate": 0.31548387096774194,
+            "failedExits": 296,
+            "lossOver5Pct": 630,
+            "heavyLoss": 481,
+            "lossUsd": 1178.2020856233557,
+            "positivePositions": 1956,
+            "negativePositions": 4244
+          },
+          "fixedScreen": {
+            "entries": 4626,
+            "netUsd": 6000.336026134425,
+            "conservativeNetUsd": -1991.2305163002407,
+            "gasUsd": 59.536,
+            "winRate": 0.4180717682663208,
+            "failedExits": 267,
+            "lossOver5Pct": 551,
+            "heavyLoss": 413,
+            "lossUsd": 942.363263154733,
+            "positivePositions": 1934,
+            "negativePositions": 2692
+          },
+          "fixedScreenTpFilled": 1730
+        },
+        {
+          "unfilledTpMinutes": 10,
+          "filledTpMinutes": 20,
+          "all": {
+            "entries": 6200,
+            "netUsd": 6077.827102567895,
+            "conservativeNetUsd": -3968.121982553213,
+            "gasUsd": 77.195,
+            "winRate": 0.3108064516129032,
+            "failedExits": 296,
+            "lossOver5Pct": 671,
+            "heavyLoss": 510,
+            "lossUsd": 1224.1456061849715,
+            "positivePositions": 1927,
+            "negativePositions": 4273
+          },
+          "fixedScreen": {
+            "entries": 4626,
+            "netUsd": 6270.019506862627,
+            "conservativeNetUsd": -1722.782205775453,
+            "gasUsd": 59.821,
+            "winRate": 0.4126675313445741,
+            "failedExits": 267,
+            "lossOver5Pct": 590,
+            "heavyLoss": 440,
+            "lossUsd": 985.1100398555155,
+            "positivePositions": 1909,
+            "negativePositions": 2717
+          },
+          "fixedScreenTpFilled": 1787
+        },
+        {
+          "unfilledTpMinutes": 10,
+          "filledTpMinutes": 30,
+          "all": {
+            "entries": 6200,
+            "netUsd": 5995.3656913608265,
+            "conservativeNetUsd": -4050.5833937602806,
+            "gasUsd": 77.195,
+            "winRate": 0.3108064516129032,
+            "failedExits": 296,
+            "lossOver5Pct": 671,
+            "heavyLoss": 510,
+            "lossUsd": 1224.1456061849715,
+            "positivePositions": 1927,
+            "negativePositions": 4273
+          },
+          "fixedScreen": {
+            "entries": 4626,
+            "netUsd": 6187.55809565556,
+            "conservativeNetUsd": -1805.243616982521,
+            "gasUsd": 59.821,
+            "winRate": 0.4126675313445741,
+            "failedExits": 267,
+            "lossOver5Pct": 590,
+            "heavyLoss": 440,
+            "lossUsd": 985.1100398555155,
+            "positivePositions": 1909,
+            "negativePositions": 2717
+          },
+          "fixedScreenTpFilled": 1787
+        },
+        {
+          "unfilledTpMinutes": 15,
+          "filledTpMinutes": 20,
+          "all": {
+            "entries": 6200,
+            "netUsd": 6155.806490432246,
+            "conservativeNetUsd": -3889.1219829049132,
+            "gasUsd": 77.46,
+            "winRate": 0.3090322580645161,
+            "failedExits": 296,
+            "lossOver5Pct": 689,
+            "heavyLoss": 521,
+            "lossUsd": 1247.6853544704627,
+            "positivePositions": 1916,
+            "negativePositions": 4284
+          },
+          "fixedScreen": {
+            "entries": 4626,
+            "netUsd": 6348.2381283189925,
+            "conservativeNetUsd": -1645.2507054658245,
+            "gasUsd": 60.080999999999996,
+            "winRate": 0.4102896670990056,
+            "failedExits": 267,
+            "lossOver5Pct": 608,
+            "heavyLoss": 451,
+            "lossUsd": 1008.6641104367869,
+            "positivePositions": 1898,
+            "negativePositions": 2728
+          },
+          "fixedScreenTpFilled": 1839
+        },
+        {
+          "unfilledTpMinutes": 15,
+          "filledTpMinutes": 30,
+          "all": {
+            "entries": 6200,
+            "netUsd": 6082.120930317115,
+            "conservativeNetUsd": -3962.807543020045,
+            "gasUsd": 77.46,
+            "winRate": 0.3090322580645161,
+            "failedExits": 296,
+            "lossOver5Pct": 689,
+            "heavyLoss": 521,
+            "lossUsd": 1247.6853544704627,
+            "positivePositions": 1916,
+            "negativePositions": 4284
+          },
+          "fixedScreen": {
+            "entries": 4626,
+            "netUsd": 6274.552568203861,
+            "conservativeNetUsd": -1718.9362655809562,
+            "gasUsd": 60.080999999999996,
+            "winRate": 0.4102896670990056,
+            "failedExits": 267,
+            "lossOver5Pct": 608,
+            "heavyLoss": 451,
+            "lossUsd": 1008.6641104367869,
+            "positivePositions": 1898,
+            "negativePositions": 2728
+          },
+          "fixedScreenTpFilled": 1839
+        }
+      ],
+      "poolAgeFilters": [
+        {
+          "maximumPoolAgeSeconds": 30,
+          "fixedScreen": {
+            "entries": 4607,
+            "netUsd": 6414.943869392564,
+            "conservativeNetUsd": -1549.988467717276,
+            "gasUsd": 59.867,
+            "winRate": 0.4115476448882136,
+            "failedExits": 267,
+            "lossOver5Pct": 608,
+            "heavyLoss": 451,
+            "lossUsd": 1007.729158900129,
+            "positivePositions": 1896,
+            "negativePositions": 2711
+          },
+          "removed": {
+            "entries": 19,
+            "netUsd": 2.036776074838515,
+            "conservativeNetUsd": -26.519720600138257,
+            "gasUsd": 0.214,
+            "winRate": 0.10526315789473684,
+            "failedExits": 0,
+            "lossOver5Pct": 0,
+            "heavyLoss": 0,
+            "lossUsd": 0.9349515366578306,
+            "positivePositions": 2,
+            "negativePositions": 17
+          }
+        },
+        {
+          "maximumPoolAgeSeconds": 60,
+          "fixedScreen": {
+            "entries": 4612,
+            "netUsd": 6414.70915937855,
+            "conservativeNetUsd": -1558.1041916967868,
+            "gasUsd": 59.922,
+            "winRate": 0.4111014744145707,
+            "failedExits": 267,
+            "lossOver5Pct": 608,
+            "heavyLoss": 451,
+            "lossUsd": 1007.963868914143,
+            "positivePositions": 1896,
+            "negativePositions": 2716
+          },
+          "removed": {
+            "entries": 14,
+            "netUsd": 2.2714860888523734,
+            "conservativeNetUsd": -18.403996620627517,
+            "gasUsd": 0.159,
+            "winRate": 0.14285714285714285,
+            "failedExits": 0,
+            "lossOver5Pct": 0,
+            "heavyLoss": 0,
+            "lossUsd": 0.7002415226439723,
+            "positivePositions": 2,
+            "negativePositions": 12
+          }
+        },
+        {
+          "maximumPoolAgeSeconds": 90,
+          "fixedScreen": {
+            "entries": 4615,
+            "netUsd": 6414.538119804549,
+            "conservativeNetUsd": -1564.1371916967869,
+            "gasUsd": 59.955,
+            "winRate": 0.41083423618634884,
+            "failedExits": 267,
+            "lossOver5Pct": 608,
+            "heavyLoss": 451,
+            "lossUsd": 1008.1349084881442,
+            "positivePositions": 1896,
+            "negativePositions": 2719
+          },
+          "removed": {
+            "entries": 11,
+            "netUsd": 2.442525662853605,
+            "conservativeNetUsd": -12.370996620627517,
+            "gasUsd": 0.126,
+            "winRate": 0.18181818181818182,
+            "failedExits": 0,
+            "lossOver5Pct": 0,
+            "heavyLoss": 0,
+            "lossUsd": 0.5292019486427406,
+            "positivePositions": 2,
+            "negativePositions": 9
+          }
+        }
+      ],
+      "honeypotDelay": [
+        {
+          "delayBlocks": 4,
+          "perfectHoneypotCheck": false,
+          "all": {
+            "entries": 6200,
+            "netUsd": 6224.5490075806565,
+            "conservativeNetUsd": -3820.379465756503,
+            "gasUsd": 77.46,
+            "winRate": 0.3090322580645161,
+            "failedExits": 296,
+            "lossOver5Pct": 689,
+            "heavyLoss": 521,
+            "lossUsd": 1247.6853544704627,
+            "positivePositions": 1916,
+            "negativePositions": 4284
+          },
+          "fixedScreen": {
+            "entries": 4626,
+            "netUsd": 6416.980645467403,
+            "conservativeNetUsd": -1576.5081883174144,
+            "gasUsd": 60.080999999999996,
+            "winRate": 0.4102896670990056,
+            "failedExits": 267,
+            "lossOver5Pct": 608,
+            "heavyLoss": 451,
+            "lossUsd": 1008.6641104367869,
+            "positivePositions": 1898,
+            "negativePositions": 2728
+          },
+          "honeypotsRejected": 0,
+          "screenedHoneypotsRejected": 0,
+          "fixedScreenAtDecision": {
+            "entries": 4626,
+            "netUsd": 6416.980645467403,
+            "conservativeNetUsd": -1576.5081883174144,
+            "gasUsd": 60.080999999999996,
+            "winRate": 0.4102896670990056,
+            "failedExits": 267,
+            "lossOver5Pct": 608,
+            "heavyLoss": 451,
+            "lossUsd": 1008.6641104367869,
+            "positivePositions": 1898,
+            "negativePositions": 2728
+          }
+        },
+        {
+          "delayBlocks": 4,
+          "perfectHoneypotCheck": true,
+          "all": {
+            "entries": 6184,
+            "netUsd": 6256.725007580657,
+            "conservativeNetUsd": -3788.203465756503,
+            "gasUsd": 77.28399999999999,
+            "winRate": 0.30983182406209575,
+            "failedExits": 280,
+            "lossOver5Pct": 673,
+            "heavyLoss": 505,
+            "lossUsd": 1215.5093544704628,
+            "positivePositions": 1916,
+            "negativePositions": 4268
+          },
+          "fixedScreen": {
+            "entries": 4624,
+            "netUsd": 6421.0026454674025,
+            "conservativeNetUsd": -1572.4861883174144,
+            "gasUsd": 60.059,
+            "winRate": 0.41046712802768165,
+            "failedExits": 265,
+            "lossOver5Pct": 606,
+            "heavyLoss": 449,
+            "lossUsd": 1004.6421104367869,
+            "positivePositions": 1898,
+            "negativePositions": 2726
+          },
+          "honeypotsRejected": 16,
+          "screenedHoneypotsRejected": 2,
+          "fixedScreenAtDecision": {
+            "entries": 4624,
+            "netUsd": 6421.0026454674025,
+            "conservativeNetUsd": -1572.4861883174144,
+            "gasUsd": 60.059,
+            "winRate": 0.41046712802768165,
+            "failedExits": 265,
+            "lossOver5Pct": 606,
+            "heavyLoss": 449,
+            "lossUsd": 1004.6421104367869,
+            "positivePositions": 1898,
+            "negativePositions": 2726
+          }
+        },
+        {
+          "delayBlocks": 8,
+          "perfectHoneypotCheck": false,
+          "all": {
+            "entries": 6193,
+            "netUsd": 6095.512159002628,
+            "conservativeNetUsd": -3832.4650272812846,
+            "gasUsd": 77.303,
+            "winRate": 0.3051832714354917,
+            "failedExits": 311,
+            "lossOver5Pct": 706,
+            "heavyLoss": 540,
+            "lossUsd": 1277.467964922491,
+            "positivePositions": 1890,
+            "negativePositions": 4303
+          },
+          "fixedScreen": {
+            "entries": 4654,
+            "netUsd": 6337.870051284556,
+            "conservativeNetUsd": -1542.7421438514455,
+            "gasUsd": 60.263999999999996,
+            "winRate": 0.40201976794155564,
+            "failedExits": 269,
+            "lossOver5Pct": 585,
+            "heavyLoss": 432,
+            "lossUsd": 981.2019202959733,
+            "positivePositions": 1871,
+            "negativePositions": 2783
+          },
+          "honeypotsRejected": 0,
+          "screenedHoneypotsRejected": 0,
+          "fixedScreenAtDecision": {
+            "entries": 4619,
+            "netUsd": 6294.621693155227,
+            "conservativeNetUsd": -1587.9976812309155,
+            "gasUsd": 59.934,
+            "winRate": 0.40571552284044166,
+            "failedExits": 282,
+            "lossOver5Pct": 621,
+            "heavyLoss": 469,
+            "lossUsd": 1035.1230469821892,
+            "positivePositions": 1874,
+            "negativePositions": 2745
+          }
+        },
+        {
+          "delayBlocks": 8,
+          "perfectHoneypotCheck": true,
+          "all": {
+            "entries": 6177,
+            "netUsd": 6127.688159002629,
+            "conservativeNetUsd": -3800.2890272812847,
+            "gasUsd": 77.127,
+            "winRate": 0.305973773676542,
+            "failedExits": 295,
+            "lossOver5Pct": 690,
+            "heavyLoss": 524,
+            "lossUsd": 1245.2919649224912,
+            "positivePositions": 1890,
+            "negativePositions": 4287
+          },
+          "fixedScreen": {
+            "entries": 4652,
+            "netUsd": 6341.892051284556,
+            "conservativeNetUsd": -1538.7201438514455,
+            "gasUsd": 60.242,
+            "winRate": 0.4021926053310404,
+            "failedExits": 267,
+            "lossOver5Pct": 583,
+            "heavyLoss": 430,
+            "lossUsd": 977.1799202959733,
+            "positivePositions": 1871,
+            "negativePositions": 2781
+          },
+          "honeypotsRejected": 16,
+          "screenedHoneypotsRejected": 2,
+          "fixedScreenAtDecision": {
+            "entries": 4617,
+            "netUsd": 6298.643693155227,
+            "conservativeNetUsd": -1583.9756812309156,
+            "gasUsd": 59.912,
+            "winRate": 0.4058912713883474,
+            "failedExits": 280,
+            "lossOver5Pct": 619,
+            "heavyLoss": 467,
+            "lossUsd": 1031.1010469821892,
+            "positivePositions": 1874,
+            "negativePositions": 2743
+          }
+        }
+      ]
+    }
   }
 }
