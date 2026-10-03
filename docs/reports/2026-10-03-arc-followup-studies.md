@@ -33,7 +33,11 @@ The limits remove 19 / 14 / 11 positions, including two profitable positions in 
 
 ## 3. Perfect honeypot check costing four additional blocks
 
-Assume the check rejects all 16 modeled known honeypots before buying, has no false positives, charges no gas/service fee, and adds four blocks (about 2.03s) to passed entries. The primary experiment screens at the original +4 decision, then delays those same approved tokens to +8. Thus the entry population cannot change merely because screening features improve during the check. Delay remains anchored to first active liquidity, as in prior studies; the age experiment separately uses pool creation.
+“Modeled honeypots” are provider-flagged tokens whose labels are used by the replay, not tokens independently confirmed through buy→sell simulation. In this cohort, **all 16 flagged tokens have a positive honeypot flag in the saved GMGN token-security responses**. GoPlus and AVE supplement unresolved security fields, but add no further flagged tokens to these 16. The snapshots are current provider information applied throughout historical trading, not historical flags observed at each entry.
+
+The replay makes those 16 tokens fail their first sale attempt and writes off the remaining inventory. No stateful buy→approve→sell simulation was performed. Another **2,988 tokens have unknown honeypot status**: the main case assumes they can sell; the separate unknown-blocked scenario assumes they cannot. The hypothetical perfect-check study rejects the 16 provider-flagged tokens before purchase; it does not establish how many of the unclassified tokens a real check would detect.
+
+Assume the check rejects all 16 provider-flagged honeypots before buying, has no false positives, charges no gas/service fee, and adds four blocks (about 2.03s) to passed entries. The primary experiment screens at the original +4 decision, then delays those same approved tokens to +8. Thus the entry population cannot change merely because screening features improve during the check. Delay remains anchored to first active liquidity, as in prior studies; the age experiment separately uses pool creation.
 
 | Entry delay | Perfect check | Unfiltered P&L | Same +4 approved tokens: P&L | Screened entries | Screened failed exits | Screened losses ≥$1 |
 |---|---|---:|---:|---:|---:|---:|
@@ -50,7 +54,7 @@ The perfect check removes current modeled honeypot losses; it does not remove fu
 
 ## Missing-security scenario
 
-All main-case figures above assume unknown honeypot flags are clear. For reproducibility, the existing unknown-blocked scenario is retained separately. The check still only identifies the 16 modeled known honeypots; it is not silently assumed to identify every unknown.
+All main-case figures above assume unknown honeypot flags are clear. For reproducibility, the existing unknown-blocked scenario is retained separately. The check still only identifies the 16 provider-flagged honeypots; it is not silently assumed to identify every unknown.
 
 | Setting | Screened unknown-blocked P&L |
 |---|---:|

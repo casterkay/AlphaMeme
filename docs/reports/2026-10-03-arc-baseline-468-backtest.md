@@ -44,6 +44,10 @@ A position is modeled as tradable when the entry state has valid price and posit
 
 6200 current security snapshots (0 unavailable primary responses); 16 marked honeypot; 2988 have at least one missing/conflicting required field. Missing buy tax: 0; missing sell tax: 0.
 
+“Modeled honeypots” are provider-flagged tokens whose labels are used by the replay, not tokens independently confirmed through buy→sell simulation. In this cohort, **all 16 flagged tokens have a positive honeypot flag in the saved GMGN token-security responses**. GoPlus and AVE supplement unresolved security fields, but add no further flagged tokens to these 16. The snapshots are current provider information applied throughout historical trading, not historical flags observed at each entry.
+
+The replay makes those 16 tokens fail their first sale attempt and writes off the remaining inventory. No stateful buy→approve→sell simulation was performed. Another **2,988 tokens have unknown honeypot status**: the main case assumes they can sell; the separate unknown-blocked scenario assumes they cannot. The hypothetical perfect-check study rejects the 16 provider-flagged tokens before purchase; it does not establish how many of the unclassified tokens a real check would detect.
+
 LP lock is unused: it is not the same as whether a sale succeeds. Unknown honeypot flags stay explicitly unknown in evidence, even though the main-case simulation assumes them clear. Known honeypots fail their first sale attempt; remaining inventory is written off and failed gas is paid.
 
 ## Delay and take-profit comparison: 90% ATH
@@ -264,7 +268,7 @@ Only the trailing threshold changes; all entries, costs, 50% hard stop and 20-mi
 | Positive / negative positions | 1,513 / 4,687 | 1,901 / 4,299 |
 | Failed exits | 821 | 299 |
 | Liquidity-disappearance exits | 805 | 283 |
-| Known-honeypot exits | 16 | 16 |
+| Provider-flagged honeypot exits | 16 | 16 |
 | Loss >5% positions | 718 | 705 |
 | Loss ≥$1 positions | 537 | 537 |
 | Aggregate loss dollars | $1,279.03 | $1,267.72 |
@@ -350,7 +354,7 @@ Each limit removes two winners and no failed exits or >5% losses. This extra fil
 
 ### Four-block perfect-honeypot-check delay
 
-Primary comparison: hold the +4 approved token set fixed, reject all 16 modeled known honeypots before buying, and move passed entries to +8 after first active liquidity. No check fee or false positives are assumed.
+Primary comparison: hold the +4 approved token set fixed, reject all 16 provider-flagged honeypots before buying, and move passed entries to +8 after first active liquidity. No check fee or false positives are assumed.
 
 | Entry delay | Perfect check | Unfiltered P&L | Same +4 approved tokens: P&L | Screened entries | Screened failed exits | Screened losses ≥$1 |
 |---|---|---:|---:|---:|---:|---:|

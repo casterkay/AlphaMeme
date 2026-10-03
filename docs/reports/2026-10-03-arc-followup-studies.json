@@ -19,8 +19,21 @@
     },
     "poolAgeDefinition": "Entry timestamp minus original pool creation timestamp",
     "conditionalDeadlines": "Both measured from entry; switch to filled-TP deadline only after actual partial sale fills",
-    "perfectCheckDefinition": "Reject all 16 known modeled honeypots before entry, with no check fee or false positives. Unknown flags remain clear in main case. Delay is measured from first active liquidity, as in all previous runs.",
-    "delayedScreeningInterpretation": "Primary: screen at original +4 decision and delay those entries to +8. Also show secondary screening re-evaluated with +8 features."
+    "perfectCheckDefinition": "Reject all 16 provider-flagged honeypots before entry, with no check fee or false positives. All 16 have positive GMGN snapshot flags; no buy\u2192sell simulation confirmed them. Unknown flags remain clear in the main case. Delay is measured from first active liquidity.",
+    "delayedScreeningInterpretation": "Primary: screen at original +4 decision and delay those entries to +8. Also show secondary screening re-evaluated with +8 features.",
+    "honeypotLabelProvenance": {
+      "definition": "Provider flags applied by the replay, not independently validated sell failures",
+      "primaryProvider": "GMGN token-security snapshots",
+      "gmgnPositiveHoneypotTokens": 16,
+      "additionalFlaggedTokensFromSupplements": 0,
+      "supplements": "GoPlus and AVE supplement unresolved fields",
+      "labelTiming": "Current snapshots assumed available throughout historical trading",
+      "buyApproveSellSimulationPerformed": false,
+      "unknownHoneypotTokens": 2988,
+      "mainUnknownPolicy": "Assume selling succeeds subject to liquidity, tax and modeled execution",
+      "unknownBlockedPolicy": "Assume unknown honeypot flags block selling",
+      "perfectCheckScope": "Reject the 16 provider-flagged tokens before entry; unclassified-token detection is not established"
+    }
   },
   "control": {
     "all": {
