@@ -6,10 +6,10 @@ Only +4 blocks / 40% at 2.5x is evaluated, one row per token. Token-grouped chro
 
 Two modest LightGBM models (15 leaves, minimum 100 rows/leaf, learning rate 0.03, L2=5, up to 1,000 rounds with 50-round early stopping); no test-driven tuning or class reweighting.
 
-| Model | Test prevalence | ROC AUC | Average precision | Rounds |
-|---|---:|---:|---:|---:|
-| positive_pnl | 29.2% | 0.929 | 0.853 | 279 |
-| loss_over_5pct | 12.6% | 0.911 | 0.621 | 255 |
+| Model | Test prevalence | Accuracy at 0.5 | ROC AUC | Average precision | Rounds |
+|---|---:|---:|---:|---:|---:|
+| positive_pnl | 29.2% | 86.5% | 0.929 | 0.853 | 279 |
+| loss_over_5pct | 12.6% | 90.3% | 0.911 | 0.621 | 255 |
 
 ## Held-out operating points
 
