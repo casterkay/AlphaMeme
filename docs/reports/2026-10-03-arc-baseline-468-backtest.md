@@ -11,7 +11,7 @@ Consolidated findings from the 2026-10-03 session. This is a read-only historica
 - Failed exits mainly came from liquidity disappearing: 805 cases versus 16 current honeypot flags at 90% ATH. Tightening to 98% reduced failed exits from 821 to 299, but **heavy-loss positions stayed at 537**, and aggregate loss dollars fell only $11.32. The P&L improvement primarily comes from higher positive-position gains.
 - Entry-only LightGBM models ranked winners and >5% losses well on the chronological holdout (ROC AUC 0.929 / 0.911). High-precision winner screening caught 90.8% of failed exits but sacrificed enough winners to reduce total P&L. Classification quality, avoidance of failed exits and maximization of total P&L are different objectives.
 - Optuna TPE found an explicit rule with 98.92% precision when rejecting negative positions, but only 33.22% negative-position recall and 3.9% failed-exit recall. Its observed 90%-ATH improvement was $194.73 (+4.18%); the separately development-selected rule improved held-out P&L by just $0.83.
-- At 98% ATH, a **15-minute time stop** outperformed 20/25/30 minutes: **$6,224.55 unfiltered / $6,416.98 with fixed screening**, the highest observed combination tested. Its gain over 20 minutes is modest ($76.52 / $72.63); heavy-loss positions fall from 537 to 521. These timer comparisons also use the full observed cohort.
+- At 98% ATH, a **15-minute time stop** outperformed 5/10/20/25/30 minutes: **$6,224.55 unfiltered / $6,416.98 with fixed screening**, the highest observed combination tested. Its gain over 20 minutes is modest ($76.52 / $72.63); heavy-loss positions fall from 537 to 521. These timer comparisons also use the full observed cohort.
 - Unknown honeypot flags materially affect conclusions: 2,988 tokens lack classification. The 98%-ATH unknown-blocked scenario is **−$3,893.99 unfiltered / −$1,649.26 with fixed screening**. Main-case P&L assumes those unknown flags are clear; taxes are available for every token.
 
 ## Dataset and scope
@@ -287,22 +287,24 @@ A final time-stop exit can close the remainder of a winning position that alread
 
 The largest time-stop winner is the same at both thresholds: **$49.29 net profit on $2 stake**. Its partial TP returned $12.84, and the timer sold the remainder for $38.46; total proceeds were $51.30 before $2 stake and $0.016 gas. The top five time-stop profits were $49.29, $46.93, $46.85, $46.65 and $46.17. These are modeled next-block proceeds, not actual trades.
 
-At 98% ATH, the 70 positive time-stop positions contribute $1,034.55, offset by $329.15 lost on 3,762 negative time-stop positions, leaving $705.40 net. Most time-stop exits are small losers, but the minority of large winners is economically meaningful. The timer comparison below evaluates 15/20/25/30 minutes at 98% ATH; the time-stop winner counts change because earlier or later timers also change which positions exit by another rule.
+At 98% ATH, the 70 positive time-stop positions contribute $1,034.55, offset by $329.15 lost on 3,762 negative time-stop positions, leaving $705.40 net. Most time-stop exits are small losers, but the minority of large winners is economically meaningful. The timer comparison below evaluates 5/10/15/20/25/30 minutes at 98% ATH; the time-stop winner counts change because earlier or later timers also change which positions exit by another rule.
 
 ## Time-stop comparison: 98% ATH
 
-The original dataset already contains longer histories for earlier launches. Five entries needed a later endpoint for the 30-minute test. Arc RPC supplied 51 additional ordered states over blocks 24,020,323–24,021,504, extending capture to **2026-10-03 16:29:25 Asia/Taipei (08:29:25Z)**. Existing states, entry features, block-time/gas assumptions, current security and the 6,200 originally entered tokens stay fixed. Never-funded records do not become additional entries. Every 20-minute trade reproduces the previous 98%-ATH ledger exactly.
+The original dataset already contains longer histories for earlier launches. Five entries needed a later endpoint for the 30-minute test. Arc RPC supplied 51 additional ordered states over blocks 24,020,323–24,021,504, extending capture to **2026-10-03 16:29:25 Asia/Taipei (08:29:25Z)**. Existing states, entry features, block-time/gas assumptions, current security and the 6,200 originally entered tokens stay fixed. Never-funded records do not become additional entries. Every 20-minute trade reproduces the previous 98%-ATH ledger exactly. All entries have at least 99.37s capture slack beyond the rounded 30-minute next-block exit horizon.
 
 | Timer | Net P&L | Change vs 20m | Win rate | Failed exits | Loss ≥$1 count | Fixed screening P&L |
 |---|---:|---:|---:|---:|---:|---:|
+| 5m | $5,821.80 | $-326.23 | 31.55% | 296 | 481 | $6,014.78 |
+| 10m | $6,091.79 | $-56.24 | 31.08% | 296 | 510 | $6,284.06 |
 | 15m | $6,224.55 | $+76.52 | 30.90% | 296 | 521 | $6,416.98 |
 | 20m | $6,148.03 | $+0.00 | 30.66% | 299 | 537 | $6,344.35 |
 | 25m | $6,118.86 | $-29.18 | 30.60% | 300 | 540 | $6,316.80 |
 | 30m | $6,075.82 | $-72.21 | 30.56% | 299 | 539 | $6,273.08 |
 
-15 minutes gives the highest observed P&L: +$76.52 (+1.24%) unfiltered, or +$72.63 (+1.14%) screened, versus 20 minutes. At 15 minutes, 123 profitable time-stop exits include 84 with at least $1 net profit and 68 with at least $2. At 20 minutes those counts are 70 / 42 / 36; at 25 minutes, 46 / 20 / 15; at 30 minutes, 36 / 11 / 11. Longer timers allow some such winners to exit by the trailing stop instead, so final time-stop-category P&L alone is not a timer-performance comparison; total portfolio P&L is the relevant measure.
+5 minutes raises win rate to 31.55% but lowers total P&L to $5,821.80. Ten minutes yields $6,091.79. Their earlier exits reduce heavy losses but sacrifice enough gains to lose $402.75 / $132.76 versus 15 minutes. Fifteen minutes gives the highest observed P&L: +$76.52 (+1.24%) unfiltered, or +$72.63 (+1.14%) screened, versus 20 minutes. At 15 minutes, 123 profitable time-stop exits include 84 with at least $1 net profit and 68 with at least $2. At 20 minutes those counts are 70 / 42 / 36; at 25 minutes, 46 / 20 / 15; at 30 minutes, 36 / 11 / 11. Longer timers allow some such winners to exit by the trailing stop instead, so final time-stop-category P&L alone is not a timer-performance comparison; total portfolio P&L is the relevant measure.
 
-The 15-minute unknown-blocked result remains negative: −$3,820.38 unfiltered / −$1,576.51 screened. All four timers were tested at 98% ATH only, using the same existing screening rule. A complete ATH × timer search and held-out validation of the selected combined configuration were not performed.
+The 15-minute unknown-blocked result remains negative: −$3,820.38 unfiltered / −$1,576.51 screened. All six timers were tested at 98% ATH only, using the same existing screening rule. A complete ATH × timer search and held-out validation of the selected combined configuration were not performed.
 
 ## Pre-buy honeypot testing and tolerable simplifications
 
@@ -321,15 +323,15 @@ The original six-cell replay contains 40,620 trade records and 20,310 feature sn
 | [This report’s JSON](2026-10-03-arc-baseline-468-backtest.json) | Original matrix, coverage and consolidated session diagnostics |
 | [LightGBM report](2026-10-03-arc-chain-screening-lightgbm.md) | Full feature gains, operating points and combined filters; JSON companion |
 | [Explicit screening report](2026-10-03-arc-explicit-screening-rule.md) | Exact rule thresholds, missing-data treatment and fit/holdout results; JSON companion |
-| [Time-stop comparison report](2026-10-03-arc-time-stop-comparison.md) | Four timers at 98% ATH, time-exit profits, extended capture and missing-security scenarios; JSON companion |
+| [Time-stop comparison report](2026-10-03-arc-time-stop-comparison.md) | Six timers at 98% ATH, time-exit profits, extended capture and missing-security scenarios; JSON companion |
 | [ATH comparison report](2026-10-03-arc-ath-trailing-comparison.md) | All nine ATH settings, exit reasons and unknown-blocked scenarios; JSON companion |
 | [Feature definitions](../../scripts/arc-backtest/features-README.md) | Historical feature semantics and offline joins |
 | [Research CLI README](../../scripts/arc-backtest/README.md) | Reproduction commands and dependency versions |
 
-Source evidence remains in local `.runtime/arc-backtest/`: `dataset72h-enriched.json`, `security72h.json`, `results468/`, native models/predictions in `screening4/`, four trial CSVs in `rule4/` and `rule4-seed7/`, merged best rules in `rule4-best/`, individual ledgers in `trailing75/` through the requested `trailing99/` variants, the extended `dataset72h-30m.json`, raw tail logs in `time-stop30-tail/`, and four timer ledgers in `time-stop15/`, `time-stop20/`, `time-stop25/`, `time-stop30/`. These runtime files are outside Git. The committed reports are projections of this evidence.
+Source evidence remains in local `.runtime/arc-backtest/`: `dataset72h-enriched.json`, `security72h.json`, `results468/`, native models/predictions in `screening4/`, four trial CSVs in `rule4/` and `rule4-seed7/`, merged best rules in `rule4-best/`, individual ledgers in `trailing75/` through the requested `trailing99/` variants, the extended `dataset72h-30m.json`, raw tail logs in `time-stop30-tail/`, and six timer ledgers in `time-stop5/`, `time-stop10/`, `time-stop15/`, `time-stop20/`, `time-stop25/`, `time-stop30/`. These runtime files are outside Git. The committed reports are projections of this evidence.
 
 Replay the original matrix with `node scripts/arc-backtest/run.mjs --dataset DATASET.json --security-file SECURITY.json --delays 4,6,8 --take-profit-multiples 2.5,2 --trailing-ath-fraction 0.9 --features-file ENTRY_FEATURES.json --output OUTPUT`. Replay each ATH setting using `--delays 4 --take-profit-multiples 2.5 --trailing-ath-fraction FRACTION`, where FRACTION is 0.75, 0.8, 0.85, 0.9, 0.95, 0.96, 0.97, 0.98 or 0.99.
 
-For timer reproduction, use the extended dataset and `--trailing-ath-fraction 0.98 --time-stop-minutes MINUTES` for MINUTES 15, 20, 25 or 30.
+For timer reproduction, use the extended dataset and `--trailing-ath-fraction 0.98 --time-stop-minutes MINUTES` for MINUTES 5, 10, 15, 20, 25 or 30.
 
 The best observed configuration among the settings tested is **+4 blocks, 40% at 2.5x, 98% ATH after TP, 50% hard stop and 15-minute time stop**, with the existing full-sample screening rule if optimizing observed total P&L. The session has not independently validated that combined configuration on a new cohort, retrained models for 98%-ATH labels, tested the full ATH × timer interaction, or tested other TP/delay combinations at 98%. The models and explicit-rule optimization retain their original 90%-ATH / 20-minute labels.
