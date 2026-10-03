@@ -51,7 +51,7 @@ python3 -m venv .runtime/arc-backtest/ml-env
 .runtime/arc-backtest/ml-env/bin/python -m unittest discover -s test -p test_arc_screening.py
 ```
 
-Outputs include two native LightGBM model files, held-out predictions, gain importance, precision/recall operating points, and screening effects on loss dollars, failed exits, heavy losses and retained P&L. Training labels follow the baseline's unknown-honeypot-clear case; retained P&L also shows the unknown-blocked case. Simple-rule missing values never match a condition. macOS LightGBM requires the OpenMP runtime (`libomp`).
+Outputs include two native LightGBM model files, held-out predictions, gain importance, precision/recall operating points, and screening effects on loss dollars, failed exits, heavy losses and retained P&L. Training labels follow the baseline's unknown-honeypot-clear case; retained P&L also shows the unknown-blocked case. Missing holder/fee treatment is explicit in each optimized rule. macOS LightGBM requires the OpenMP runtime (`libomp`).
 
 
 Optimize an explicit rule with Optuna TPE, using USDC-side LP principal, its share of pool value, largest holder share, observed pool fee and market cap:
