@@ -29,9 +29,7 @@ class ScreeningEvaluationTests(unittest.TestCase):
         self.assertEqual(metrics['heavyLossRecall'], 0)
         self.assertEqual(metrics['positivePositionsRejected'], 0)
 
-    def test_missing_feature_does_not_match_zero_threshold_and_unattainable_precision_stays_missing(self):
-        frame = pd.DataFrame({'depth': [None, 0, 1]})
-        np.testing.assert_array_equal(screening.rule_mask(frame, 'depth', '<=', 0), [False, True, False])
+    def test_unattainable_precision_target_remains_missing(self):
         thresholds = screening.choose_thresholds(np.tile([0, 1], 20), np.full(40, .5))
         self.assertIsNone(thresholds['precision_80'])
         self.assertIsNone(thresholds['precision_90'])

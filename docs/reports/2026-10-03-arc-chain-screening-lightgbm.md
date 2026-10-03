@@ -2,7 +2,7 @@
 
 Labels: positive net P&L (`netUsd > 0`) and loss greater than 5% of the $2 stake (`netUsd < -0.10`). Labels include all modeled costs. Only entered positions are trained; never-funded and failed-entry records are excluded. Main-case labels use the existing unknown-honeypot-clear assumption. Current security, addresses, exit outcomes and future observations are excluded from model inputs.
 
-Only +4 blocks / 40% at 2.5x is evaluated, one row per token. Token-grouped chronological 60/20/20 split with a 1201-second holding-horizon purge before validation/test. Rows: {'train': 3698, 'test': 1240, 'validation': 1210, 'purged': 52}; tokens: {'train': 3698, 'validation': 1210, 'test': 1240, 'purged': 52}. Thresholds and simple rules are selected using validation only; test data is untouched until evaluation. All model inputs are chain observations at entry.
+Only +4 blocks / 40% at 2.5x is evaluated, one row per token. Token-grouped chronological 60/20/20 split with a 1201-second holding-horizon purge before validation/test. Rows: {'train': 3698, 'test': 1240, 'validation': 1210, 'purged': 52}; tokens: {'train': 3698, 'validation': 1210, 'test': 1240, 'purged': 52}. Thresholds are selected using validation only; test data is untouched until evaluation. All model inputs are chain observations at entry.
 
 Two modest LightGBM models (15 leaves, minimum 100 rows/leaf, learning rate 0.03, L2=5, up to 1,000 rounds with 50-round early stopping); no test-driven tuning or class reweighting.
 
@@ -103,15 +103,6 @@ Both validation-selected gates applied together.
 | precision_80 / recall_90 | 215 | $559.29 | 91.3% | 92.6% | 92.7% | 44.5% |
 | max_f1 / precision_80 | 486 | $833.74 | 32.6% | 43.4% | 53.9% | 13.3% |
 
-## Simple chain rules
-
-Single conditions use training-quantile cutoffs. Two-condition AND rules combine the best 16 distinct feature/direction conditions by validation F1. Final rules/targets use validation only. Winner rules KEEP matching positions; loss rules REJECT matching positions. Missing values never match a condition. A precision target absent below was unattainable on validation with at least 20 matches.
-
-| Label / target | Condition | Test precision | Test recall | Failed exits caught | Heavy losses caught | Loss dollars caught | Winners rejected | Kept P&L |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| positive_pnl / max_f1 | poolQuotePrincipalUsd >= 204.007 AND quotePrincipalToPoolSize >= 0.219227 | 57.6% | 93.9% | 2.3% | 8.8% | 26.7% | 6.1% | $689.06 |
-| positive_pnl / precision_80 | poolSizeToMarketCap >= 2 | 100.0% | 9.9% | 100.0% | 100.0% | 100.0% | 90.1% | $92.77 |
-| positive_pnl / precision_90 | poolSizeToMarketCap >= 2 | 100.0% | 9.9% | 100.0% | 100.0% | 100.0% | 90.1% | $92.77 |
-| loss_over_5pct / max_f1 | poolSizeToMarketCap <= 0.998382 AND quotePrincipalToPoolSize >= 0.00612842 | 60.9% | 62.8% | 0.0% | 66.2% | 49.2% | 16.9% | $735.59 |
+Explicit five-feature screening rules are optimized separately with Optuna in optimize_rule.py.
 
 Outputs: two native LightGBM model files, test-predictions.csv, full summary JSON and this report. Rerun train_screening.py against results468 with the isolated ml-env Python. Feature definitions remain in features-README.md.
