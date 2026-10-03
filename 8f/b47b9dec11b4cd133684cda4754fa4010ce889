@@ -1,0 +1,29 @@
+docs/reports/2026-10-03-arc-ath-trailing-comparison.json
+  s_02320cd7492a13::t_2ac03ef86bf725 1-158
+docs/reports/2026-10-03-arc-ath-trailing-comparison.md
+  s_02320cd7492a13::t_570cb931a7bd5b 1-23
+scripts/arc-backtest/README.md
+  s_02320cd7492a13::t_8fd12ef1e20c64 22-23
+scripts/arc-backtest/replay.mjs
+  s_02320cd7492a13::t_12ffda4414a465 134-135
+scripts/arc-backtest/run.mjs
+  s_02320cd7492a13::t_86b75f79306dd9 19,31-34,106,121
+test/arc-backtest-replay.test.mjs
+  s_02320cd7492a13::t_b7f509ee6d32de 141-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8fb47b9dec11b4cd133684cda4754fa4010ce889",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
