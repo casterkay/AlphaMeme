@@ -235,7 +235,7 @@ function settingsError() {
 
 function validSettings(settings) {
   const positive = ['maxSecondaryChecksPerCycle', 'auditCycleBudgetMs', 'queueRetentionMs', 'scanIntervalMs',
-    'candidateRetentionMs', 'outcomeRetentionMs', 'liveLeadRetentionMs', 'staleCandidateMs'];
+    'candidateRetentionMs', 'outcomeRetentionMs', 'liveLeadRetentionMs', 'staleCandidateMs', 'youngPoolAgeMs', 'maxWatchRequestsPerCycle'];
   if (!completeScannerSettings(settings) || positive.some(key => !Number.isSafeInteger(settings[key]) || settings[key] <= 0)
     || !Number.isSafeInteger(settings.outcomeReadsPerCycle) || settings.outcomeReadsPerCycle < 0) throw settingsError();
   return settings;
@@ -296,7 +296,7 @@ export class RecoverableScanner {
       if (!endpoint) return null;
       const responses = checkpoint.partial.discovery?.responses || {}, state = () => this.store.readWatchState(checkpoint.chain);
       const params = endpoint === 'newPools' ? { cursor: state().cursor }
-        : endpoint === 'watch' ? { addresses: watchTargets(state(), responses.newPools?.value?.pools || [], checkpoint.updatedAt) } : {};
+        : endpoint === 'watch' ? { addresses: watchTargets(state(), responses.newPools?.value?.pools || [], checkpoint.updatedAt, this.#cycleSettings(checkpoint)) } : {};
       return Object.freeze({ kind: 'DISCOVER', endpoint, chain: checkpoint.chain, ...params, checkpoint });
     }
     if (checkpoint.phase === 'SECONDARY') {
@@ -519,8 +519,10 @@ export class RecoverableScanner {
       watchState = nextWatchState(this.store.readWatchState(chain), { newPools: newPools?.value ?? null, checked: watch?.value?.addresses || [],
         markets: watch?.value?.markets || [], promoted, passed: promoted.filter(address => passed.has(addressKey(address))), now });
       const endpoint = (response, count) => response?.error ? { ok: false, code: response.error.code } : { ok: true, count };
+      // The watch's DexScreener requests this cycle, and how many failed; their tokens wait for the next read.
       Object.assign(sourceHealth.discovery, { newPools: endpoint(newPools, newPools?.value?.pools?.length ?? 0),
-        watch: endpoint(watch, watchState.pools.length), promoted: { ok: true, count: promoted.length } });
+        watch: { ...endpoint(watch, watchState.pools.length), ...(watch?.value ? { requests: watch.value.requests, failedRequests: watch.value.failedRequests } : {}) },
+        promoted: { ok: true, count: promoted.length } });
     }
     partial.leads = leads.map(({ row, screen }) => ({ row, screen }));
     partial.prequalifiedCount = leads.length;

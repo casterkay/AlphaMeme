@@ -9,11 +9,26 @@ const pool = (index, changes = {}) => ({ token: token(index), pool: `0x${'9'.rep
 const market = (index, changes = {}) => ({ address: token(index), marketCap: 50_000, liquidity: 20_000, volume5m: 2_000, buys5m: 20, sells5m: 5, pairCreatedAt: NOW - 30 * MINUTE, firstPairCreatedAt: NOW - 30 * MINUTE, ...changes });
 const promote = (state, markets, excluded = []) => promotions(state, markets, { now: NOW, settings: scannerSettings, excluded: new Set(excluded) });
 
-test('the watch checks the tokens checked longest ago first, newest pools first among equals, one batch at a time', () => {
+test('the watch checks the tokens checked longest ago first, newest pools first among equals', () => {
   const state = { cursor: 1, pools: [pool(1, { checkedAt: NOW - MINUTE }), pool(2), pool(3, { checkedAt: NOW - 2 * MINUTE })] };
-  assert.deepEqual(watchTargets(state, [{ token: token(9), pool: 'p', venue: 'v' }], NOW), [token(9), token(2), token(3), token(1)]);
-  const many = { cursor: 1, pools: Array.from({ length: 40 }, (_, index) => pool(index + 1)) };
-  assert.equal(watchTargets(many, [], NOW).length, WATCH_BATCH);
+  assert.deepEqual(watchTargets(state, [{ token: token(9), pool: 'p', venue: 'v' }], NOW, scannerSettings), [token(9), token(2), token(3), token(1)]);
+});
+
+test('every young pool is read each cycle, in as many batches as it takes up to the cap, with older pools in the slots left', () => {
+  const { youngPoolAgeMs, maxWatchRequestsPerCycle } = scannerSettings;
+  const watched = (young, old) => ({ cursor: 1, pools: [
+    ...Array.from({ length: young }, (_, index) => pool(index + 1, { firstSeenAt: NOW - youngPoolAgeMs + 1, checkedAt: NOW - 15_000 })),
+    ...Array.from({ length: old }, (_, index) => pool(1_000 + index, { firstSeenAt: NOW - youngPoolAgeMs, checkedAt: NOW - 60 * MINUTE }))] });
+  const targets = (young, old) => watchTargets(watched(young, old), [], NOW, scannerSettings);
+  const youngTokens = count => Array.from({ length: count }, (_, index) => token(index + 1));
+
+  assert.equal(targets(0, 40).length, WATCH_BATCH, 'older pools alone take one batch');
+  assert.deepEqual(targets(WATCH_BATCH + 15, 40).slice(0, WATCH_BATCH + 15).sort(), youngTokens(WATCH_BATCH + 15).sort(), 'young pools first, though checked more recently');
+  assert.equal(targets(WATCH_BATCH + 15, 40).length, 2 * WATCH_BATCH, 'older pools fill the second batch');
+  assert.equal(targets(2 * WATCH_BATCH, 40).length, 2 * WATCH_BATCH, 'no batch only for older pools');
+  const crowded = targets(maxWatchRequestsPerCycle * WATCH_BATCH + 1, 40);
+  assert.equal(crowded.length, maxWatchRequestsPerCycle * WATCH_BATCH, 'capped');
+  assert.ok(crowded.every(address => youngTokens(maxWatchRequestsPerCycle * WATCH_BATCH + 1).includes(address)));
 });
 
 test('a watched token is promoted only inside every threshold, when not excluded, and not passed recently', () => {

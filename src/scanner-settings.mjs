@@ -24,6 +24,10 @@ export const scannerSettings = Object.freeze({
   // within the market-cap band, above minLiquidity and at least minAgeSec old.
   onchainMinVolume5m: 300,
   onchainMinBuys5m: 5,
+  // Watched pools first seen this recently are read on DexScreener every cycle; older ones fill the slots left.
+  youngPoolAgeMs: 20 * 60_000,
+  // DexScreener batch reads (30 tokens each) per cycle: at the 15 s cadence at most 16 a minute, of the ~300 it allows.
+  maxWatchRequestsPerCycle: 4,
   strictLiquidity: 8_000,
   // Fast alerts should favor current activity. These are dynamic opportunity
   // gates, not permanent contract-risk exclusions.

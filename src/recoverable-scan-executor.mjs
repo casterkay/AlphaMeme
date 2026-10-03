@@ -1,6 +1,7 @@
 import { AVE_CU } from './providers/ave.mjs';
 import { ChainLogs } from './providers/chain-logs.mjs';
 import { SecondaryValidator, fetchDexMarkets } from './providers/secondary.mjs';
+import { WATCH_BATCH } from './onchain-watch.mjs';
 
 function safeError(code) {
   return Object.assign(new Error(code), { code });
@@ -21,9 +22,21 @@ function discoveryOperation(next, { ave, chainLogs, dexMarkets }) {
   const chain = next.checkpoint.chain;
   if (next.endpoint === 'trending') return ({ signal }) => ave.trending(chain, { signal });
   if (next.endpoint === 'newPools') return ({ signal }) => chainLogs.newPools(chain, { cursor: next.cursor, signal });
-  if (next.endpoint === 'watch') return async ({ signal }) => next.addresses.length
-    ? { addresses: next.addresses, ...await dexMarkets(chain, next.addresses, { signal }) } : { addresses: [], markets: [] };
+  if (next.endpoint === 'watch') return ({ signal }) => readWatch(chain, next.addresses, dexMarkets, signal);
   throw safeError('RECOVERABLE_SCAN_ENDPOINT_UNSUPPORTED');
+}
+
+// The watch's tokens in DexScreener batches, read in parallel. A failed batch leaves its tokens unchecked
+// until the next read; the read fails only when every batch does. `addresses` are the tokens read.
+async function readWatch(chain, addresses, dexMarkets, signal) {
+  const batches = Array.from({ length: Math.ceil(addresses.length / WATCH_BATCH) }, (_, index) => addresses.slice(index * WATCH_BATCH, (index + 1) * WATCH_BATCH));
+  const results = await Promise.allSettled(batches.map(batch => dexMarkets(chain, batch, { signal })));
+  const read = results.flatMap((result, index) => result.status === 'fulfilled' ? [{ addresses: batches[index], ...result.value }] : []);
+  const failures = results.filter(result => result.status === 'rejected').map(result => result.reason);
+  if (failures.length) console.log(JSON.stringify({ event: 'watch_read_failed', chain, requests: batches.length, failed: failures.length, codes: failures.map(error => error?.code ?? 'REQUEST_FAILED') }));
+  if (batches.length && !read.length) throw failures[0];
+  return { addresses: read.flatMap(item => item.addresses), markets: read.flatMap(item => item.markets),
+    ...(read.length ? { capturedAt: Math.min(...read.map(item => item.capturedAt)) } : {}), requests: batches.length, failedRequests: failures.length };
 }
 
 // What the new-pool source found; no address or key, only counts and block numbers.
