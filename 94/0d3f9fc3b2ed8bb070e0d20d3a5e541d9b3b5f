@@ -1,0 +1,21 @@
+docs/reports/2026-10-03-arc-ath-trailing-comparison.json
+  s_02320cd7492a13::t_64f9fa1b0f371f 64-94,187-217
+docs/reports/2026-10-03-arc-ath-trailing-comparison.md
+  s_02320cd7492a13::t_0d877d4ea69013 7,11,17,21,23,25,27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "940d3f9fc3b2ed8bb070e0d20d3a5e541d9b3b5f",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
