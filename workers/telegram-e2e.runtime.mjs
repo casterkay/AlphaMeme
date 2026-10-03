@@ -62,7 +62,7 @@ async function withRuntime(tenantId,operation) {
       runtime.receive(input);await runtime.answerCallback(input);await runtime.runCommand(input.updateId);await drain();return input;
     };
     const seed=(count=1)=>{
-      for(let index=0;index<count;index++) storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?)',tenantId,'arc',`0x${index.toString(16).padStart(40,'a')}`,`TOKEN${index}`,'X_REVIEW',at-1000,`revision-${index}`,JSON.stringify({chainPass:true,chartRisk:{version:CHART_RISK_VERSION},checks:{openSource:true},failed:[],unknownFields:[]}));
+      for(let index=0;index<count;index++) storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,symbol,status,audited_at,review_revision,deep_json) VALUES (?,?,?,?,?,?,?,?)',tenantId,'arc',`0x${index.toString(16).padStart(40,'a')}`,`TOKEN${index}`,'LIVE_READY',at-1000,`revision-${index}`,JSON.stringify({chainPass:true,chartRisk:{version:CHART_RISK_VERSION},checks:{openSource:true},failed:[],unknownFields:[]}));
     };
     await operation({runtime,storage,tenantId,sent,receipt,drain,command,sessions,link,click,seed,clock});
   });
@@ -118,14 +118,14 @@ describe('Telegram complete command and delivery flows',()=>{
     });
   });
 
-  it('approves, clears and annotates through a delivered ForceReply without changing panel identity or losing favorites',async()=>{
+  it('ignores, clears and annotates through a delivered ForceReply without changing panel identity or losing favorites',async()=>{
     await withRuntime('22902',async({runtime,storage,tenantId,sent,command,sessions,link,click,seed,receipt,drain})=>{
       seed();await command('leads');const audits=sessions()[0];
       await click(link(audits,'panel.open',params=>params.panel==='detail'));
       let detail=runtime.commands.sessions.get(audits.id);expect(detail.messageId).toBe(audits.messageId);
-      const pass=link(detail,'mark.set_passed');await click(pass);
-      expect(storage.sql.exec('SELECT decision,mark_version FROM manual_marks WHERE tenant_id=?',tenantId).one()).toEqual({decision:'passed',mark_version:1});
-      const duplicate=await click(pass);expect(runtime.inbox.get(duplicate.updateId).status).toBe('FAILED');
+      const ignore=link(detail,'mark.set_ignored');await click(ignore);
+      expect(storage.sql.exec('SELECT decision,mark_version FROM manual_marks WHERE tenant_id=?',tenantId).one()).toEqual({decision:'ignored',mark_version:1});
+      const duplicate=await click(ignore);expect(runtime.inbox.get(duplicate.updateId).status).toBe('FAILED');
       detail=runtime.commands.sessions.get(audits.id);await click(link(detail,'mark.clear'));
       expect(storage.sql.exec('SELECT decision,mark_version FROM manual_marks WHERE tenant_id=?',tenantId).one()).toEqual({decision:null,mark_version:2});
       detail=runtime.commands.sessions.get(audits.id);await click(link(detail,'favorite.set',params=>params.value===true));
@@ -394,17 +394,6 @@ describe('Telegram complete command and delivery flows',()=>{
       await click(link(session,'panel.open',params=>params.panel==='onboard'));
       expect(runtime.commands.sessions.get(session.id).panel).toBe('notice');
       expect(sessions().at(-1).panel).toBe('onboard');
-    });
-  });
-
-  it('schedules card correction only for an actual future review expiry',async()=>{
-    await withRuntime('22916',async({runtime,storage,tenantId,command,sessions,link,click,seed})=>{
-      seed();await command('leads');const audits=sessions()[0];
-      await click(link(audits,'panel.open',params=>params.panel==='detail'));
-      expect(storage.transactionSync(()=>runtime.reconcileCardsInTransaction())).toBeNull();
-      const detail=runtime.commands.sessions.get(audits.id);
-      await click(link(detail,'mark.set_passed'));
-      expect(storage.transactionSync(()=>runtime.reconcileCardsInTransaction())).toBe(at-1000+600_001);
     });
   });
 

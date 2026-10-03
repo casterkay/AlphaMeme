@@ -10,7 +10,7 @@ function fixture(t) {
   db.exec('CREATE TABLE outcomes (tenant_id TEXT, chain TEXT, initial_decision TEXT, baseline_at INTEGER, samples_json TEXT)');
   return {
     storage: { sql: { exec: (query, ...values) => ({ toArray: () => db.prepare(query).all(...values) }) } },
-    insert({ tenant = '1', chain = 'robinhood', decision = 'X_REVIEW', baseline = 1000, samples = {} } = {}) {
+    insert({ tenant = '1', chain = 'robinhood', decision = 'LIVE_READY', baseline = 1000, samples = {} } = {}) {
       db.prepare('INSERT INTO outcomes VALUES (?, ?, ?, ?, ?)').run(tenant, chain, decision, baseline, JSON.stringify(samples));
     }
   };
@@ -59,7 +59,7 @@ test('the calibration gate needs 50 samples in each of 30m, 2h and 24h', t => {
 
 test('SQL coverage shares the outcome summary contract including median and positive-return rate', t => {
   const { storage, insert } = fixture(t);
-  const rows = [-0.2, 0, 0.4, null].map(value => ({ initialDecision: 'X_REVIEW', baselineAt: 1000, samples: { h6: { return: value }, m30: { return: value } } }));
+  const rows = [-0.2, 0, 0.4, null].map(value => ({ initialDecision: 'LIVE_READY', baselineAt: 1000, samples: { h6: { return: value }, m30: { return: value } } }));
   for (const row of rows) insert({ samples: row.samples });
   const { available, generatedAt, readyWindows, ...summary } = readTelegramStatistics(storage, '1', 90_000_000).robinhood;
   assert.deepEqual(summary, summarizeOutcomes(rows, 90_000_000));

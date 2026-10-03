@@ -1,5 +1,5 @@
 import { isScanChain } from '../chains.mjs';
-import { backendDisposition, effectiveStatus } from '../scoring/manual-review.mjs';
+import { effectiveStatus } from '../scoring/disposition.mjs';
 
 export class ReviewConflict extends Error {
   constructor(code) { super(code); this.name = 'ReviewConflict'; this.code = code; }
@@ -15,7 +15,7 @@ export function readReview(storage, tenantId, token) {
   const { chain, address } = tokenIdentity(token);
   const row = storage.sql.exec('SELECT * FROM candidates WHERE tenant_id = ? AND chain = ? AND address = ?', tenantId, chain, address).toArray()[0];
   const stored = storage.sql.exec('SELECT * FROM manual_marks WHERE tenant_id = ? AND chain = ? AND address = ?', tenantId, chain, address).toArray()[0];
-  const candidate = row ? { chain, address, status: row.status, auditedAt: row.audited_at, reviewRevision: row.review_revision, deep: row.deep_json ? JSON.parse(row.deep_json) : null } : null;
+  const candidate = row ? { chain, address, status: row.status, reviewRevision: row.review_revision } : null;
   const mark = stored ? { decision: stored.decision, at: stored.marked_at, reviewRevision: stored.review_revision, version: stored.mark_version } : { decision: null, at: null, reviewRevision: null, version: 0 };
   return { candidate, mark };
 }
@@ -23,14 +23,10 @@ export function readReview(storage, tenantId, token) {
 /** The caller atomically completes its inbox and records correction intent around this write. */
 export function setManualMarkInTransaction(storage, tenantId, { token, decision, expectedMarkVersion, reviewRevision }, now) {
   const { chain, address } = tokenIdentity(token);
-  if (![null, 'passed', 'ignored'].includes(decision) || !Number.isSafeInteger(expectedMarkVersion)) throw new ReviewConflict('invalid_mark');
+  if (![null, 'ignored'].includes(decision) || !Number.isSafeInteger(expectedMarkVersion)) throw new ReviewConflict('invalid_mark');
   const { candidate, mark } = readReview(storage, tenantId, token);
   if (expectedMarkVersion !== mark.version) throw new ReviewConflict('mark_changed');
   if (decision !== null && (candidate?.reviewRevision ?? null) !== reviewRevision) throw new ReviewConflict('evidence_changed');
-  if (decision === 'passed') {
-    if (!candidate || mark.decision === 'ignored' || !reviewRevision || backendDisposition(candidate) !== 'chain'
-      || !Number.isSafeInteger(candidate.auditedAt) || candidate.auditedAt > now || now - candidate.auditedAt > 600_000) throw new ReviewConflict('approval_unavailable');
-  }
   const nextVersion = mark.version + 1;
   if (!Number.isSafeInteger(nextVersion)) throw new ReviewConflict('mark_version_exhausted');
   storage.sql.exec('INSERT INTO manual_marks (tenant_id, chain, address, decision, marked_at, review_revision, mark_version) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, chain, address) DO UPDATE SET decision = excluded.decision, marked_at = excluded.marked_at, review_revision = excluded.review_revision, mark_version = excluded.mark_version', tenantId, chain, address, decision, now, candidate?.reviewRevision ?? null, nextVersion);
@@ -65,14 +61,8 @@ export function annotateInTransaction(storage, tenantId, { token, field, value, 
   return { ...next, version: version + 1 };
 }
 
-/** Projection revision includes time-derived approval validity, even without a new audit. */
-export function reviewProjectionRevision(storage, tenantId, token, now) {
+/** Everything a rendered token reflects: its evidence revision, mark and annotations. */
+export function reviewProjectionRevision(storage, tenantId, token) {
   const { candidate, mark } = readReview(storage, tenantId, token);
-  return JSON.stringify([candidate?.reviewRevision ?? null, mark.version, candidate ? effectiveStatus(candidate, mark, now) : mark.decision === 'ignored' ? 'ignored' : 'historical', annotationVersion(storage, tenantId, token, 'favorite').version, annotationVersion(storage, tenantId, token, 'note').version]);
-}
-
-export function nextReviewExpiry(storage, tenantId, token, now) {
-  const { candidate, mark } = readReview(storage, tenantId, token);
-  if (!candidate || effectiveStatus(candidate, mark, now) !== 'passed') return null;
-  return Math.min(mark.at + 86_400_000, candidate.auditedAt + 600_001);
+  return JSON.stringify([candidate?.reviewRevision ?? null, mark.version, candidate ? effectiveStatus(candidate, mark) : mark.decision === 'ignored' ? 'ignored' : 'historical', annotationVersion(storage, tenantId, token, 'favorite').version, annotationVersion(storage, tenantId, token, 'note').version]);
 }

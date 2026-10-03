@@ -114,14 +114,13 @@ export function publicCandidate(row = {}) {
     buys: finite(row.buys),
     sells: finite(row.sells),
     twitter: text(row.twitter, 80),
-    status: ['X_REVIEW', 'QUALIFIED'].includes(row.status) && !currentRules ? 'WAIT_RECHECK' : text(row.status, 32),
+    status: text(row.status, 32),
     auditedAt: finite(row.auditedAt),
     staleAt: finite(row.staleAt),
     reviewRevision: text(row.reviewRevision, 64),
     auditHealth: { earlyExit },
     auditError: row.auditError ? '深度审计暂时失败，已进入等待复查。' : '',
-    decisionReason: ['X_REVIEW', 'QUALIFIED'].includes(row.status) && !currentRules
-      ? '风险规则已升级，等待重新核验' : text(row.decisionReason, 120),
+    decisionReason: text(row.decisionReason, 120),
     deep: {
       chainPass: deep.chainPass === true && currentRules,
       chartRisk: { version: finite(deep.chartRisk?.version), status: text(deep.chartRisk?.status, 32),

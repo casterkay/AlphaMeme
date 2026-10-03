@@ -1,4 +1,4 @@
-import { backendDisposition, effectiveStatus } from '../scoring/manual-review.mjs';
+import { backendDisposition, effectiveStatus } from '../scoring/disposition.mjs';
 import { SCAN_CHAINS } from '../chains.mjs';
 import { safetyVerdict, blockingUnknownFields } from '../scoring/safety.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
@@ -9,13 +9,13 @@ import { TRADING_PANELS, TRADING_PANEL_NAMES, tokenTradeControls, renderTradingP
 import { localize, escapeHtml, userText, chainLabel, button, urlButton, money, numberText, percent, timestamp, duration, clockTime, relativeTime, truth, textPages, finishPanel, officialXUrl, safetyBadge, ICONS } from '../render/telegram.mjs';
 
 export const PANEL_NAMES = Object.freeze(['alert','radar','feed','audits','saved','events','status','sources','delivery','settings','chains','onboard','help','detail','evidence','view_chain','filter','sort','language','disconnect','stats','horizon','cohort','connection',...TRADING_PANELS]);
-export const AUDIT_FILTERS = Object.freeze(['all','alerted','lead','chain','waiting','passed','ignored','rejected','fresh','favorite']);
+export const AUDIT_FILTERS = Object.freeze(['all','alerted','lead','waiting','ignored','rejected','fresh','favorite']);
 export const AUDIT_SORTS = Object.freeze(['audit_desc','score_desc','market_desc','market_asc','liquidity_desc']);
 export const FEED_SORTS = Object.freeze(['priority','volume']);
 const AVE_KEY_URL = 'https://cloud.ave.ai/login';
 const names = {
   radar:['雷达','Radar'], feed:['热榜','Hot list'], audits:['线索','Leads'], saved:['自选','Watchlist'], events:['动态','Activity'], status:['状态','Status'], sources:['来源','Sources'], delivery:['投递','Delivery'], settings:['设置','Settings'], chains:['扫描链','Scan chain'], onboard:['AVE密钥','AVE key'], help:['帮助','Help'], detail:['代币详情','Token detail'], evidence:['检查证据','Evidence'], view_chain:['查看链','View chain'], filter:['筛选','Filter'], sort:['排序','Order'], language:['语言','Language'], disconnect:['删除AVE密钥','Delete AVE key'], stats:['表现','Performance'], horizon:['观察窗口','Window'], cohort:['样本组别','Cohort'], connection:['AVE连接','AVE connection'],
-  all:['全部','All'], alerted:['已提醒','Alerted'], lead:['线索','Leads'], chain:['待看X','Needs X review'], waiting:['复查中','Rechecking'], passed:['人工通过','Approved'], ignored:['已忽略','Ignored'], rejected:['已否决','Vetoed'], fresh:['近5分钟','Last 5 min'], favorite:['收藏','Favorites'], notes:['有备注','With notes'],
+  all:['全部','All'], alerted:['已提醒','Alerted'], lead:['线索','Leads'], waiting:['复查中','Rechecking'], ignored:['已忽略','Ignored'], rejected:['已否决','Vetoed'], fresh:['近5分钟','Last 5 min'], favorite:['收藏','Favorites'], notes:['有备注','With notes'],
   audit_desc:['最新审计','Newest audit'], score_desc:['发现评分','Discovery score'], market_desc:['市值↓','Market cap ↓'], market_asc:['市值↑','Market cap ↑'], liquidity_desc:['流动性↓','Liquidity ↓'], priority:['通过筛选优先','Screen passes first'], volume:['5分钟成交额','5-minute volume'],
   candidates:['候选事件','Candidates'], risk:['风险变化','Risk changes'], service:['服务事件','Service'], unknown:['未知','Unknown'],
   ...TRADING_PANEL_NAMES
@@ -55,7 +55,7 @@ export function selectPanelRows(snapshot, session) {
   rows = snapshot.candidates.filter(row => (!chain || row.chain === chain) && searchMatches(row,query.search));
   rows = rows.filter(row => {
     const filter = query.filter || 'all';
-    if (['lead','chain','waiting','passed','ignored','rejected'].includes(filter)) return effectiveStatus(row,markFor(snapshot,row),snapshot.at) === filter;
+    if (['lead','waiting','ignored','rejected'].includes(filter)) return effectiveStatus(row,markFor(snapshot,row)) === filter;
     if (filter === 'fresh') return snapshot.at - row.auditedAt <= 300_000;
     if (filter === 'alerted') return Number.isFinite(row.alertedAt);
     if (filter === 'favorite') return annotationFor(snapshot,row)?.favorite === true;
@@ -161,8 +161,7 @@ function listPanel(snapshot,session,locale) {
       blocks.push([present(row.marketCap) ? money(row.marketCap,locale) : '', row.createdAt > 0 ? L(`币龄${duration(snapshot.at-row.createdAt*1000,locale)}`,`${duration(snapshot.at-row.createdAt*1000,locale)} old`) : '',
         present(row.volume5m) ? L(`5分钟成交${money(row.volume5m,locale)}`,`5m vol ${money(row.volume5m,locale)}`) : '', present(row.priceChange5m) ? percent(row.priceChange5m,locale,true) : ''].filter(Boolean).join(' · '));
     } else {
-      const mark = markFor(snapshot,row), status = row.status && mark ? effectiveStatus(row,mark,snapshot.at) : null;
-      const marked = status === 'passed' ? ` · ${ICONS.approve} ${name('passed',locale)}` : mark?.decision === 'ignored' ? ` · ${ICONS.ignore} ${name('ignored',locale)}` : '';
+      const marked = markFor(snapshot,row)?.decision === 'ignored' ? ` · ${ICONS.ignore} ${name('ignored',locale)}` : '';
       blocks.push(`${title} · ${safetyMark(tokenSafety(row),locale)}${marked}${Number.isFinite(row.alertedAt) && !saved ? ` · ${ICONS.alertsOn}` : ''}`);
       if (saved) blocks.push([chainLabel(row.chain),row.symbol ? '' : `<code>${userText(row.address?.slice(-12),12)}</code>`,row.favorite ? ICONS.saved : '',row.note?.trim() ? `${ICONS.note} ${userText(row.note,60)}` : ''].filter(Boolean).join(' · '));
       else blocks.push([present(row.marketCap) ? L(`市值 ${money(row.marketCap,locale)}`,`${money(row.marketCap,locale)} MC`) : '',present(row.liquidity) ? L(`流动性 ${money(row.liquidity,locale)}`,`${money(row.liquidity,locale)} liq`) : '',relativeTime(row.auditedAt,snapshot.at,locale),liveState(row,snapshot,locale)].filter(Boolean).join(' · '));
@@ -186,7 +185,7 @@ Object.assign(fieldLabels, {
   discovery:['发现来源','Discovery sources'],lastAudit:['最近审计来源','Last audit sources'],lastSecondary:['最近第二来源','Last secondary sources'],endpoints:['接口','Endpoints'],sources:['来源','Sources'],trenches:['新币发现','Trenches'],trending:['趋势榜','Trending'],newPools:['链上新池','New pools on chain'],watch:['新池观察','New pools watched'],promoted:['新池送筛','New pools screened'],info:['基本信息','Token information'],security:['安全','Security'],pool:['资金池','Pool'],holders:['持有人','Holders'],traders:['交易者','Traders'],candles:['K线','Candles'],ok:['可用','Available'],code:['原因','Reason'],count:['条数','Count'],errorCode:['错误原因','Error reason'],codes:['风险原因','Risk reasons'],evidence:['证据','Evidence'],downgradeReasons:['降级原因','Downgrade reasons'],warnings:['警告','Warnings'],strengths:['积极证据','Supporting evidence'],smartWallets:['聪明钱钱包','Smart money wallets'],renownedWallets:['知名钱包','Renowned wallets'],taggedSmartWallets:['标签聪明钱钱包','Tagged smart wallets'],taggedRenownedWallets:['标签知名钱包','Tagged renowned wallets'],sampledTaggedWallets:['标签钱包样本','Tagged wallet samples'],holderCount:['持有人数','Holder count'],holderSampleDistinct:['不同持有人样本','Distinct holder samples'],swaps5m:['5分钟交换','5-minute swaps'],buys5m:['5分钟买入','5-minute buys'],volume5m:['5分钟成交','5-minute volume'],priceChange5m:['5分钟价格变化','5-minute price change'],swapsPerHolder5m:['每持有人交换数','Swaps per holder'],swapCountConsistent:['交易计数一致','Trade count consistent'],holderSampleConsistent:['持有人样本一致','Holder sample consistent'],sellBuyRatio:['卖买比','Sell/buy ratio'],ageSec:['币龄秒数','Age in seconds'],creatorStatus:['创建者状态','Creator status'],creatorLaunchCount:['创建者发币数','Creator launches'],creatorCreatedCount:['创建数','Created count'],creatorGraduatedCount:['毕业数','Graduated count'],creatorOpenRatio:['开放比例','Open ratio'],creatorDeletedPosts:['删除帖子数','Deleted posts'],creatorPromotedTokens:['推广代币数','Promoted tokens'],isHoneypot:['貔貅风险','Honeypot'],mintable:['可增发','Mintable'],ownerChangeBalance:['所有者可改余额','Owner can change balance'],hiddenOwner:['隐藏所有者','Hidden owner'],cannotSellAll:['无法全部卖出','Cannot sell all'],standIns:['替代证据','Stand-in evidence'],distinctSellers24h:['AVE 24小时不同卖家','AVE distinct sellers (24h)'],dexSells24h:['DexScreener 24小时卖出笔数','DexScreener sells (24h)'],selfDestruct:['可自毁','Self-destruct'],externalCall:['外部调用','External calls'],slippageModifiable:['可修改滑点','Slippage modifiable'],personalSlippageModifiable:['可修改个人滑点','Personal slippage modifiable'],transferPausable:['可暂停转账','Transfers pausable'],blacklisted:['黑名单','Blacklisted'],tradingCooldown:['交易冷却','Trading cooldown'],freezable:['可冻结','Freezable'],closable:['可关闭','Closable'],balanceMutableAuthority:['可修改余额权限','Balance mutable authority'],transferFeeUpgradable:['可更新转账费','Transfer fee upgradable'],nonTransferable:['不可转账','Non-transferable']
 });
 const reasonLabels = {
-  STALE_RULES:['风险规则已更新，等待复核','Risk rules changed; awaiting recheck'],AVE_RATE_LIMITED:['AVE限流，冷却中','AVE rate limited; cooling down'],AVE_QUOTA:['AVE额度用完','AVE credits exhausted'],AVE_AUTH:['AVE密钥不可用，请重新连接','AVE key unavailable; reconnect'],AVE_TIMEOUT:['AVE响应超时','AVE timed out'],AVE_NETWORK:['AVE连接失败','AVE connection failed'],AUDIT_FAILED:['深度审计失败，等待复查','Audit failed; awaiting recheck'],REQUEST_WAIT:['等待采集窗口','Waiting for a collection slot'],BLOCKED:['密钥被临时封锁，请检查Key或配额','Key temporarily blocked; check the key or quota'],REQUEST_FAILED:['采集请求失败','Feed request failed'],VERTICAL_PLATEAU:['急涨后窄幅平台','Vertical rise followed by a narrow plateau'],SUSTAINED_COLLAPSE:['持续大幅回撤','Sustained severe drawdown'],RATE_LIMITED:['请求额度受限','Rate limited'],AUTH_REQUIRED:['密钥不可用，请重新连接','Key unavailable; reconnect'],UNSUPPORTED:['来源不支持此链','Source does not support this chain'],NO_DATA:['来源暂无数据','No source data'],ERROR:['来源读取失败','Source read failed'],OK:['正常','OK'],WAIT_RECHECK:['等待复查','Waiting for recheck'],HARD_REJECT:['已排除','Rejected'],X_REVIEW:['等待人工看X','Review X manually']
+  AVE_RATE_LIMITED:['AVE限流，冷却中','AVE rate limited; cooling down'],AVE_QUOTA:['AVE额度用完','AVE credits exhausted'],AVE_AUTH:['AVE密钥不可用，请重新连接','AVE key unavailable; reconnect'],AVE_TIMEOUT:['AVE响应超时','AVE timed out'],AVE_NETWORK:['AVE连接失败','AVE connection failed'],AUDIT_FAILED:['深度审计失败，等待复查','Audit failed; awaiting recheck'],REQUEST_WAIT:['等待采集窗口','Waiting for a collection slot'],BLOCKED:['密钥被临时封锁，请检查Key或配额','Key temporarily blocked; check the key or quota'],REQUEST_FAILED:['采集请求失败','Feed request failed'],VERTICAL_PLATEAU:['急涨后窄幅平台','Vertical rise followed by a narrow plateau'],SUSTAINED_COLLAPSE:['持续大幅回撤','Sustained severe drawdown'],RATE_LIMITED:['请求额度受限','Rate limited'],AUTH_REQUIRED:['密钥不可用，请重新连接','Key unavailable; reconnect'],UNSUPPORTED:['来源不支持此链','Source does not support this chain'],NO_DATA:['来源暂无数据','No source data'],ERROR:['来源读取失败','Source read failed'],OK:['正常','OK'],WAIT_RECHECK:['等待复查','Waiting for recheck'],HARD_REJECT:['已排除','Rejected']
 };
 export const reasonText = (value,locale) => fieldLabels[value] ? localize(locale,...fieldLabels[value]) : reasonLabels[value] ? localize(locale,...reasonLabels[value]) : `${localize(locale,'证据不完整，请查看来源','Incomplete evidence; check the source')}: ${safeTelegramText(value,500)}`;
 function evidenceLines(value,locale,prefix='') {
@@ -267,11 +266,10 @@ function detailPanel(snapshot,session,locale) {
   if (found?.lookup && session.panel === 'detail') return lookupDetail(snapshot,session,locale,found.lookup,found.listed);
   if (!found) return finishPanel(name('detail',locale),[L('未找到，请从列表选择代币','Not found; choose a token from a list')],[],snapshot,session,locale,{refresh:false});
   const { row, listed } = found, mark = markFor(snapshot,row), annotation = annotationFor(snapshot,row), identity = token(row), deep = row.deep || {};
-  const safety = tokenSafety(row), invalidApproval = mark?.decision === 'passed' && effectiveStatus(row,mark,snapshot.at) !== 'passed';
+  const safety = tokenSafety(row);
   if (session.panel === 'evidence') {
     const checks = Object.values(deep.checks || {}), unknown = deep.unknownFields || [], blocking = deep.blockingUnknownFields || [];
     const header = [`${userText(row.symbol || '?',30)} · ${chainLabel(row.chain)} · ${safetyMark(safety,locale)}`, `CA: <code>${userText(row.address,80)}</code>`,`${L('审计','Audit')}: ${timestamp(row.auditedAt,locale)} · ${relativeTime(row.auditedAt,snapshot.at,locale)}`];
-    if (invalidApproval) header.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
     const counts = `${L('通过/未通过检查','Passed/not-passed checks')}: ${checks.filter(value => value === true).length}/${checks.filter(value => value === false).length}\n${L('明确失败/阻断未知/其他未知','Explicit failures/blocking unknown/other unknown')}: ${(deep.failed || []).length}/${blocking.length}/${unknown.filter(value => !blocking.includes(value)).length}`;
     const sections = [
       [L('阻断发现','Blocking findings'), [...(deep.failed || []).map(value => `${L('失败','Failure')}: ${reasonText(value,locale)}`),...blocking.map(value => `${L('阻断未知','Blocking unknown')}: ${safeTelegramText(value)}`),...unknown.filter(value => !blocking.includes(value)).map(value => `${L('其他未知','Other unknown')}: ${safeTelegramText(value)}`),row.auditHealth?.earlyExit ? L('审计提前结束，部分证据未采集','Audit exited early; some evidence was not collected') : '',row.decisionReason ? reasonText(row.decisionReason,locale) : '',...evidenceLines(deep.checks || {},locale)]],
@@ -290,23 +288,19 @@ function detailPanel(snapshot,session,locale) {
     [present(fact('marketCap')) ? L(`市值 ${money(fact('marketCap'),locale)}`,`MC ${money(fact('marketCap'),locale)}`) : '',present(liquidity) ? L(`流动性 ${money(liquidity,locale)}`,`Liq ${money(liquidity,locale)}`) : '',present(fact('holders')) ? L(`持有人 ${numberText(fact('holders'),locale)}`,`${numberText(fact('holders'),locale)} holders`) : ''].filter(Boolean).join(' · '),
     [createdAt > 0 ? L(`币龄${duration(snapshot.at-createdAt*1000,locale)}`,`${duration(snapshot.at-createdAt*1000,locale)} old`) : '',present(listed?.priceChange5m) ? `5m ${percent(listed.priceChange5m,locale,true)}` : '',present(listed?.volume5m) ? L(`5分钟成交 ${money(listed.volume5m,locale)}`,`5m vol ${money(listed.volume5m,locale)}`) : ''].filter(Boolean).join(' · '),
     `<code>${userText(row.address,80)}</code>`];
-  const status = mark ? effectiveStatus(row,mark,snapshot.at) : null;
-  blocks.push([annotation?.favorite ? `${ICONS.saved} ${L('已加入自选','In watchlist')}` : '',status === 'passed' ? `${ICONS.approve} ${name('passed',locale)}` : status === 'ignored' ? `${ICONS.ignore} ${name('ignored',locale)}` : '',
+  blocks.push([annotation?.favorite ? `${ICONS.saved} ${L('已加入自选','In watchlist')}` : '',mark?.decision === 'ignored' ? `${ICONS.ignore} ${name('ignored',locale)}` : '',
     annotation?.note ? `${ICONS.note} "${userText(annotation.note,140)}${annotation.note.length>140 ? `…"${L('（完整备注见证据）',' (full note in Evidence)')}` : '"'}` : ''].filter(Boolean).join(' · '));
-  if (invalidApproval) blocks.push(L('原人工通过已失效，请查看当前证据。','Prior approval is invalid; review current evidence.'));
   if (!row.auditedAt) blocks.push(L('审计快照已不再保留，或尚未审计。','Audit snapshot no longer retained, or not yet audited.'));
-  if (backendDisposition(row) === 'chain') blocks.push(L('链上硬门通过；请人工查看X社区评论与回复。','On-chain gates passed; review X community comments and replies.'));
   if (backendDisposition(row) === 'lead' && safety.verdict !== 'VETOED' && row.secondary?.status !== 'COMPLETE') blocks.push(L('市场线索：安全性尚未核验。','Market lead: safety not yet verified.'));
   // Buy follows the engine's safetyState: a vetoed lookup of the same token vetoes it too.
   const lookupVetoed = (snapshot.lookups || []).some(item => id(item) === id(row) && item.verdict === 'VETOED');
   const trading = tokenTradeControls(snapshot,row,locale,identity,safety.verdict === 'VETOED' || lookupVetoed);
   blocks.push(...trading.blocks);
   const binding = { reviewRevision:row.reviewRevision || null, expectedMarkVersion:mark?.version || 0 };
-  const eligible = !mark?.decision && row.reviewRevision && backendDisposition(row) === 'chain' && row.auditedAt && snapshot.at-row.auditedAt <= 600_000;
   const keyboard = [...trading.keyboard,
     [urlButton(ICONS.x,officialXUrl(row.info?.twitter,row.social?.twitter,row.twitter)),urlButton(`${ICONS.site} ${L('官网','Site')}`,row.info?.website),urlButton(`${ICONS.chart} ${L('图表','Chart')}`,dexScreenerTokenUrl(row.chain,row.address)),urlButton(`${ICONS.ave} ${L('资料','Profile')}`,aveTokenUrl(row.chain,row.address)),button(`${ICONS.evidence} ${L('证据','Evidence')}`,'panel.open',{panel:'evidence'},identity)],
     [button(`${ICONS.saved} ${annotation?.favorite ? L('取消自选','Unwatch') : L('自选','Watch')}`,'favorite.set',{value:annotation?.favorite !== true},identity),button(`${ICONS.note} ${L('备注','Note')}`,'note.begin',{},identity),mark?.decision === 'ignored' ? null : button(`${ICONS.ignore} ${L('忽略','Ignore')}`,'mark.set_ignored',binding,identity)],
-    [mark?.decision ? button(mark.decision === 'passed' ? L('撤销人工通过','Undo approval') : L('取消忽略','Stop ignoring'),'mark.clear',binding,identity) : eligible ? button(`${ICONS.approve} ${L('人工通过','Approve')}`,'mark.set_passed',binding,identity) : null,annotation?.note ? button(`${ICONS.clear} ${L('清空备注','Clear note')}`,'note.clear',{},identity) : null]];
+    [mark?.decision === 'ignored' ? button(L('取消忽略','Stop ignoring'),'mark.clear',binding,identity) : null,annotation?.note ? button(`${ICONS.clear} ${L('清空备注','Clear note')}`,'note.clear',{},identity) : null]];
   return finishPanel(`${safeTelegramText(row.symbol || '?',30)} · ${chainLabel(row.chain)}`,blocks.filter(value => value !== ''),keyboard,snapshot,session,locale,{token:identity});
 }
 

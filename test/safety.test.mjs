@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { aggregateSecondarySources } from '../src/providers/secondary.mjs';
-import { mergeSecondaryClassification } from '../src/scoring/classification.mjs';
 import { safetyVerdict } from '../src/scoring/safety.mjs';
 import { applyRiskExclusion, CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { projectTelegramCandidate } from '../src/bot/snapshot.mjs';
@@ -25,24 +24,16 @@ for (const [name, input, expected] of [
   ['a fatal verdict', { status: 'LIVE_READY', secondary: check({ security: { ...SECURITY, verdict: 'FATAL', fatal: [{ field: 'honeypot', reason: 'honeypot' }] } }) }, 'VETOED'],
   ['a hard reject with a clean check', { status: 'HARD_REJECT', secondary: PASSED }, 'VETOED'],
   ['a hard reject with no check', { status: 'HARD_REJECT', secondary: null }, 'VETOED'],
-  ['a passed check whose deep audit has a waiting failure', { status: 'X_REVIEW', secondary: PASSED, deep: { failed: ['notHoneypot'], blockingUnknownFields: [] } }, 'INCOMPLETE'],
-  ['a passed check whose deep audit has a blocking unknown field', { status: 'X_REVIEW', secondary: PASSED, deep: { failed: [], blockingUnknownFields: ['buyTax'] } }, 'INCOMPLETE'],
-  ['a passed check whose legacy deep audit has only unknownFields', { status: 'X_REVIEW', secondary: PASSED, deep: { failed: [], unknownFields: ['top10'] } }, 'INCOMPLETE'],
-  ['a passed check whose deep audit has only non-blocking unknowns', { status: 'X_REVIEW', secondary: PASSED, deep: { failed: [], blockingUnknownFields: [], unknownFields: ['top10'] } }, 'PASSED'],
+  ['a passed check whose deep audit has a waiting failure', { status: 'LIVE_READY', secondary: PASSED, deep: { failed: ['notHoneypot'], blockingUnknownFields: [] } }, 'INCOMPLETE'],
+  ['a passed check whose deep audit has a blocking unknown field', { status: 'LIVE_READY', secondary: PASSED, deep: { failed: [], blockingUnknownFields: ['buyTax'] } }, 'INCOMPLETE'],
+  ['a passed check whose legacy deep audit has only unknownFields', { status: 'LIVE_READY', secondary: PASSED, deep: { failed: [], unknownFields: ['top10'] } }, 'INCOMPLETE'],
+  ['a passed check whose deep audit has only non-blocking unknowns', { status: 'LIVE_READY', secondary: PASSED, deep: { failed: [], blockingUnknownFields: [], unknownFields: ['top10'] } }, 'PASSED'],
   ['a risk exclusion, which fails chartRisk in the deep audit', { status: 'HARD_REJECT', secondary: PASSED, deep: { failed: ['chartRisk'], blockingUnknownFields: [] } }, 'VETOED'],
-  ['an open deep audit before any check', { status: 'X_REVIEW', secondary: null, deep: { failed: ['notHoneypot'], blockingUnknownFields: [] } }, 'PENDING']
+  ['an open deep audit before any check', { status: 'LIVE_READY', secondary: null, deep: { failed: ['notHoneypot'], blockingUnknownFields: [] } }, 'PENDING']
 ]) test(`safetyVerdict: ${name} is ${expected}`, () => assert.equal(safetyVerdict(input), expected));
 
-test('classification holds back exactly the checks the verdict does not pass', () => {
-  const unknown = check({ security: { ...SECURITY, complete: false, verdict: 'UNKNOWN', unknownFields: ['honeypot'] } });
-  for (const [name, secondary] of [['passed', PASSED], ['degraded', DEGRADED], ['unknown', unknown]]) {
-    const held = mergeSecondaryClassification({ status: 'X_REVIEW', hardFailed: [], waitingFailed: [] }, secondary).status === 'WAIT_RECHECK';
-    assert.equal(held, safetyVerdict({ status: 'X_REVIEW', secondary }) !== 'PASSED', name);
-  }
-});
-
 test('the Telegram projection keeps every fact the verdict reads, including a risk exclusion', () => {
-  const source = { chain: 'bsc', address: '0x' + 'ab'.repeat(20), symbol: 'MEME', status: 'X_REVIEW', auditedAt: 1, reviewRevision: 'r', secondary: PASSED,
+  const source = { chain: 'bsc', address: '0x' + 'ab'.repeat(20), symbol: 'MEME', status: 'LIVE_READY', auditedAt: 1, reviewRevision: 'r', secondary: PASSED,
     deep: { chainPass: true, chartRisk: { version: CHART_RISK_VERSION, pass: true }, checks: {}, failed: [], unknownFields: [], blockingUnknownFields: [] } };
   const verdict = row => safetyVerdict({ status: row.status, secondary: row.secondary, deep: row.deep });
   assert.equal(verdict(projectTelegramCandidate(source)), 'PASSED');

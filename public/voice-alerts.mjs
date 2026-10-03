@@ -4,14 +4,13 @@
 export const VOICE_TTL = 7 * 24 * 60 * 60_000;
 export const voiceKey = row => `${row.chain}:${row.address.toLowerCase()}`;
 export function voiceEligible(row, now) {
-  const statusReady = row?.source === 'live' ? row.status === 'LIVE_READY' : row?.status === 'X_REVIEW';
   return typeof row?.address === 'string' && typeof row?.chain === 'string'
-    && row.qualified === true && statusReady
+    && row.qualified === true && row.status === 'LIVE_READY'
     && Number.isFinite(row.auditedAt) && row.auditedAt > 0 && row.auditedAt <= now
     && now - row.auditedAt <= 10 * 60_000 && row.staleAt > now;
 }
 
-// Snapshot eligibility is independent of UI sorting, manual approvals and feed
+// Snapshot eligibility is independent of UI sorting, ignore marks and feed
 // arrivals. A waiting token can be promoted, but baseline candidates stay quiet.
 export class VoiceAlerts {
   constructor() { this.reset(); }

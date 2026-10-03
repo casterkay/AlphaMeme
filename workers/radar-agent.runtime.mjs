@@ -462,8 +462,8 @@ describe('recoverable Radar scanner', () => {
         'INSERT INTO cycle_checkpoint (tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         tenantId, cycleId, 'arc', control.keyEpoch, control.controlEpoch, null, 'SUMMARIZE', 0, 0, JSON.stringify({ settings }), now
       );
-      insert('stale-candidate', 'X_REVIEW', now - settings.candidateRetentionMs - 1, 1, 100);
-      insert('favorite-candidate', 'X_REVIEW', now - settings.candidateRetentionMs - 1, 1, 1_000);
+      insert('stale-candidate', 'LIVE_READY', now - settings.candidateRetentionMs - 1, 1, 100);
+      insert('favorite-candidate', 'LIVE_READY', now - settings.candidateRetentionMs - 1, 1, 1_000);
       insert('expired-lead', 'LIVE_READY', now, 1, 1_000, now - 1);
       // Alerted a day ago, unchecked past retention and ranked below the cap: kept for the no-repeat window.
       insert('alerted-candidate', 'HARD_REJECT', now - settings.candidateRetentionMs - 1, 0, 0);

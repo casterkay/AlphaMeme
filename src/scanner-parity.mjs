@@ -1,5 +1,4 @@
 import { createdAt } from './scoring/index.mjs';
-import { classifyDeepResult, mergeSecondaryClassification } from './scoring/classification.mjs';
 import { sha256Hex } from './util/crypto.mjs';
 
 const RESERVED_X_PATHS = new Set([
@@ -121,7 +120,7 @@ export function selectAuditQueue(queue, availableAddresses, now, cycleNumber, li
   const selected = [];
   while (selected.length < limit && (never.length || rechecks.length)) {
     const slot = cycleNumber + selected.length;
-    const urgent = rechecks.findIndex(row => row.status === 'X_REVIEW' || row.watched);
+    const urgent = rechecks.findIndex(row => row.watched);
     if (urgent >= 0 && slot % 3 !== 1) selected.push(...rechecks.splice(urgent, 1));
     else if (slot % 5 === 0 && never.length) {
       // Reserve a fairness slot so lower-priority tokens are not starved forever.
@@ -134,7 +133,7 @@ export function selectAuditQueue(queue, availableAddresses, now, cycleNumber, li
 
 export function nextAuditDelay(status, settings) {
   if (status === 'HARD_REJECT') return settings.hardRejectRecheckMs;
-  if (status === 'X_REVIEW' || status === 'LIVE_READY') return settings.chainPassRecheckMs;
+  if (status === 'LIVE_READY') return settings.chainPassRecheckMs;
   return settings.dynamicRecheckMs;
 }
 
@@ -159,4 +158,3 @@ export function buildQueue(previous, prequalified, now, settings) {
   return [...byAddress.values()].filter(item => now - num(item.lastSeenAt, item.firstSeenAt) <= settings.queueRetentionMs);
 }
 
-export { classifyDeepResult, mergeSecondaryClassification };

@@ -1,6 +1,5 @@
 import { voiceEligible, voiceKey, VOICE_TTL } from '../../public/voice-alerts.mjs';
 import { DEFAULT_SCAN_CHAIN } from '../chains.mjs';
-import { CHART_RISK_VERSION } from '../scoring/chart-risk.mjs';
 import { readSchedulerStateInTransaction } from '../storage/scheduler-state.mjs';
 
 const STATE_KEY = 'notification.baseline';
@@ -32,14 +31,11 @@ export class NotificationPolicy {
     const excluded = new Set(this.query('SELECT chain,address FROM risk_exclusions WHERE tenant_id=?').map(voiceKey));
     const marks = new Map(this.query('SELECT chain,address,decision FROM manual_marks WHERE tenant_id=?').map(row => [voiceKey(row), row.decision]));
     const favorites = new Set(this.query('SELECT chain,address FROM annotations WHERE tenant_id=? AND favorite=1').map(voiceKey));
-    return this.query('SELECT chain,address,symbol,status,audited_at,stale_at,review_revision,deep_json,audit_health_json,audit_error FROM candidates WHERE tenant_id=?').map(row => {
-      const deep = decode(row.deep_json), health = decode(row.audit_health_json), key = voiceKey(row);
-      // An AVE market lead alerts as upstream's live lead does; a deep-audit pass needs its full evidence.
-      const lead = row.status === 'LIVE_READY';
+    return this.query('SELECT chain,address,symbol,status,audited_at,stale_at,review_revision FROM candidates WHERE tenant_id=?').map(row => {
+      const key = voiceKey(row);
+      // Only a market lead (LIVE_READY) alerts.
       return { chain: row.chain, address: row.address, symbol: row.symbol, status: row.status, auditedAt: row.audited_at, staleAt: row.stale_at, revision: row.review_revision,
-        ...(lead ? { source: 'live' } : {}),
-        qualified: lead ? !excluded.has(key) : row.status === 'X_REVIEW' && deep?.chainPass === true && !row.audit_error && health?.complete !== false && deep?.chartRisk?.pass === true && deep?.chartRisk?.version === CHART_RISK_VERSION && !excluded.has(key),
-        ignored: marks.get(key) === 'ignored', approved: marks.get(key) === 'passed', favorite: favorites.has(key) };
+        qualified: row.status === 'LIVE_READY' && !excluded.has(key), ignored: marks.get(key) === 'ignored', favorite: favorites.has(key) };
     });
   }
   baselineInTransaction(force = false) {
@@ -53,7 +49,7 @@ export class NotificationPolicy {
     return structuredClone(state);
   }
   candidateEligible(row, chains) { return row && chains.includes(row.chain) && !row.ignored && voiceEligible(row, this.now()); }
-  relevantRisk(row, state) { return row && (row.favorite || row.approved || Object.hasOwn(state.notified, voiceKey(row))); }
+  relevantRisk(row, state) { return row && (row.favorite || Object.hasOwn(state.notified, voiceKey(row))); }
 
   eligible(outbox, payload, options) { return this.ineligibleReason(outbox, payload, options) === null; }
 

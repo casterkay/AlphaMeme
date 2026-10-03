@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chartRiskScreen } from '../src/scoring/chart-risk.mjs';
-import { classifyDeepResult } from '../src/scoring/classification.mjs';
 import { scannerSettings as config } from '../src/scanner-settings.mjs';
 import { deepScreen, knownRiskReasons, discoveryScreen, observeFiveMinutes } from '../src/scoring/index.mjs';
 
@@ -26,7 +25,8 @@ test('observed early pump and collapse are rejected even when the last five bars
     assert.equal(chartRiskScreen([...bars].reverse(), now).status, 'REJECT');
     assert.equal(chartRiskScreen(bars.map(b => ({ ...b, time: b.time / 1000 })), now).status, 'REJECT');
     const deep = deepScreen({ discovery: {}, audit: { candles: bars }, nowMs: now }, config);
-    assert.equal(classifyDeepResult(deep).status, 'HARD_REJECT');
+    assert.ok(deep.failed.includes('chartRisk'));
+    assert.equal(deep.chainPass, false);
   }
 });
 
@@ -42,7 +42,7 @@ test('unknown, conflicting, stale, flat-zero-volume and price-gap candles do not
   for (const rows of cases) {
     const risk = chartRiskScreen(rows, now);
     assert.equal(risk.status, 'UNKNOWN'); assert.equal(risk.pass, false);
-    assert.equal(classifyDeepResult({ chainPass: false, failed: ['chartRisk'], blockingUnknownFields: risk.unknownFields }).status, 'WAIT_RECHECK');
+    assert.ok(risk.unknownFields.length);
   }
   // A huge high wick has no ordered evidence of two later collapsed closes.
   assert.equal(chartRiskScreen(good.map(b => ({ ...b, high: 100 })), now).pass, true);

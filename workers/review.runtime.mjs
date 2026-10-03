@@ -1,26 +1,23 @@
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { expect, it } from 'vitest';
-import { annotateInTransaction, readReview, reviewProjectionRevision, setManualMarkInTransaction, nextReviewExpiry } from '../src/bot/review.mjs';
+import { annotateInTransaction, readReview, reviewProjectionRevision, setManualMarkInTransaction } from '../src/bot/review.mjs';
 
 const token = { chain: 'base', address: '0x' + 'a'.repeat(40) };
-it('rejects stale and ignored approvals, preserves mark history and allows revocation after audit expiry', async () => {
+it('accepts only ignore marks, versions every change and rejects stale evidence',async () => {
   await runInDurableObject(env.RADAR.getByName('radar:19301'), async (_instance, state) => {
     const storage = state.storage, tenant = '19301', now = 2_000_000;
-    storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,status,audited_at,review_revision) VALUES (?,?,?,?,?,?)', tenant, token.chain, token.address, 'X_REVIEW', now - 600_000, 'r1');
-    const set = (decision, version, revision = 'r1', at = now) => storage.transactionSync(() => setManualMarkInTransaction(storage, tenant, { token, decision, expectedMarkVersion: version, reviewRevision: revision }, at));
-    expect(set('passed', 0).version).toBe(1);
-    expect(nextReviewExpiry(storage, tenant, token, now)).toBe(now + 1);
-    expect(reviewProjectionRevision(storage, tenant, token, now)).not.toBe(reviewProjectionRevision(storage, tenant, token, now + 1));
-    expect(() => set('ignored', 0)).toThrow('mark_changed');
-    expect(() => set('passed', 1, 'r1', now + 1)).toThrow('approval_unavailable');
-    expect(set(null, 1, null, now + 1).version).toBe(2);
-    set('ignored', 2);
-    expect(() => set('passed', 3)).toThrow('approval_unavailable');
+    storage.sql.exec('INSERT INTO candidates (tenant_id,chain,address,status,audited_at,review_revision) VALUES (?,?,?,?,?,?)', tenant, token.chain, token.address, 'LIVE_READY', now - 600_000, 'r1');
+    const set = (decision, version, revision = 'r1') => storage.transactionSync(() => setManualMarkInTransaction(storage, tenant, { token, decision, expectedMarkVersion: version, reviewRevision: revision }, now));
+    expect(() => set('passed', 0)).toThrow('invalid_mark');
+    const before = reviewProjectionRevision(storage, tenant, token);
+    expect(set('ignored', 0).version).toBe(1);
+    expect(reviewProjectionRevision(storage, tenant, token)).not.toBe(before);
+    expect(() => set(null, 0)).toThrow('mark_changed');
     storage.sql.exec('UPDATE candidates SET review_revision = ? WHERE tenant_id = ?', 'r2', tenant);
     expect(readReview(storage, tenant, token).mark.decision).toBe('ignored');
-    expect(set(null, 3).decision).toBeNull();
-    expect(() => set('passed', 4)).toThrow('evidence_changed');
+    expect(set(null, 1).decision).toBeNull();
+    expect(() => set('ignored', 2)).toThrow('evidence_changed');
   });
 });
 
