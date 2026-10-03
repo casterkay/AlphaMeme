@@ -150,3 +150,17 @@ for (const [trailingAthFraction, expectedExitBlock] of [[0.9, 5], [0.85, 7], [0.
     assert.equal(result.fills[2].blockNumber, expectedExitBlock);
   });
 }
+
+for (const minutes of [15, 20, 25, 30]) {
+  test(`${minutes}-minute timer exits without swaps and requires a complete capture horizon`, () => {
+    const policy = { ...POLICIES[2], timeStopSeconds: minutes * 60 };
+    const source = pool([point(0, 1)]);
+    const result = replay(source, clean, 1, policy, 1, { ...costs, captureToTimestamp: minutes * 60 + 2 });
+    assert.equal(result.fills[1].reason, 'time_stop');
+    assert.equal(result.fills[1].blockNumber, minutes * 60 + 2);
+    const incomplete = replay(source, clean, 1, policy, 1, { ...costs, captureToTimestamp: minutes * 60 + 1 });
+    assert.equal(incomplete.entered, false);
+    assert.equal(incomplete.exitReason, 'incomplete_horizon');
+    assert.equal(incomplete.gasUsd, 0);
+  });
+}

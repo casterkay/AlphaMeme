@@ -19,6 +19,10 @@ node scripts/arc-backtest/run.mjs \
   --output .runtime/arc-backtest/replay
 ```
 
+Full session findings: [consolidated backtesting report](../../docs/reports/2026-10-03-arc-baseline-468-backtest.md).
+
+Time stop: `--time-stop-minutes 20` (default). Longer timers need a dataset covering the full holding horizon; this session’s 15/20/25/30-minute runs use `dataset72h-30m.json` at `--trailing-ath-fraction 0.98`.
+
 Trailing stop: `--trailing-ath-fraction 0.9` (default). Use `0.8` or `0.85` for a wider stop, retaining activation after take-profit and ATH since entry.
 
 Model inputs: `--slippage-bps 50`, `--swap-gas-units 250000`, `--approval-gas-units 50000`. Gas price comes from the dataset's sampled Arc header. Slippage is an adverse fill haircut, separate from price impact and pool/token fees. A failed exit pays gas and writes off remaining inventory after one attempt. Active-range virtual reserves approximate concentrated-liquidity execution; this is not a forked-chain emulator.
