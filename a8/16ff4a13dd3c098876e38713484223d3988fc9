@@ -1,0 +1,35 @@
+test/secondary.test.mjs
+  s_03ebd0efd53ab5::t_8dc077af3a019c 132,135-137
+  s_03ebd0efd53ab5::t_6d5e0607046d9f 282-303
+src/recoverable-scanner.mjs
+  s_03ebd0efd53ab5::t_2f4c6e39b8a949 115,124,514,516-517
+docs/DEVELOPMENT-PLAN.md
+  s_03ebd0efd53ab5::t_20219f85f371b8 50-54
+test/radar-agent.test.mjs
+  s_03ebd0efd53ab5::t_e04e61462f5e92 552-568
+  s_03ebd0efd53ab5::t_22fec9bcd5da4f 551
+src/bot/panels.mjs
+  s_03ebd0efd53ab5::t_2f4c6e39b8a949 95-96,123-126,186
+test/telegram-panels.test.mjs
+  s_03ebd0efd53ab5::t_b1e92d813005af 283-294
+src/providers/secondary.mjs
+  s_03ebd0efd53ab5::t_be14da9197661c 209,226-227,449-452,455-460,463,465,470,477-480,482,485
+src/render/whitelist.mjs
+  s_03ebd0efd53ab5::t_2f4c6e39b8a949 56-58,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a816ff4a13dd3c098876e38713484223d3988fc9",
+  "prompts": {},
+  "sessions": {
+    "s_03ebd0efd53ab5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34373ce1-9e55-4e5c-9162-cf40c8df360e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
