@@ -328,17 +328,16 @@ export function marketBehaviorScreen({ discovery = {}, info = {}, holders = [], 
   const renownedWallets = renownedKnown ? Math.max(aggregateRenowned ?? 0, tagEvidence.renownedWallets) : null;
 
   const holderCount = optionalCount(first(info.holder_count, info.stat?.holder_count, discovery.holder_count));
-  const swaps5m = optionalCount(first(price.swaps_5m, discovery.swaps_5m, discovery.swaps));
-  const buys5m = optionalCount(first(price.buys_5m, discovery.buys_5m, discovery.buys));
-  const sells5m = optionalCount(first(price.sells_5m, discovery.sells_5m, discovery.sells));
-  const volume5m = optionalNonNegativeNumber(first(price.volume_5m, discovery.volume_5m, discovery.volume));
+  const swaps5m = optionalCount(first(price.swaps_5m, discovery.swaps_5m));
+  const buys5m = optionalCount(first(price.buys_5m, discovery.buys_5m));
+  const sells5m = optionalCount(first(price.sells_5m, discovery.sells_5m));
+  const volume5m = optionalNonNegativeNumber(first(price.volume_5m, discovery.volume_5m));
   const currentPrice = optionalNumber(price.price);
   const priorPrice5m = optionalNumber(price.price_5m);
   const calculatedPriceChange = currentPrice !== null && currentPrice > 0 && priorPrice5m !== null && priorPrice5m > 0
     ? currentPrice / priorPrice5m - 1 : null;
   const priceChange5m = optionalSignedRate(first(
-    calculatedPriceChange, discovery.price_change_percent5m,
-    discovery.price_change_percent_5m, discovery.price_change_percent
+    calculatedPriceChange, discovery.price_change_percent5m, discovery.price_change_percent_5m
   ));
   // Trading age is the relevant clock for phase detection. Some contracts are
   // deployed long before liquidity opens, so prefer the market-open timestamp.
@@ -498,7 +497,7 @@ function unixSeconds(value) {
 
 export function empiricalSellability({ info, discovery, traders, nowSec = Date.now() / 1000, windowSec = 5 * 60, chain = 'robinhood' }) {
   const price = info.price || {};
-  const sells5m = optionalNumber(first(price.sells_5m, discovery.sells_5m, discovery.sells));
+  const sells5m = optionalNumber(first(price.sells_5m, discovery.sells_5m));
   const sells24h = optionalNumber(first(price.sells_24h, discovery.sells_24h));
   const unique = new Map();
   for (const row of Array.isArray(traders) ? traders : []) {

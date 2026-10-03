@@ -69,7 +69,7 @@ test('market behavior sends KOL-only, inconsistent activity and old sudden pumps
   assert.match(kolOnly.downgradeReasons.join(' '), /仅见KOL/);
 
   const mismatch = marketBehaviorScreen({
-    discovery: { smart_degen_count: 0, renowned_count: 0, holder_count: 10, swaps: 200, buys: 100, sells: 100 },
+    discovery: { smart_degen_count: 0, renowned_count: 0, holder_count: 10, swaps_5m: 200, buys_5m: 100, sells_5m: 100 },
     nowMs: nowSec * 1000
   }, config);
   assert.equal(mismatch.pass, false);
@@ -78,7 +78,8 @@ test('market behavior sends KOL-only, inconsistent activity and old sudden pumps
   const oldPump = marketBehaviorScreen({
     discovery: {
       creation_timestamp: nowSec - 2 * 86400, smart_degen_count: 3, renowned_count: 0,
-      price_change_percent5m: .40, swaps: 40, buys: 25, sells: 15, holder_count: 100
+      price_change_percent5m: .40, swaps_5m: 40, buys_5m: 25,
+      sells_5m: 15, holder_count: 100
     }, nowMs: nowSec * 1000
   }, config);
   assert.equal(oldPump.pass, false);
@@ -88,7 +89,7 @@ test('market behavior sends KOL-only, inconsistent activity and old sudden pumps
     discovery: {
       creation_timestamp: nowSec - 2 * 86400, open_timestamp: nowSec - 600,
       smart_degen_count: 3, renowned_count: 0, price_change_percent5m: .40,
-      swaps: 40, buys: 25, sells: 15, holder_count: 100
+      swaps_5m: 40, buys_5m: 25, sells_5m: 15, holder_count: 100
     }, nowMs: nowSec * 1000
   }, config);
   assert.equal(recentlyOpened.pass, true);
@@ -98,7 +99,7 @@ test('market behavior identifies distribution flow and corroborated repeat-launc
   const distribution = marketBehaviorScreen({
     discovery: {
       creation_timestamp: nowSec - 3600, smart_degen_count: 3, renowned_count: 1,
-      price_change_percent5m: .15, swaps: 60, buys: 20, sells: 40, holder_count: 100
+      price_change_percent5m: .15, swaps_5m: 60, buys_5m: 20, sells_5m: 40, holder_count: 100
     }, nowMs: nowSec * 1000
   }, config);
   assert.equal(distribution.pass, false);
@@ -119,6 +120,16 @@ test('market behavior identifies distribution flow and corroborated repeat-launc
   }, config);
   assert.equal(historyUnknown.pass, true);
   assert.match(historyUnknown.warnings.join(' '), /历史发币20个/);
+});
+
+test('five-minute evidence never falls back to generic activity counters', () => {
+  const generic = { swaps: 200, buys: 100, sells: 100, volume: 50_000, price_change_percent: .4 };
+  const behavior = marketBehaviorScreen({ discovery: generic, nowMs: nowSec * 1000 }, config);
+  assert.deepEqual(['swaps5m', 'buys5m', 'sells5m', 'volume5m', 'priceChange5m'].map(key => behavior.evidence[key]), [null, null, null, null, null]);
+  const sellability = empiricalSellability({ info: {}, discovery: { ...generic, sells_24h: 20 }, traders: recentTraders(), nowSec });
+  assert.equal(sellability.sells5m, null);
+  assert.equal(sellability.pass, false);
+  assert.ok(sellability.unknownFields.includes('sellability.sells5m'));
 });
 
 function candles({ spike = false } = {}) {
