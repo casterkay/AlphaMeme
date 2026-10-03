@@ -1,0 +1,44 @@
+src/scanner-settings.mjs
+  s_03ebd0efd53ab5::t_90987245543676 20
+src/providers/secondary.mjs
+  s_03ebd0efd53ab5::t_e476bdb43b81c2 214-215
+src/recoverable-scanner.mjs
+  s_03ebd0efd53ab5::t_01c215d7aed11b 13-14,17,20,101-115,142,274,351-354,418,420,438-439,454,468,475
+src/scanner-parity.mjs
+  s_03ebd0efd53ab5::t_a180bd92387941 55-56,66,74-77
+src/scoring/index.mjs
+  s_03ebd0efd53ab5::t_f08c931ff04b69 133-134,136,138-139,142,148,152,186,207
+src/recoverable-scan-executor.mjs
+  s_03ebd0efd53ab5::t_f8e2fcc45d8443 15
+src/onchain-watch.mjs
+  s_03ebd0efd53ab5::t_90987245543676 2,13,15,36,47
+  s_03ebd0efd53ab5::t_f4c09c1c0d1cb5 37,54
+test/scoring.test.mjs
+  s_03ebd0efd53ab5::t_9e07330e2a2fa8 335-348
+test/radar-agent.test.mjs
+  s_03ebd0efd53ab5::t_0296df1fe461b7 280-284,286,293-300,302-305,309,314-344,347
+  s_03ebd0efd53ab5::t_045d3a4838b6bf 414
+  s_03ebd0efd53ab5::t_0c89de5d5fd23d 68-69,78
+  s_03ebd0efd53ab5::t_f06de498801d62 361
+  s_03ebd0efd53ab5::t_7f7d307907787b 625
+  s_03ebd0efd53ab5::t_49f60d32328df7 380-384,387,389,392,396-397
+  s_03ebd0efd53ab5::t_a686dd4ac0e663 393-394
+test/secondary.test.mjs
+  s_03ebd0efd53ab5::t_e9dd802b7d5ec6 3,129-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "173f751609d4ef23434081691dcc164653d70fde",
+  "prompts": {},
+  "sessions": {
+    "s_03ebd0efd53ab5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34373ce1-9e55-4e5c-9162-cf40c8df360e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
