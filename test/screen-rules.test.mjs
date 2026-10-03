@@ -46,3 +46,26 @@ test('the ruleset version changes with every threshold a rule reads, and with no
     assert.equal(ruleset({ ...scannerSettings, [key]: scannerSettings[key] + 1 }), current, key);
   }
 });
+
+test('a blocked term in the symbol or the name hits, Robinhood does not, and an unread field leaves it unknown', () => {
+  const nameRule = SCREEN_RULES.find(item => item.id === 'NAME_BLOCKLISTED');
+  assert.deepEqual([nameRule.role, nameRule.mode], ['DROP', SHADOW]);
+  for (const [symbol, name, verdict] of [
+    ['OFFICIAL', 'Pepe', 'HIT'], ['PEPE', 'Pepe Airdrop', 'HIT'], ['PEPE', 'Pepe 官方', 'HIT'], ['空投', 'Pepe', 'HIT'],
+    ['TENEO', 'Pepe', 'HIT'], ['PEPE', 'teneo protocol', 'HIT'],
+    // NFKC folds full-width letters before the case-insensitive match.
+    ['ＯＦＦＩＣＩＡＬ', 'Pepe', 'HIT'], ['PEPE', 'ＡｉｒＤｒｏｐ', 'HIT'],
+    ['HOOD', 'Robinhood', 'CLEAR'], ['HOOD', 'HOOD on Robinhood Chain', 'CLEAR'], ['PEPE', 'Pepe', 'CLEAR'],
+    // A hit in one field decides; a clear field leaves it unknown while the other is unread.
+    ['OFFICIAL', undefined, 'HIT'], [null, 'airdrop', 'HIT'],
+    ['PEPE', undefined, 'UNKNOWN'], ['', 'Pepe', 'UNKNOWN'], ['  ', 'Pepe', 'UNKNOWN'], [42, 'Pepe', 'UNKNOWN'], [undefined, undefined, 'UNKNOWN']
+  ]) assert.equal(nameRule.evaluate({ row: { symbol, name } }), verdict, `${symbol} / ${name}`);
+});
+
+test('a blocked name never changes whether the screen passes a token', () => {
+  const row = { marketProvider: 'AVE', chain: 'arc', address: `0x${'1'.repeat(40)}`, symbol: 'PEPE', name: 'Pepe' };
+  const screen = discoveryScreen(row, { ...scannerSettings, chain: 'arc' }, 1_800_000_000);
+  const blocked = discoveryScreen({ ...row, name: 'Pepe Official Airdrop' }, { ...scannerSettings, chain: 'arc' }, 1_800_000_000);
+  assert.deepEqual([screen.verdicts.NAME_BLOCKLISTED, blocked.verdicts.NAME_BLOCKLISTED], ['CLEAR', 'HIT']);
+  assert.deepEqual([blocked.pass, blocked.decision, blocked.reasons], [screen.pass, screen.decision, screen.reasons]);
+});

@@ -26,6 +26,18 @@ const ageVerdict = (market, hit) => market.ageSec === null ? UNKNOWN : hit(marke
 // A 5-minute side volume AVE reports must be positive; one it reports but that cannot be read counts as none.
 const sideVolume = value => value == null ? UNKNOWN : optionalNonNegativeNumber(value) > 0 ? CLEAR : HIT;
 
+// Issue #1's D1 terms, which in a ticker or name mark impersonation or phishing. They are
+// part of NAME_BLOCKLISTED's definition: changing them is a new version of that rule.
+const BLOCKED_NAME_TERMS = Object.freeze(['official', 'airdrop', '官方', '空投', 'teneo']);
+const nameText = value => typeof value === 'string' && value.trim() ? value.normalize('NFKC').toLowerCase() : null;
+
+// A blocked term in the symbol or the name hits; it is clear only when both were read.
+function nameBlocklisted({ row }) {
+  const texts = [nameText(row.symbol), nameText(row.name)];
+  if (texts.some(text => text !== null && BLOCKED_NAME_TERMS.some(term => text.includes(term)))) return HIT;
+  return texts.includes(null) ? UNKNOWN : CLEAR;
+}
+
 export const SCREEN_RULES = Object.freeze([
   { id: 'IDENTITY_MISMATCH', version: 1, role: DROP, mode: ENFORCE, settings: [],
     evaluate: market => market.identityMatches ? CLEAR : HIT },
@@ -65,7 +77,9 @@ export const SCREEN_RULES = Object.freeze([
   { id: 'NO_BUYS_5M', version: 1, role: DROP, mode: ENFORCE, settings: [],
     evaluate: market => known(market.buys5m, market.buys5m === 0) },
   { id: 'NO_SELLS_5M', version: 1, role: DROP, mode: ENFORCE, settings: [],
-    evaluate: market => known(market.sells5m, market.sells5m === 0) }
+    evaluate: market => known(market.sells5m, market.sells5m === 0) },
+  { id: 'NAME_BLOCKLISTED', version: 1, role: DROP, mode: SHADOW, settings: [],
+    evaluate: nameBlocklisted }
 ].map(rule => Object.freeze({ ...rule, settings: Object.freeze(rule.settings) })));
 
 /**

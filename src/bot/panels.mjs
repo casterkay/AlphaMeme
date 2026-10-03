@@ -195,7 +195,8 @@ const screenReasonLabels = {
   AGE_KNOWN:['上线时间未知','Launch time unknown'],AGE_TOO_YOUNG:['上线时间过短','Launched too recently'],AGE_TOO_OLD:['超过观察年龄上限','Past the age limit'],MARKET_CAP_KNOWN:['市值数据未知','Market cap unknown'],
   MARKET_CAP_OUT_OF_RANGE:['市值不在发现范围','Market cap out of range'],LIQUIDITY_KNOWN:['流动性数据未知','Liquidity unknown'],LIQUIDITY_TOO_LOW:['流动性不足','Liquidity too low'],TAX_TOO_HIGH:['交易税超过风险门槛','Tax above the limit'],
   VOLUME_5M_POSITIVE:['近5分钟成交额不足或未知','No known 5m volume'],LOW_ACTIVITY:['当前成交活跃度不足','Too little current trading'],NO_BUY_VOLUME_5M:['近5分钟买入额不足或未核验','No verified 5m buy volume'],
-  NO_SELL_VOLUME_5M:['近5分钟卖出额不足或未核验','No verified 5m sell volume'],NO_BUYS_5M:['近5分钟无买入成交','No buys in 5m'],NO_SELLS_5M:['近5分钟无卖出成交','No sells in 5m']
+  NO_SELL_VOLUME_5M:['近5分钟卖出额不足或未核验','No verified 5m sell volume'],NO_BUYS_5M:['近5分钟无买入成交','No buys in 5m'],NO_SELLS_5M:['近5分钟无卖出成交','No sells in 5m'],
+  NAME_BLOCKLISTED:['名称含官方、空投等仿冒词','Name has an impersonation term (official, airdrop…)']
 };
 /** The first screen reason that names a rule, localized; null when there is none. */
 export const screenReasonText = (reasons,locale) => {
