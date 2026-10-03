@@ -1,0 +1,42 @@
+test/arc-backtest-replay.test.mjs
+  s_02320cd7492a13::t_91f141d49feec1 1-117
+scripts/arc-backtest/run.mjs
+  s_02320cd7492a13::t_3b9de1b3e5f5a3 1-6,8-47,49-82,84-97
+  s_02320cd7492a13::t_eb1806771b5969 7,48,83
+scripts/arc-backtest/README.md
+  s_02320cd7492a13::t_3b9de1b3e5f5a3 1-10,13-24
+  s_02320cd7492a13::t_83deffdc53f47f 11-12
+scripts/arc-backtest/gmgn-worker.mjs
+  s_02320cd7492a13::t_56f861b6f57748 1-11
+scripts/arc-backtest/replay.mjs
+  s_02320cd7492a13::t_56f861b6f57748 1-77,81-89,91-92,96-101,103-127,129,133,135-141,143-163
+  s_02320cd7492a13::t_91f141d49feec1 78-80,90,93-95,102,128,130-132,134,142
+scripts/arc-backtest/security.mjs
+  s_02320cd7492a13::t_6e04c9c1926b07 25,38,63
+  s_02320cd7492a13::t_91f141d49feec1 30-33,37,39,50-53,59-60,62,64-65
+  s_02320cd7492a13::t_56f861b6f57748 1-24,26-29,34-36,40-49,54-58,61,66-67
+scripts/arc-backtest/collect.mjs
+  s_02320cd7492a13::t_259eb718442d42 1-225
+scripts/arc-backtest/supplement.mjs
+  s_02320cd7492a13::t_811bad109add92 1-60
+test/arc-backtest-collect.test.mjs
+  s_02320cd7492a13::t_b469c1bfff56e3 1-39
+test/arc-backtest-security.test.mjs
+  s_02320cd7492a13::t_63955005f4c5c6 1-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "49b462dd2ffa1bfeb174b2fd022f39ca3c51dda6",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
