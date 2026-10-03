@@ -49,3 +49,7 @@ export const scannerSettings = Object.freeze({
   staleCandidateMs: 10 * 60_000,
   outcomeRetentionMs: 7 * 24 * 60 * 60_000,
 });
+
+/** Whether a settings object carries every key above as a finite number, as a cycle's snapshot must. */
+export const completeScannerSettings = value => value !== null && typeof value === 'object'
+  && Object.keys(scannerSettings).every(key => Number.isFinite(value[key]));

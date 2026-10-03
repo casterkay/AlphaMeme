@@ -11,6 +11,7 @@ import { readAveAdmissionState, writeAveAdmissionStateInTransaction } from './st
 import { initializeRadarSchema } from './storage/schema.mjs';
 import { normalizeTenantId } from './storage/tenant-id.mjs';
 import { RecoverableScanner } from './recoverable-scanner.mjs';
+import { scannerSettings } from './scanner-settings.mjs';
 import { executeRecoverableScanStep, recoverableRequestCost } from './recoverable-scan-executor.mjs';
 import { externalRequestHandler, localTransactionHandler, OneAlarmScheduler, SchedulerStepError } from './scheduler.mjs';
 import { SqliteControlStateStore, assertCheckpointGeneration } from './storage/control-state.mjs';
@@ -117,6 +118,7 @@ export class RadarAgent extends DurableObject {
     return { ...control, dueAt };
   }
 
+  // Begins one cycle on the settings given, which only tests vary; production cycles begin on scannerSettings (TelegramRuntime.startScan).
   async beginRecoverableCycle(value) {
     const tenantId = this.#boundTenantId(value?.tenantId);
     new SqliteControlStateStore(this.ctx.storage, tenantId).selectScanChain(value?.chain);
@@ -253,7 +255,8 @@ export class RadarAgent extends DurableObject {
       error.code = 'CYCLE_CHECKPOINT_MISSING';
       throw error;
     }
-    return new RecoverableScanner({ store, settings: checkpoint.partial.settings });
+    // The cycle's own steps run on its snapshot; the successor it begins snapshots the code's settings.
+    return new RecoverableScanner({ store, settings: scannerSettings });
   }
 
 
@@ -290,7 +293,7 @@ export class RadarAgent extends DurableObject {
       const cycleId = task.id.slice('scan:'.length);
       const checkpoint = scannerStore.read(cycleId);
       if (!checkpoint) return task;
-      const scanner = new RecoverableScanner({ store: scannerStore, settings: checkpoint.partial.settings });
+      const scanner = new RecoverableScanner({ store: scannerStore, settings: scannerSettings });
       return { ...task, aveCost: recoverableRequestCost(scanner.nextRequest(cycleId)) };
     });
   }

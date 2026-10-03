@@ -228,7 +228,7 @@ export class TelegramRuntime {
   async verifyCredential(connectionGeneration, { request, fetchImpl, finalAttempt = false }) {
     try {
       await verifyAndActivateOnboardingCredential({ ...this.keyOptions(), connectionGeneration, request, verify: (key, { signal }) => verifyAveApiKey(key, { fetchImpl, now: this.now, signal }), afterActivate: state => {
-        restartRecoverableScanInTransaction(this.storage, this.tenantId, { keyEpoch: state.keyEpoch, controlEpoch: state.controlEpoch, now: this.now() });
+        restartRecoverableScanInTransaction(this.storage, this.tenantId, { keyEpoch: state.keyEpoch, controlEpoch: state.controlEpoch, now: this.now(), settings: scannerSettings });
         this.startScan();
         this.resetNotificationBaseline();
         this.inbox.finishInTransaction(state.updateId, 'DONE');
