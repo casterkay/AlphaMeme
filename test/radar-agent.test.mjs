@@ -7,6 +7,7 @@ import { AveClient } from '../src/providers/ave.mjs';
 import { ChainLogsError } from '../src/providers/chain-logs.mjs';
 import { SecondaryValidator } from '../src/providers/secondary.mjs';
 import { scannerSettings } from '../src/scanner-settings.mjs';
+import { DISCOVERY_REJECT, REJECTED_SAMPLE_DAILY_CAP, outcomeCohort, sampledForRejection } from '../src/scoring/outcomes.mjs';
 import { safetyVerdict } from '../src/scoring/safety.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
 import { SqliteRecoverableScannerStore, stableEffectId } from '../src/storage/recoverable-scanner.mjs';
@@ -139,10 +140,10 @@ function radar({ chain = 'bsc', settings: overrides = {}, onchain = false } = {}
   fixture.seedCheckpoint = checkpoint => store.begin({
     keyEpoch: 0, controlEpoch: 0, deadlineAt: null, tokenIndex: 0, endpointIndex: 0, updatedAt: clock.now, ...checkpoint
   });
-  fixture.seedOutcome = ({ chain: outcomeChain = chain, token, baselineAt, baselinePrice = 1, baselineProvider = 'AVE' }) => storage.sql.exec(
+  fixture.seedOutcome = ({ chain: outcomeChain = chain, token, baselineAt, baselinePrice = 1, baselineProvider = 'AVE', initialDecision = 'LIVE_READY', latestDecision = 'LIVE_READY' }) => storage.sql.exec(
     `INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json)
-     VALUES (?, ?, ?, 'LIVE_READY', 'LIVE_READY', ?, ?, ?, 'SEEDED', '[]', 'ALL_LEADS', 'ave-leads-v1', '{}', '{}', ?)`,
-    TENANT, outcomeChain, token, baselineAt, baselinePrice, baselineAt,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SEEDED', '[]', 'ALL_LEADS', 'ave-leads-v1', '{}', '{}', ?)`,
+    TENANT, outcomeChain, token, initialDecision, latestDecision, baselineAt, baselinePrice, baselineAt,
     JSON.stringify(baselineProvider === null ? {} : { baselineProvider })
   );
   return fixture;
@@ -177,6 +178,7 @@ test('a fresh AVE trending row that passes the screen becomes a lead with an eve
   assert.equal(JSON.parse(radarFixture.events()[0].data_json).reviewRevision, lead.reviewRevision);
   const outcome = radarFixture.outcome(A);
   assert.equal(outcome.initialDecision, 'LIVE_READY');
+  assert.equal(outcome.latestDecision, 'PENDING');
   assert.equal(outcome.baselineAt, NOW - 5_000);
   assert.equal(outcome.baselinePrice, 0.002);
   assert.deepEqual(outcome.samples, {});
@@ -198,7 +200,8 @@ for (const [scenario, options, reason] of [
 
     assert.equal(radarFixture.candidate(A), null);
     assert.deepEqual(radarFixture.events(), []);
-    assert.equal(radarFixture.outcome(A), null);
+    // A priced rejection may join the control cohort, never a lead cohort.
+    assert.equal(radarFixture.outcome(A)?.initialDecision ?? null, options.quoteAgeMs || !sampledForRejection('bsc', A) ? null : DISCOVERY_REJECT);
     assert.equal(radarFixture.secondaryCalls.length, 0);
     const [row] = radarFixture.state('feed.snapshot:bsc').rows;
     assert.equal(row.pass, false);
@@ -333,6 +336,9 @@ test('a promoted lead is not counted in outcomes until the hot list quotes it, w
   await radarFixture.runCycle('cycle-outcomes-2');
   const outcome = radarFixture.outcome(A);
   assert.deepEqual([outcome.cohortMetadata, outcome.baselineAt, outcome.baselinePrice], [{ baselineProvider: 'AVE' }, NOW + 10 * MINUTE - 5_000, 0.003]);
+  // Its verdict starts from the check it already had, not as pending.
+  assert.equal(outcome.latestDecision, safetyVerdict(radarFixture.candidate(A)));
+  assert.notEqual(outcome.latestDecision, 'PENDING');
 });
 
 test('a promoted pool keeps its taxes and holder count unknown in the screened row', async () => {
@@ -458,22 +464,27 @@ test('the log cursor advances only when the screen commits, so an interrupted cy
 });
 
 test('a promoted token that fails the screen is not promoted again for thirty minutes', async () => {
+  // Sampled for the control cohort were it an AVE row.
+  const P = address('8');
+  assert.ok(sampledForRejection('arc', P));
   for (const [scenario, market, reason] of [
-    ['no sells', busyMarket(A, { sells5m: 0 }), '近5分钟无卖出成交'],
-    ['no price', busyMarket(A, { priceUsd: null }), '价格数据未知']
+    ['no sells', busyMarket(P, { sells5m: 0 }), '近5分钟无卖出成交'],
+    ['no price', busyMarket(P, { priceUsd: null }), '价格数据未知']
   ]) {
     const radarFixture = radar({ chain: 'arc', onchain: true });
-    radarFixture.chainLogs = { newPools: newPool(A) };
-    radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [market] : [] });
+    radarFixture.chainLogs = { newPools: newPool(P) };
+    radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(P) ? [market] : [] });
     const tag = scenario.replaceAll(' ', '-');
     for (const [cycle, at, promoted] of [[1, NOW, NOW], [2, NOW + 6 * MINUTE, NOW], [3, NOW + 31 * MINUTE, NOW + 31 * MINUTE]]) {
       radarFixture.clock.now = at;
       await radarFixture.runCycle(`cycle-rejected-${tag}-${cycle}`);
-      assert.equal(promotedAt(radarFixture, A), promoted, `${scenario}, cycle ${cycle}`);
-      const screened = radarFixture.state('feed.snapshot:arc').rows.find(row => row.address === A);
+      assert.equal(promotedAt(radarFixture, P), promoted, `${scenario}, cycle ${cycle}`);
+      const screened = radarFixture.state('feed.snapshot:arc').rows.find(row => row.address === P);
       assert.equal(screened?.reasons.includes(reason) ?? false, promoted === at, `${scenario}, cycle ${cycle}: screened only when promoted`);
     }
-    assert.equal(radarFixture.candidate(A), null, scenario);
+    assert.equal(radarFixture.candidate(P), null, scenario);
+    // Only an AVE quote is a baseline, so a rejected DexScreener row joins no cohort.
+    assert.equal(radarFixture.outcome(P), null, scenario);
     assert.equal(radarFixture.aveRequests.length, 3, scenario);
   }
 });
@@ -553,6 +564,7 @@ test('a non-fatal secondary result keeps the lead status and revision and record
   assert.equal(checked.secondary.security.verdict, 'NO_FATAL_FLAGS');
   assert.deepEqual(radarFixture.secondaryCalls, [{ tokenAddress: A }]);
   assert.deepEqual(radarFixture.events().map(event => event.type), ['CANDIDATE_NEW']);
+  assert.equal(outcomeCohort(radarFixture.outcome(A)), 'passed');
 });
 
 test('on Arc, the hot-list row\'s distinct sellers stand in for the cannot_sell_all GoPlus omits; without sellers the check stays incomplete', async () => {
@@ -619,7 +631,7 @@ test('a GoPlus fatal verdict vetoes a lead and the vetoed token is not re-promot
   assert.deepEqual(radarFixture.events().map(event => event.type), ['CANDIDATE_NEW', 'RISK_WORSENED']);
   assert.equal(JSON.parse(radarFixture.events()[1].data_json).reviewRevision, vetoed.reviewRevision);
   const outcome = radarFixture.outcome(A);
-  assert.equal(outcome.latestDecision, 'HARD_REJECT');
+  assert.equal(outcome.latestDecision, 'VETOED');
   assert.equal(outcome.initialDecision, 'LIVE_READY');
   assert.equal(outcome.baselineAt, baseline.baselineAt);
   assert.equal(outcome.baselinePrice, baseline.baselinePrice);
@@ -634,6 +646,117 @@ test('a GoPlus fatal verdict vetoes a lead and the vetoed token is not re-promot
   assert.equal(radarFixture.state('feed.snapshot:bsc').leadCount, 0);
   assert.equal(radarFixture.secondaryCalls.length, 0);
   assert.deepEqual(radarFixture.events().map(event => event.type), ['CANDIDATE_NEW', 'RISK_WORSENED']);
+  // Performance counts the vetoed lead as vetoed, never as passed.
+  const performance = readTelegramStatistics(radarFixture.storage, TENANT, NOW + 6 * MINUTE).bsc;
+  assert.deepEqual(['passed', 'vetoed', 'unverified', 'rejected'].map(cohort => performance.coverage[cohort].m5.eligible), [0, 1, 0, 0]);
+  assert.equal(performance.completed5m, 0);
+});
+
+test('a lead\'s recorded verdict converges on its stored candidate every cycle, even off the hot list', async () => {
+  const radarFixture = radar();
+  radarFixture.hotList = [radarFixture.quote(A)];
+  await radarFixture.runCycle('cycle-verdict-1');
+  assert.equal(radarFixture.outcome(A).latestDecision, 'PASSED');
+  // A row recorded before verdicts were kept holds the candidate status.
+  radarFixture.storage.sql.exec("UPDATE outcomes SET latest_decision = 'LIVE_READY' WHERE tenant_id = ?", TENANT);
+  assert.equal(outcomeCohort(radarFixture.outcome(A)), 'unverified');
+
+  radarFixture.clock.now = NOW + MINUTE;
+  radarFixture.hotList = [];
+  await radarFixture.runCycle('cycle-verdict-2');
+  assert.equal(radarFixture.outcome(A).latestDecision, 'PASSED');
+});
+
+test('hot-list tokens the screen rejects fill a stable one-in-five control cohort, sampled from later quotes like leads', async () => {
+  const radarFixture = radar();
+  const tokens = Array.from({ length: 60 }, (_, index) => `0x${(index + 1).toString(16).padStart(40, '0')}`);
+  const sampled = tokens.filter(token => sampledForRejection('bsc', token));
+  assert.ok(sampled.length >= 5 && sampled.length <= 20, String(sampled.length));
+  radarFixture.hotList = tokens.map(token => radarFixture.quote(token, { marketCap: 9_999 }));
+  await radarFixture.runCycle('cycle-control-1');
+  const baselines = radarFixture.store.readOutcomes('bsc');
+  assert.deepEqual(baselines.map(row => row.address).sort(), sampled);
+  for (const row of baselines) {
+    assert.deepEqual([row.initialDecision, row.latestDecision, row.baselineAt, row.baselinePrice, outcomeCohort(row)],
+      [DISCOVERY_REJECT, null, NOW - 5_000, 0.001, 'rejected']);
+    assert.ok(row.latestFailed.includes('市值不在发现范围'), JSON.stringify(row.latestFailed));
+  }
+  assert.deepEqual(radarFixture.store.readCandidateAddresses('bsc'), []);
+  assert.equal(radarFixture.secondaryCalls.length, 0);
+
+  // Back on the hot list after the 5-minute horizon, each is sampled; none is tracked twice.
+  radarFixture.clock.now = NOW + 7 * MINUTE;
+  radarFixture.hotList = tokens.map(token => radarFixture.quote(token, { marketCap: 9_999, price: 0.0005 }));
+  await radarFixture.runCycle('cycle-control-2');
+  const later = radarFixture.store.readOutcomes('bsc');
+  assert.equal(later.length, sampled.length);
+  for (const row of later) assert.ok(Math.abs(row.samples.m5.return + 0.5) < 1e-9);
+  const rejected = readTelegramStatistics(radarFixture.storage, TENANT, NOW + 7 * MINUTE).bsc.coverage.rejected.m5;
+  assert.deepEqual([rejected.eligible, rejected.completed, rejected.missingRate], [sampled.length, sampled.length, 0]);
+  assert.ok(Math.abs(rejected.median + 0.5) < 1e-9);
+});
+
+test('a sampled rejection that later passes the screen gives way to a lead baselined at the alert', async () => {
+  const radarFixture = radar();
+  const token = address('3');
+  assert.ok(sampledForRejection('bsc', token));
+  radarFixture.hotList = [radarFixture.quote(token, { marketCap: 9_999 })];
+  await radarFixture.runCycle('cycle-late-lead-1');
+  assert.equal(radarFixture.outcome(token).initialDecision, DISCOVERY_REJECT);
+
+  radarFixture.clock.now = NOW + 7 * MINUTE;
+  radarFixture.hotList = [radarFixture.quote(token, { price: 0.002 })];
+  await radarFixture.runCycle('cycle-late-lead-2');
+  const lead = radarFixture.outcome(token);
+  assert.deepEqual([lead.initialDecision, lead.baselineAt, lead.baselinePrice, lead.samples, lead.cohortMetadata],
+    ['LIVE_READY', NOW + 7 * MINUTE - 5_000, 0.002, {}, { baselineProvider: 'AVE', rejectedAt: NOW - 5_000 }]);
+  assert.equal(outcomeCohort(lead), 'passed');
+});
+
+test('a sampled rejection later promoted from DexScreener leaves the control cohort but joins no lead cohort without an AVE quote', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  radarFixture.seedOutcome({ token: A, baselineAt: NOW - 10 * MINUTE, initialDecision: DISCOVERY_REJECT, latestDecision: null });
+  radarFixture.chainLogs = { newPools: newPool(A) };
+  radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [busyMarket(A)] : [] });
+  radarFixture.hotList = [radarFixture.quote(B)];
+  await radarFixture.runCycle('cycle-promoted-rejection');
+  assert.equal(radarFixture.candidate(A).status, 'LIVE_READY');
+  const outcome = radarFixture.outcome(A);
+  assert.deepEqual([outcome.initialDecision, outcome.baselineAt, outcome.latestDecision], [DISCOVERY_REJECT, NOW - 10 * MINUTE, safetyVerdict(radarFixture.candidate(A))]);
+  assert.equal(outcomeCohort(outcome), null);
+  assert.equal(readTelegramStatistics(radarFixture.storage, TENANT, NOW).arc.coverage.rejected.m5.eligible, 0);
+});
+
+test('an outcome never changes its initial decision except from a sampled rejection to a lead', () => {
+  const radarFixture = radar();
+  radarFixture.seedOutcome({ token: A, baselineAt: NOW - MINUTE });
+  const checkpoint = radarFixture.seedCheckpoint({ cycleId: 'cycle-immutable', chain: 'bsc', phase: 'SCREEN', partial: { settings: radarFixture.settings } });
+  assert.throws(() => radarFixture.store.commitScreen({
+    expected: { phase: 'SCREEN', keyEpoch: checkpoint.keyEpoch, controlEpoch: checkpoint.controlEpoch },
+    leads: [], eliminated: [], events: [], feed: {}, sourceHealth: {},
+    outcomes: [{ chain: 'bsc', address: A, initialDecision: DISCOVERY_REJECT, baselineAt: NOW, baselinePrice: 1 }],
+    next: { ...checkpoint, phase: 'BUILD_QUEUE', updatedAt: NOW }
+  }), error => error.code === 'OUTCOME_INVALID');
+  assert.equal(radarFixture.outcome(A).initialDecision, 'LIVE_READY');
+});
+
+test('the control cohort admits at most its daily cap of rejected tokens', async () => {
+  const radarFixture = radar();
+  for (let index = 0; index < REJECTED_SAMPLE_DAILY_CAP - 1; index++) {
+    radarFixture.seedOutcome({ token: `0x${'e'.repeat(30)}${index.toString(16).padStart(10, '0')}`, baselineAt: NOW - 23 * 60 * MINUTE,
+      initialDecision: DISCOVERY_REJECT, latestDecision: null });
+  }
+  const tokens = [address('3'), address('4'), address('7')];
+  assert.ok(tokens.every(token => sampledForRejection('bsc', token)));
+  radarFixture.hotList = tokens.map(token => radarFixture.quote(token, { marketCap: 9_999 }));
+  await radarFixture.runCycle('cycle-cap-1');
+  assert.deepEqual(tokens.map(token => radarFixture.outcome(token) !== null), [true, false, false]);
+
+  // A day after the seeded baselines, the cap admits the rest.
+  radarFixture.clock.now = NOW + 61 * MINUTE;
+  radarFixture.hotList = tokens.map(token => radarFixture.quote(token, { marketCap: 9_999 }));
+  await radarFixture.runCycle('cycle-cap-2');
+  assert.deepEqual(tokens.map(token => radarFixture.outcome(token) !== null), [true, true, true]);
 });
 
 test('a trending read failure still completes the cycle, keeps leads, and records discovery health', async () => {

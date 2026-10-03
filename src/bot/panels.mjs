@@ -2,6 +2,7 @@ import { backendDisposition, effectiveStatus } from '../scoring/disposition.mjs'
 import { SCAN_CHAINS } from '../chains.mjs';
 import { safetyVerdict, blockingUnknownFields } from '../scoring/safety.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
+import { OUTCOME_COHORTS } from '../scoring/outcomes.mjs';
 import { aveTokenUrl } from '../providers/ave.mjs';
 import { dexScreenerTokenUrl } from '../providers/secondary.mjs';
 import { tokenIdentity, safeTelegramText } from './snapshot.mjs';
@@ -312,8 +313,8 @@ function selectorPanel(snapshot,session,locale) {
   else if (session.panel === 'sort') { choices=origin === 'feed' ? FEED_SORTS : AUDIT_SORTS;action='sort.set';selected=query.sort || (origin === 'feed' ? 'priority' : 'audit_desc'); }
   else if (session.panel === 'language') { choices=['zh','en'];action='language.set';selected=locale; }
   else if (session.panel === 'horizon') { choices=['m5','m15','m30','h1','h2','h6','h24'];action='horizon.set';selected=query.horizon || 'm30'; }
-  else { choices=['passed','rejected','compare'];action='cohort.set';selected=query.cohort || 'passed'; }
-  const labels = { zh:'中文',en:'English',passed:L('通过筛选组','Passed the screen'),rejected:L('否决对照组','Vetoed control'),compare:L('对比','Compare'),m5:'5m',m15:'15m',m30:'30m',h1:'1h',h2:'2h',h6:'6h',h24:'24h' };
+  else { choices=[...OUTCOME_COHORTS,'compare'];action='cohort.set';selected=query.cohort || 'passed'; }
+  const labels = { zh:'中文',en:'English',...Object.fromEntries(OUTCOME_COHORTS.map(cohort=>[cohort,L(...COHORT_LABELS[cohort])])),compare:L('对比','Compare'),m5:'5m',m15:'15m',m30:'30m',h1:'1h',h2:'2h',h6:'6h',h24:'24h' };
   const keyboard = rowsOf(choices.map(value => button(`${selected === value ? '✓ ' : ''}${SCAN_CHAINS.includes(value) ? chainLabel(value) : labels[value] || name(value,locale)}`,action,{value})),session.panel === 'horizon' ? 3 : 2);
   const blocks = session.panel === 'view_chain' ? [L('查看某条链不会改变扫描的链。','Viewing a chain does not change what is scanned.')] : [];
   return finishPanel(name(session.panel,locale),blocks,keyboard,snapshot,session,locale,{refresh:false});
@@ -398,6 +399,8 @@ function statusPanel(snapshot,session,locale) {
   return finishPanel(heading(session.panel,locale),blocks,keyboard,snapshot,session,locale);
 }
 
+// A lead's cohort follows its latest safety verdict; the rejected cohort is a sample of hot-list tokens the screen rejected.
+const COHORT_LABELS = { passed:['线索·核验通过','Leads, check passed'], vetoed:['线索·已否决','Leads, vetoed'], unverified:['线索·核验未完成','Leads, check pending or incomplete'], rejected:['初筛淘汰','Rejected by the screen'] };
 const WINDOW_LABELS = { m5:['5分钟','5 min'], m15:['15分钟','15 min'], m30:['30分钟','30 min'], h1:['1小时','1 h'], h2:['2小时','2 h'], h6:['6小时','6 h'], h24:['24小时','24 h'] };
 export function renderStatisticsPanel(snapshot,session,locale='zh') {
   const L=(zh,en)=>localize(locale,zh,en),summary=snapshot.stats?.[session.viewChain],query=session.query || {},horizon=query.horizon || 'm30',cohort=query.cohort || 'passed';
@@ -406,19 +409,19 @@ export function renderStatisticsPanel(snapshot,session,locale='zh') {
   const keyboard=[[selectorButton('view_chain',locale),open('horizon',locale)],[open('cohort',locale),button(L('覆盖详情','Coverage details'),'panel.open',{panel:'stats',query:{coverage:true}})]];
   if(!summary) blocks.push(L('统计数据不可用','Statistics unavailable'));
   else if(query.coverage || query.horizon || query.cohort) {
-    for(const selected of cohort === 'compare' ? ['passed','rejected'] : [cohort]) {
+    for(const selected of cohort === 'compare' ? OUTCOME_COHORTS : [cohort]) {
       const row=summary.coverage?.[selected]?.[horizon];
-      blocks.push(`<b>${selected === 'passed' ? L('通过筛选组','Passed the screen') : L('否决对照组','Vetoed control')} · ${windowName(horizon)}</b>`);
+      blocks.push(`<b>${COHORT_LABELS[selected] ? L(...COHORT_LABELS[selected]) : L('未知分组','Unknown cohort')} · ${windowName(horizon)}</b>`);
       if(!row) blocks.push(L('不可用','Unavailable'));
-      else blocks.push(`${L('到期','Due')} ${numberText(row.eligible,locale)} · ${L('已测','measured')} ${numberText(row.completed,locale)} · ${L('缺失','missing')} ${numberText(row.missing,locale)}`,`${L('中位数','Median')}: ${row.median === null ? L('暂无样本','No samples') : percent(row.median,locale,true)}`,`${L('正收益比例','Positive returns')}: ${row.positiveRate === null ? L('暂无样本','No samples') : percent(row.positiveRate,locale)}`);
+      else blocks.push(`${L('到期','Due')} ${numberText(row.eligible,locale)} · ${L('已测','measured')} ${numberText(row.completed,locale)} · ${L('缺失','missing')} ${numberText(row.missing,locale)}${row.missingRate === null ? '' : ` (${percent(row.missingRate,locale)})`}`,`${L('中位数','Median')}: ${row.median === null ? L('暂无样本','No samples') : percent(row.median,locale,true)} · ${L('平均','average')}: ${row.average === null ? L('暂无样本','no samples') : percent(row.average,locale,true)}`,`${L('正收益比例','Positive returns')}: ${row.positiveRate === null ? L('暂无样本','No samples') : percent(row.positiveRate,locale)}`);
     }
     blocks.push('',`${L('50样本门槛','50-sample gate')}: ${[['m30','30m'],['h2','2h'],['h24','24h']].map(([key,suffix])=>`${windowName(key)} ${summary['completed'+suffix]>=50 ? L('已达','Ready') : L('未达','Not ready')}`).join(' · ')}`,`${L('整体调参门槛','Overall calibration gate')}: ${summary.calibrationReady === true ? L('已达','Ready') : L('未达','Not ready')}`);
   } else {
     ['m30','h1','h2','h24'].forEach((key,index)=>{
-      const row=summary.coverage?.passed?.[key], when=index ? L(`${windowName(key)}后`,`${windowName(key)} later`) : L(`通过筛选的代币，${windowName(key)}后`,`Tokens that passed the screen, ${windowName(key)} later`);
-      blocks.push(`${when}: ${!row ? L('不可用','unavailable') : row.median === null ? L('暂无样本','no samples yet') : L(`中位数 ${percent(row.median,locale,true)}（${numberText(row.completed,locale)}个）`,`median ${percent(row.median,locale,true)} (${numberText(row.completed,locale)} ${row.completed === 1 ? 'token' : 'tokens'})`)}`);
+      const row=summary.coverage?.passed?.[key], when=index ? L(`${windowName(key)}后`,`${windowName(key)} later`) : L(`核验通过的线索，${windowName(key)}后`,`Leads that passed the check, ${windowName(key)} later`);
+      blocks.push(`${when}: ${!row ? L('不可用','unavailable') : row.median === null ? L('暂无样本','no samples yet') : L(`中位数 ${percent(row.median,locale,true)}（${numberText(row.completed,locale)}个，缺失${percent(row.missingRate,locale)}）`,`median ${percent(row.median,locale,true)} (${numberText(row.completed,locale)} ${row.completed === 1 ? 'token' : 'tokens'}, ${percent(row.missingRate,locale)} missing)`)}`);
     });
-    blocks.push(L(`跟踪中：${numberText(summary.tracked,locale)}个代币`,`Tracking ${numberText(summary.tracked,locale)} tokens`));
+    blocks.push(L(`跟踪中：${numberText(summary.tracked,locale)}条线索`,`Tracking ${numberText(summary.tracked,locale)} leads`),L('缺失：到期却没有取到价格的代币，多为已跌出热榜的。','Missing: tokens due but never priced, mostly ones that left the hot list.'));
   }
   blocks.push(L('影子观察，不代表可成交收益。','Shadow observations; not executable returns.'));
   return finishPanel(name('stats',locale),blocks,keyboard,snapshot,session,locale);

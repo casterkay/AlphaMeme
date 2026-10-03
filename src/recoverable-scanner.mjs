@@ -1,7 +1,8 @@
 import { tokenInfoPrice } from './providers/ave.mjs';
 import { aggregateSecondarySources } from './providers/secondary.mjs';
 import { discoveryScreen } from './scoring/index.mjs';
-import { dueOutcomeJobs, hasAveOutcomeBaseline, horizons } from './scoring/outcomes.mjs';
+import { DISCOVERY_REJECT, REJECTED_SAMPLE_DAILY_CAP, dueOutcomeJobs, hasAveOutcomeBaseline, horizons, sampledForRejection } from './scoring/outcomes.mjs';
+import { safetyVerdict } from './scoring/safety.mjs';
 import { addressKey, buildQueue, nextAuditDelay, publicToken, selectAuditQueue, socialFrom } from './scanner-parity.mjs';
 import { RecoverableScannerError } from './storage/recoverable-scanner.mjs';
 import { POOL_SOURCES } from './providers/chain-logs.mjs';
@@ -33,7 +34,7 @@ const OUTCOME_SAMPLE_GRACE_MS = 25_000;
 // Upstream samples an outcome horizon from a later hot-list quote within this lag.
 const TRENDING_SAMPLE_GRACE_MS = 5 * 60_000;
 const FEED_ROWS = 50;
-const TRACKED_DECISIONS = new Set(['LIVE_READY', 'HARD_REJECT']);
+const TRACKED_DECISIONS = new Set(['LIVE_READY', DISCOVERY_REJECT]);
 
 function clone(value) {
   return structuredClone(value);
@@ -429,12 +430,12 @@ export class RecoverableScanner {
     // A promoted row's clock is the watch's DexScreener read, not the hot list's.
     const observedFor = row => row.discoverySource === 'newPool' ? num(row.capturedAt, observedAt) : observedAt;
     const screened = rows.map(row => ({ row, screen: discoveryScreen(row, { ...settings, chain }, now / 1000) }));
-    const leads = [], eliminated = [], events = [];
+    const leads = [], eliminated = [], events = [], rejected = [];
     for (const { row, screen } of screened) {
       const previous = this.store.readCandidate(chain, row.address);
       if (screen.pass && previous?.status !== 'HARD_REJECT') {
         const lead = leadCandidate(row, screen, chain, previous, observedFor(row), settings);
-        leads.push({ row, screen, candidate: lead });
+        leads.push({ row, screen, candidate: lead, previous });
         if (previous?.status !== 'LIVE_READY') {
           events.push({ address: lead.address, effectType: 'CANDIDATE_NEW', type: 'CANDIDATE_NEW',
             message: `${lead.symbol}：新市场线索，安全性待核验`, data: { address: lead.address, reviewRevision: lead.reviewRevision } });
@@ -442,27 +443,50 @@ export class RecoverableScanner {
       } else if (!screen.pass && previous?.status === 'LIVE_READY') {
         // Failing a current screen ends a lead's live state; missing from one hot list does not.
         eliminated.push({ address: row.address, reasons: screen.reasons });
-      }
+      } else if (!screen.pass && !previous) rejected.push({ row, screen });
     }
     // An AVE baseline is sampled only from AVE's hot list, never from a DexScreener quote.
     const rowsByAddress = new Map(trending.map(row => [addressKey(row.address), row]));
-    const stored = this.store.readOutcomes(chain);
-    const outcomes = [];
-    for (const outcome of stored) {
-      const row = rowsByAddress.get(addressKey(outcome.address));
-      if (!row || !TRACKED_DECISIONS.has(outcome.initialDecision) || !hasAveOutcomeBaseline(outcome)) continue;
-      const sampled = sampledOutcome(outcome, row, now);
-      if (sampled) outcomes.push(sampled);
+    const stored = new Map(this.store.readOutcomes(chain).map(outcome => [addressKey(outcome.address), outcome]));
+    const candidateAddresses = new Set(this.store.readCandidateAddresses(chain).map(addressKey));
+    // Changed or new outcome rows by token; only these are written.
+    const outcomes = new Map();
+    for (const [key, outcome] of stored) {
+      const row = rowsByAddress.get(key);
+      let next = row && TRACKED_DECISIONS.has(outcome.initialDecision) && hasAveOutcomeBaseline(outcome)
+        ? sampledOutcome(outcome, row, now) || outcome : outcome;
+      // A lead's verdict converges on its stored candidate every cycle; once the candidate is pruned, it keeps its last one.
+      if (candidateAddresses.has(key)) {
+        const verdict = safetyVerdict(this.store.readCandidate(chain, outcome.address));
+        if (verdict !== outcome.latestDecision) next = { ...next, latestDecision: verdict };
+      }
+      if (next !== outcome) outcomes.set(key, next);
     }
-    const tracked = new Set(stored.map(outcome => addressKey(outcome.address)));
     // Only AVE samples outcomes, so only an AVE quote is a baseline. A lead promoted from DexScreener is
     // tracked from its first sighting on the hot list, if any, until a DexScreener sampler exists (#102).
-    for (const { row, candidate } of leads) {
-      const price = tokenInfoPrice(row, now), baselineAt = numberOrNull(row.sourceUpdatedAt);
-      if (row.marketProvider !== 'AVE' || tracked.has(addressKey(candidate.address)) || !(price > 0) || !(baselineAt > 0)) continue;
-      outcomes.push({ chain, address: candidate.address, symbol: candidate.symbol, initialDecision: 'LIVE_READY', latestDecision: 'LIVE_READY',
+    for (const { row, candidate, previous } of leads) {
+      const price = tokenInfoPrice(row, now), baselineAt = numberOrNull(row.sourceUpdatedAt), key = addressKey(candidate.address);
+      const rejection = stored.get(key)?.initialDecision === DISCOVERY_REJECT ? stored.get(key) : null;
+      if (row.marketProvider !== 'AVE' || (stored.has(key) && !rejection) || !(price > 0) || !(baselineAt > 0)) continue;
+      // The token's final decision wins: a sampled rejection gives way to the lead it became, baselined at the alert.
+      // The lead keeps any earlier check's evidence, so its verdict starts from that check.
+      outcomes.set(key, { chain, address: candidate.address, symbol: candidate.symbol, initialDecision: 'LIVE_READY',
+        latestDecision: safetyVerdict({ status: 'LIVE_READY', secondary: previous?.secondary, deep: previous?.deep }),
         baselineAt, baselinePrice: price, lastAuditedAt: observedAt, latestFailed: [], samples: {}, sampleRetries: {},
-        sampling: 'ALL_LEADS', strategyVersion: 'ave-leads-v1', cohortMetadata: { baselineProvider: 'AVE' } });
+        sampling: 'ALL_LEADS', strategyVersion: 'ave-leads-v1',
+        cohortMetadata: { baselineProvider: 'AVE', ...(rejection ? { rejectedAt: rejection.baselineAt } : {}) } });
+    }
+    // The control cohort: a stable sample of hot-list tokens the screen rejected, sampled like leads.
+    let rejectedToday = [...stored.values()].filter(outcome => outcome.initialDecision === DISCOVERY_REJECT && now - outcome.baselineAt < 86_400_000).length;
+    for (const { row, screen } of rejected) {
+      const price = tokenInfoPrice(row, now), baselineAt = numberOrNull(row.sourceUpdatedAt), key = addressKey(row.address);
+      if (rejectedToday >= REJECTED_SAMPLE_DAILY_CAP) break;
+      if (row.marketProvider !== 'AVE' || stored.has(key) || outcomes.has(key) || !(price > 0) || !(baselineAt > 0)
+        || !sampledForRejection(chain, row.address)) continue;
+      rejectedToday += 1;
+      outcomes.set(key, { chain, address: row.address, symbol: String(row.symbol || '?').slice(0, 30), initialDecision: DISCOVERY_REJECT, latestDecision: null,
+        baselineAt, baselinePrice: price, lastAuditedAt: observedAt, latestFailed: screen.reasons, samples: {}, sampleRetries: {},
+        sampling: 'FNV1A_MOD5', strategyVersion: 'ave-rejected-v1', cohortMetadata: { baselineProvider: 'AVE' } });
     }
     const discoveryError = record?.error || null;
     const feed = {
@@ -494,7 +518,7 @@ export class RecoverableScanner {
       leads: leads.map(item => item.candidate),
       eliminated,
       events,
-      outcomes,
+      outcomes: [...outcomes.values()],
       feed,
       sourceHealth,
       watchState,
@@ -540,7 +564,7 @@ export class RecoverableScanner {
     delete queue.screen;
     const outcomes = this.store.readOutcomes(current.chain);
     const tracked = outcomes.find(row => addressKey(row.address) === addressKey(candidate.address));
-    const outcome = tracked ? { ...tracked, latestDecision: candidate.status, lastAuditedAt: now } : null;
+    const outcome = tracked ? { ...tracked, latestDecision: safetyVerdict(candidate), lastAuditedAt: now } : null;
     const nextTokenIndex = current.tokenIndex + 1;
     const partial = clone(current.partial);
     partial.lastCommittedAt = now;

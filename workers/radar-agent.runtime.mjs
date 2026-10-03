@@ -18,6 +18,8 @@ const settings = Object.freeze({
 const apiKey = 'ave-radar-agent-key-0001';
 const LEAD = `0x${'1'.repeat(40)}`;
 const SECOND = `0x${'2'.repeat(40)}`;
+// A rejected token the control cohort samples on Arc.
+const CONTROL = `0x${'8'.repeat(40)}`;
 
 function jsonResponse(value, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
@@ -127,12 +129,12 @@ describe('recoverable Radar scanner', () => {
     expect(await radar.getRecoverableCycle({ tenantId, cycleId })).toMatchObject({ phase: 'DISCOVER', endpointIndex: 0 });
   });
 
-  it('turns every passing trending token into a lead with a new-lead event, outcome baseline and feed snapshot', async () => {
+  it('turns every passing trending token into a lead with a new-lead event, outcome baseline and feed snapshot, and samples rejections', async () => {
     const tenantId = '19012';
     const cycleId = 'cycle-screen';
     const radar = await configuredRadar(tenantId);
     await beginCycle(radar, tenantId, cycleId);
-    const response = await trending([arcToken(LEAD), arcToken(SECOND, { market_cap: '1000' })]);
+    const response = await trending([arcToken(LEAD), arcToken(SECOND, { market_cap: '1000' }), arcToken(CONTROL, { market_cap: '1000' })]);
     await radar.recordRecoverableScanRequest({ tenantId, cycleId, response, collectedAt: Date.now() });
     const screened = await radar.advanceRecoverableScan({ tenantId, cycleId });
     expect(screened.phase).toBe('BUILD_QUEUE');
@@ -142,11 +144,12 @@ describe('recoverable Radar scanner', () => {
       expect(leads).toEqual([{ address: LEAD, status: 'LIVE_READY', review_revision: expect.stringMatching(/^lead-arc-/), ave_url: null }]);
       expect(state.storage.sql.exec('SELECT id, type, address FROM events WHERE tenant_id = ?', tenantId).toArray())
         .toEqual([{ id: stableEffectId(tenantId, cycleId, 'arc', LEAD, 'CANDIDATE_NEW'), type: 'CANDIDATE_NEW', address: LEAD }]);
-      expect(state.storage.sql.exec('SELECT address, initial_decision, baseline_price FROM outcomes WHERE tenant_id = ?', tenantId).toArray())
-        .toEqual([{ address: LEAD, initial_decision: 'LIVE_READY', baseline_price: 0.5 }]);
+      expect(state.storage.sql.exec('SELECT address, initial_decision, latest_decision, baseline_price FROM outcomes WHERE tenant_id = ? ORDER BY address', tenantId).toArray())
+        .toEqual([{ address: LEAD, initial_decision: 'LIVE_READY', latest_decision: 'PENDING', baseline_price: 0.5 },
+          { address: CONTROL, initial_decision: 'DISCOVERY_REJECT', latest_decision: null, baseline_price: 0.5 }]);
       const feed = JSON.parse(state.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'feed.snapshot:arc').one().value_json);
-      expect(feed).toMatchObject({ status: 'READY', receivedCount: 2, leadCount: 1, observedAt: response.capturedAt });
-      expect(feed.rows.map(row => [row.address, row.pass])).toEqual([[LEAD, true], [SECOND, false]]);
+      expect(feed).toMatchObject({ status: 'READY', receivedCount: 3, leadCount: 1, observedAt: response.capturedAt });
+      expect(feed.rows.map(row => [row.address, row.pass])).toEqual([[LEAD, true], [SECOND, false], [CONTROL, false]]);
     });
   });
 
@@ -193,8 +196,9 @@ describe('recoverable Radar scanner', () => {
       } else {
         expect(candidate).toMatchObject({ status: 'LIVE_READY', review_revision: before.lead.review_revision });
       }
+      // Without distinct sellers in the row, Arc's check stays incomplete: GoPlus omits cannot_sell_all there.
       expect(state.storage.sql.exec('SELECT latest_decision FROM outcomes WHERE tenant_id = ?', tenantId).one().latest_decision)
-        .toBe(honeypot ? 'HARD_REJECT' : 'LIVE_READY');
+        .toBe(honeypot ? 'VETOED' : 'INCOMPLETE');
       expect(state.storage.sql.exec('SELECT type FROM events WHERE tenant_id = ? ORDER BY at, type', tenantId).toArray().map(row => row.type))
         .toEqual(honeypot ? ['CANDIDATE_NEW', 'RISK_WORSENED'] : ['CANDIDATE_NEW']);
       // Domain events never bypass the Telegram notification allowlist.

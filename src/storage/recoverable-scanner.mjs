@@ -1,6 +1,7 @@
 import { AVE_CU } from '../providers/ave.mjs';
 import { VOICE_TTL } from '../../public/voice-alerts.mjs';
 import { emptyWatchState } from '../onchain-watch.mjs';
+import { DISCOVERY_REJECT } from '../scoring/outcomes.mjs';
 import { assertCheckpointGeneration, SqliteControlStateStore } from './control-state.mjs';
 import {
   readSchedulerStateInTransaction,
@@ -776,7 +777,16 @@ export class SqliteRecoverableScannerStore {
     );
   }
 
+  // A tracked token's cohort entry is fixed, except that a sampled discovery rejection gives way to the lead the token became.
   #upsertOutcome(outcome) {
+    const existing = this.storage.sql.exec('SELECT initial_decision FROM outcomes WHERE tenant_id = ? AND chain = ? AND address = ?',
+      outcome.tenantId, outcome.chain, outcome.address).toArray()[0];
+    if (existing && existing.initial_decision !== outcome.initialDecision) {
+      if (existing.initial_decision !== DISCOVERY_REJECT || outcome.initialDecision !== 'LIVE_READY') {
+        throw new RecoverableScannerError('OUTCOME_INVALID', 'an outcome keeps its initial decision');
+      }
+      this.storage.sql.exec('DELETE FROM outcomes WHERE tenant_id = ? AND chain = ? AND address = ?', outcome.tenantId, outcome.chain, outcome.address);
+    }
     this.storage.sql.exec(
       `INSERT INTO outcomes (tenant_id, chain, address, initial_decision, latest_decision, baseline_at, baseline_price, last_audited_at, symbol, latest_failed_json, sampling, strategy_version, samples_json, sample_retries_json, cohort_metadata_json)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
