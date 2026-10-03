@@ -420,7 +420,7 @@ export function deepScreen({ discovery, audit, nowMs = Date.now() }, config) {
     tax: buyTax !== null && sellTax !== null && !taxBreaches(buyTax, sellTax, config).length,
     rug: rugRatio !== null && rugRatio <= config.maxRugRatio,
     concentration: top10 !== null && top10 <= config.maxTop10Rate,
-    dev: devHold !== null && devHold <= 0.01,
+    dev: devHold !== null && devHold <= config.maxDevHoldRate,
     insider: insider !== null && insider <= config.maxInsiderRate,
     bundler: bundler !== null && bundler <= config.maxBundlerRate,
     sniper: sniperHold !== null && sniperHold <= config.maxSniperHoldRate,

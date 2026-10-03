@@ -1,5 +1,6 @@
 import { tokenInfoPrice } from './providers/ave.mjs';
-import { aggregateSecondarySources } from './providers/secondary.mjs';
+import { aggregateSecondarySources, goPlusHoldings } from './providers/secondary.mjs';
+import { postAlertAudit } from './scoring/audit.mjs';
 import { discoveryScreen } from './scoring/screen.mjs';
 import { DISCOVERY_REJECT, REJECTED_SAMPLE_DAILY_CAP, dueOutcomeJobs, hasAveOutcomeBaseline, horizons, sampledForRejection } from './scoring/outcomes.mjs';
 import { safetyVerdict } from './scoring/safety.mjs';
@@ -587,7 +588,10 @@ export class RecoverableScanner {
       ? { ...token, status: 'HARD_REJECT', auditedAt: now, staleAt: now + settings.staleCandidateMs,
         reviewEvidence: `veto-${current.chain}-${now}`, reviewRevision: `veto-${current.chain}-${now}` }
       : { ...token };
-    candidate.secondary = secondary;
+    // The audit is evidence of this check, so it is kept with it: a lead refresh keeps both.
+    const holdings = goPlusHoldings(current.partial.secondary?.sources);
+    const audit = postAlertAudit({ chain: current.chain, holdings, liquidity: item.row.liquidity, at: now }, settings);
+    candidate.secondary = { ...secondary, audit };
     candidate.decisionReason = [vetoed ? '' : token.decisionReason, secondaryReason].filter(Boolean).join('；');
     // A lead's first complete GoPlus check is one of its stages.
     if (secondary.complete && token.metadata?.stages) {
@@ -604,7 +608,11 @@ export class RecoverableScanner {
     delete queue.screen;
     const outcomes = this.store.readOutcomes(current.chain);
     const tracked = outcomes.find(row => addressKey(row.address) === addressKey(candidate.address));
-    const outcome = tracked ? { ...tracked, latestDecision: safetyVerdict(candidate), lastAuditedAt: now } : null;
+    // An outcome's cohort keeps the audit of the first check GoPlus answered after its baseline, a fact of that time:
+    // later checks see holders that already moved with the price.
+    const firstAudit = tracked && holdings && !tracked.cohortMetadata?.audit;
+    const outcome = tracked ? { ...tracked, latestDecision: safetyVerdict(candidate), lastAuditedAt: now,
+      ...(firstAudit ? { cohortMetadata: { ...tracked.cohortMetadata, audit } } : {}) } : null;
     const nextTokenIndex = current.tokenIndex + 1;
     const partial = clone(current.partial);
     partial.lastCommittedAt = now;

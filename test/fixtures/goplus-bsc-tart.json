@@ -1,0 +1,176 @@
+{
+ "code": 1,
+ "message": "OK",
+ "result": {
+  "0x7ab8d02cbb51ff7223fde700eaaa2a91bf750314": {
+   "token_symbol": "TART",
+   "is_honeypot": "0",
+   "is_open_source": "1",
+   "is_mintable": "0",
+   "owner_change_balance": "0",
+   "hidden_owner": "0",
+   "cannot_sell_all": "0",
+   "selfdestruct": "0",
+   "external_call": "0",
+   "slippage_modifiable": "0",
+   "personal_slippage_modifiable": "0",
+   "transfer_pausable": "0",
+   "is_blacklisted": "0",
+   "trading_cooldown": "0",
+   "buy_tax": "0",
+   "sell_tax": "0",
+   "holders": [
+    {
+     "address": "0x000000000000000000000000000000000000dead",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "1801818258.707251413",
+     "percent": "0.180181825870725141",
+     "is_locked": 1
+    },
+    {
+     "address": "0x2a9cc2df5f17d8f0553c41d43ea85c823cb0c3d8",
+     "tag": "",
+     "is_contract": 1,
+     "balance": "1598245254.63092086",
+     "percent": "0.159824525463092086",
+     "is_locked": 0
+    },
+    {
+     "address": "0x038c92ac8269c9a648ba06e434056706bc7832ce",
+     "tag": "",
+     "is_contract": 1,
+     "balance": "1572228335.150940246",
+     "percent": "0.157222833515094024",
+     "is_locked": 0
+    },
+    {
+     "address": "0x9e04c9387174da0db8753bd0f0908ba3f3536953",
+     "tag": "Flokifi Lock",
+     "is_contract": 1,
+     "balance": "1372311374",
+     "percent": "0.137231137400000000",
+     "is_locked": 1,
+     "locked_detail": [
+      {
+       "amount": "1372311374.0",
+       "end_time": "2027-02-27T23:02:58+00:00",
+       "opt_time": "2026-08-31T23:03:06+00:00"
+      }
+     ]
+    },
+    {
+     "address": "0x1113966acd804959908a4003626b96497e2f6d01",
+     "tag": "",
+     "is_contract": 1,
+     "balance": "1065497067.903257492",
+     "percent": "0.106549706790325749",
+     "is_locked": 0
+    },
+    {
+     "address": "0x09d200e038b7064a1c8526ad1f4baa4accdf3d01",
+     "tag": "",
+     "is_contract": 1,
+     "balance": "500000000",
+     "percent": "0.050000000000000000",
+     "is_locked": 0
+    },
+    {
+     "address": "0x30000a407fabebe29439f8e437050512ff6661be",
+     "tag": "PancakeV2",
+     "is_contract": 1,
+     "balance": "345257724.453500469",
+     "percent": "0.034525772445350046",
+     "is_locked": 0
+    },
+    {
+     "address": "0x066e6547071fa3ca88a21edef3b389c52212d307",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "278584521.6",
+     "percent": "0.027858452160000000",
+     "is_locked": 0
+    },
+    {
+     "address": "0x4f6eb30a521e5f5fde2bd433cdc805962902f316",
+     "tag": "",
+     "is_contract": 1,
+     "balance": "158177004.835829208",
+     "percent": "0.015817700483582920",
+     "is_locked": 0
+    },
+    {
+     "address": "0x4f160dbe2436d216499f4e88e8ef1d83b6f02a80",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "50776736.468609534",
+     "percent": "0.005077673646860953",
+     "is_locked": 0
+    }
+   ],
+   "lp_holders": [
+    {
+     "address": "0x4478ab01d2b266f0bfe3236568cc4af7518e7e13",
+     "tag": "OnlyMoons Lock",
+     "value": "144353.403688692564659852",
+     "is_contract": 1,
+     "balance": "6.126607819431138353",
+     "percent": "0.634491311670964812",
+     "NFT_list": null,
+     "is_locked": 1,
+     "locked_detail": [
+      {
+       "amount": "6.126607819431138353",
+       "end_time": "2027-08-31T19:01:05+00:00",
+       "opt_time": "2026-08-31T19:01:23+00:00"
+      }
+     ]
+    },
+    {
+     "address": "0x4f6eb30a521e5f5fde2bd433cdc805962902f316",
+     "tag": "",
+     "value": "54950.371460226547288466",
+     "is_contract": 1,
+     "balance": "2.33218869016",
+     "percent": "0.241529000173737957",
+     "NFT_list": null,
+     "is_locked": 0
+    },
+    {
+     "address": "0x0000000000000000000000000000000000000000",
+     "tag": "Null Address",
+     "value": "27684.003592980440072742",
+     "is_contract": 0,
+     "balance": "1.174956935907701378",
+     "percent": "0.121682338643669801",
+     "NFT_list": null,
+     "is_locked": 1
+    },
+    {
+     "address": "0x4077009e5e8344c6857ef145177cd8f81da41981",
+     "tag": "",
+     "value": "164.657689591412403533",
+     "is_contract": 0,
+     "balance": "0.006988356788287028",
+     "percent": "0.000723736820718619",
+     "NFT_list": null,
+     "is_locked": 0
+    }
+   ],
+   "lp_total_supply": "9.655936506516390623",
+   "creator_address": "0x6ab8aca85a7f73876cdc288686be24f67e2ee352",
+   "creator_percent": "0.000220",
+   "owner_address": "0x0000000000000000000000000000000000000000",
+   "owner_percent": "0.0",
+   "holder_count": "6433",
+   "honeypot_with_same_creator": "0",
+   "dex": [
+    {
+     "name": "PancakeV2",
+     "liquidity_type": "UniV2",
+     "pair": "0x30000a407fabebe29439f8e437050512ff6661be"
+    }
+   ]
+  }
+ }
+}

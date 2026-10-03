@@ -1,0 +1,148 @@
+{
+ "code": 1,
+ "message": "OK",
+ "result": {
+  "0x0bb3befba323578dad33efb6356c69b557787777": {
+   "token_symbol": "MEMESPAD",
+   "is_honeypot": "0",
+   "is_open_source": "1",
+   "is_mintable": "0",
+   "owner_change_balance": "0",
+   "hidden_owner": "0",
+   "selfdestruct": "0",
+   "external_call": "0",
+   "slippage_modifiable": "0",
+   "personal_slippage_modifiable": "0",
+   "transfer_pausable": "0",
+   "is_blacklisted": "0",
+   "trading_cooldown": "0",
+   "buy_tax": "0",
+   "sell_tax": "0",
+   "holders": [
+    {
+     "address": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+     "tag": "",
+     "is_contract": 1,
+     "balance": "215923335.547761130357109047",
+     "percent": "0.215923",
+     "is_locked": 0
+    },
+    {
+     "address": "0x000000000000000000000000000000000000dEaD",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "58976683.686219372571271643",
+     "percent": "0.058977",
+     "is_locked": 1
+    },
+    {
+     "address": "0xfAcF362c11E6187dEE70f6382815655ACDf9EBf5",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "35429316.676407806275082894",
+     "percent": "0.035429",
+     "is_locked": 0
+    },
+    {
+     "address": "0x35605d3C56Bb5eF0124AB1625EA40EfbeB6411A0",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "27287062.887875568908672535",
+     "percent": "0.027287",
+     "is_locked": 0
+    },
+    {
+     "address": "0xF9570Cd25cfD0c6EcA810dcaEeeF1d6c48b82696",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "23233673.531835691831154023",
+     "percent": "0.023234",
+     "is_locked": 0
+    },
+    {
+     "address": "0xfDF6FfF0988f6BE60B072461F0aD152c95Cae7c0",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "19145325.327589761868917791",
+     "percent": "0.019145",
+     "is_locked": 0
+    },
+    {
+     "address": "0x5dBce812228BD08bfD4f08A2b6a1DbB613046AFE",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "18881778.355779500960029915",
+     "percent": "0.018882",
+     "is_locked": 0
+    },
+    {
+     "address": "0x7E440AC27fB895bc07D3E1c0790ba3d26C306DC2",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "18648112.950241762821626616",
+     "percent": "0.018648",
+     "is_locked": 0
+    },
+    {
+     "address": "0x838Ce80832D2762ea5d5C7C0A06038DD18274Ab9",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "17747167.357253266592083896",
+     "percent": "0.017747",
+     "is_locked": 0
+    },
+    {
+     "address": "0x6d334d76B25e9cE53a74d814E0C8179A2aC989Db",
+     "tag": "",
+     "is_contract": 1,
+     "balance": "14642793.898524240042890171",
+     "percent": "0.014643",
+     "is_locked": 0
+    }
+   ],
+   "lp_holders": [
+    {
+     "address": "0x000000000000000000000000000000000000dead",
+     "tag": "Dead Address",
+     "value": "10652.722847237022",
+     "is_contract": 0,
+     "balance": "1.672427676917970614",
+     "percent": "1.000000000000000000",
+     "NFT_list": [
+      {
+       "value": "10652.722847237022",
+       "NFT_id": "245220",
+       "amount": "1.672427676917970614",
+       "in_effect": "1",
+       "NFT_percentage": "1.000000000000000000"
+      }
+     ],
+     "is_locked": 1
+    }
+   ],
+   "lp_total_supply": "1.6724276769179705",
+   "creator_address": "0x4A6862696B50f44a22FA5Ca047bFD7044391F6ED",
+   "creator_percent": "0.000000",
+   "owner_percent": "0",
+   "holder_count": "491",
+   "honeypot_with_same_creator": "0",
+   "dex": [
+    {
+     "name": "UniswapV4",
+     "liquidity_type": "UniV4",
+     "pair": "0x3b058ad6b939d04432d339f01bcefdcd5bce726a213950a42df3bb06434ab889"
+    },
+    {
+     "name": "UniswapV4",
+     "liquidity_type": "UniV4",
+     "pair": "0x0a52ee55eafc8d3601bda6eee1d8a6690a051a030e2a56155ba368b001804548"
+    },
+    {
+     "name": "UniswapV4",
+     "liquidity_type": "UniV4",
+     "pair": "0x286b180ed934580d5b82d766f541f09c0469e20700ed257b39b4fd96dc027bb6"
+    }
+   ]
+  }
+ }
+}

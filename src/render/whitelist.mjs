@@ -46,6 +46,23 @@ export function publicChecks(source = {}) {
   return Object.fromEntries(CHECK_FIELDS.map(key => [key, source[key] === true]));
 }
 
+const VERDICTS = new Set(['HIT', 'CLEAR', 'UNKNOWN']);
+const AUDIT_EVIDENCE = { rates: ['lpLockedRate', 'top10Rate', 'creatorRate'], flags: ['ownerRenounced', 'creatorHoneypots'] };
+
+// The post-alert audit's verdicts, the checks it did not run, and the facts it read; not its ruleset id.
+function publicAudit(audit) {
+  const evidence = audit.evidence || {};
+  return {
+    verdicts: Object.fromEntries(Object.entries(audit.verdicts || {}).filter(([id, verdict]) => publicCode(id) === id && VERDICTS.has(verdict)).slice(0, 40)),
+    notRun: Array.isArray(audit.notRun) ? audit.notRun.filter(id => publicCode(id) === id).slice(0, 40) : [],
+    evidence: {
+      ...Object.fromEntries(AUDIT_EVIDENCE.rates.map(key => [key, finiteOrNull(evidence[key])])),
+      ...Object.fromEntries(AUDIT_EVIDENCE.flags.map(key => [key, typeof evidence[key] === 'boolean' ? evidence[key] : null])),
+      liquidity: finiteOrNull(evidence.liquidity)
+    }
+  };
+}
+
 export function publicSecondary(source = {}) {
   const sourceStatus = row => ({
     status: text(row?.status, 24),
@@ -83,7 +100,8 @@ export function publicSecondary(source = {}) {
       buyTax: finiteOrNull(security.buyTax),
       sellTax: finiteOrNull(security.sellTax),
       ...(standInKey ? { standIns: { cannotSellAll: { [standInKey]: standIn[standInKey] } } } : {})
-    }
+    },
+    ...(source.audit && typeof source.audit === 'object' ? { audit: publicAudit(source.audit) } : {})
   };
 }
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { RecoverableScanner } from '../src/recoverable-scanner.mjs';
 import { executeRecoverableScanStep, recoverableRequestCost } from '../src/recoverable-scan-executor.mjs';
@@ -733,6 +734,48 @@ test('on Arc, a promoted pool\'s DexScreener 24h sells stand in for the cannot_s
     assert.equal(safetyVerdict(lead), verdict, scenario);
     assert.deepEqual(lead.secondary.security.standIns, standIns, scenario);
   }
+});
+
+// TART's GoPlus record (BSC, 2026-10-03) as the answer for `token`: its top holders and LP lock both breach the audit's thresholds.
+function goPlusRecordFor(token) {
+  const payload = JSON.parse(readFileSync(new URL('./fixtures/goplus-bsc-tart.json', import.meta.url), 'utf8'));
+  return { ...payload, result: { [token]: Object.values(payload.result)[0] } };
+}
+
+test('a check records the shadow audit with the lead, and its outcome keeps the first answered one; neither moves the safety verdict', async () => {
+  const radarFixture = radar();
+  let answer = () => { throw Object.assign(new Error('down'), { code: 'HTTP_503' }); };
+  radarFixture.secondary = new SecondaryValidator({ fetchImpl: async () => answer() });
+  const checkAt = async (at, cycleId) => {
+    radarFixture.clock.now = at;
+    radarFixture.hotList = [radarFixture.quote(A)];
+    await radarFixture.runCycle(cycleId);
+    return [radarFixture.candidate(A), radarFixture.outcome(A)];
+  };
+  const [unanswered, before] = await checkAt(NOW, 'cycle-audit-1');
+  const { LIQUIDITY_BELOW_STRICT: liquidity, ...goPlusVerdicts } = unanswered.secondary.audit.verdicts;
+  assert.deepEqual([unanswered.secondary.audit.at, liquidity, new Set(Object.values(goPlusVerdicts))], [NOW, 'CLEAR', new Set(['UNKNOWN'])], 'the row\'s liquidity is read; GoPlus\'s facts are not');
+  assert.equal(before.cohortMetadata.audit, undefined, 'an outcome takes no audit from a check GoPlus did not answer');
+
+  answer = () => Response.json(goPlusRecordFor(A));
+  const recheckAt = NOW + scannerSettings.chainPassRecheckMs + MINUTE;
+  const [checked, outcome] = await checkAt(recheckAt, 'cycle-audit-2');
+  const { audit } = checked.secondary;
+  assert.deepEqual([audit.verdicts.TOP10_CONCENTRATED, audit.verdicts.LP_NOT_LOCKED, audit.verdicts.LIQUIDITY_BELOW_STRICT, audit.at], ['HIT', 'HIT', 'CLEAR', recheckAt]);
+  assert.ok(audit.notRun.includes('SELL_ALL_SIMULATION') && audit.verdicts.SELL_ALL_SIMULATION === 'UNKNOWN');
+  assert.deepEqual(outcome.cohortMetadata, { ...before.cohortMetadata, audit });
+  // Shadow: the audit's hits leave the check PASSED, exactly as it is without the audit.
+  assert.equal(safetyVerdict(checked), 'PASSED');
+  assert.equal(safetyVerdict({ ...checked, secondary: { ...checked.secondary, audit: undefined } }), 'PASSED');
+  assert.deepEqual([outcome.latestDecision, outcomeCohort(outcome)], ['PASSED', 'passed']);
+
+  // A later screen refresh keeps the audit with its check; a later check replaces it on the lead only.
+  radarFixture.clock.now = recheckAt + MINUTE;
+  await radarFixture.screenCycle('cycle-audit-refresh');
+  assert.deepEqual(radarFixture.candidate(A).secondary.audit, audit);
+  const [rechecked, after] = await checkAt(recheckAt + 2 * scannerSettings.chainPassRecheckMs, 'cycle-audit-3');
+  assert.ok(rechecked.secondary.audit.at > audit.at);
+  assert.deepEqual(after.cohortMetadata.audit, audit, 'the outcome keeps the audit of its first answered check');
 });
 
 test('a checkpoint left between the retired DexScreener and GoPlus steps finishes with one GoPlus read', async () => {
