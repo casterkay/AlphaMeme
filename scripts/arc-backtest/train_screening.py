@@ -99,59 +99,6 @@ def portfolio(data: pd.DataFrame, reject: np.ndarray) -> dict[str, Any]:
             'positivePositionsRejected': fraction((reject & positive).sum(), positive.sum())}
 
 
-def rule_mask(data: pd.DataFrame, feature: str, operator: str, threshold: float) -> np.ndarray:
-    return ((data[feature] <= threshold) if operator == '<=' else (data[feature] >= threshold)).fillna(False).to_numpy()
-
-
-def simple_rules(train: pd.DataFrame, validation: pd.DataFrame, test: pd.DataFrame) -> list[dict[str, Any]]:
-    conditions = []
-    for feature in CHAIN_FEATURES + ['isV4', 'quotePrincipalToPoolSize', 'poolSizeToMarketCap']:
-        values = train[feature].dropna().astype(float)
-        if not len(values):
-            continue
-        for threshold in np.unique(np.quantile(values, np.linspace(0, 1, 21))):
-            for operator in ['<=', '>=']:
-                conditions.append({'feature': feature, 'operator': operator, 'threshold': float(threshold)})
-    selected = []
-    for name in ['positive_pnl', 'loss_over_5pct']:
-        y = (validation.netUsd.to_numpy() > 0 if name == 'positive_pnl' else validation.netUsd.to_numpy() < -.1).astype(int)
-        candidates = []
-        for condition in conditions:
-            mask = rule_mask(validation, **condition)
-            metrics = binary_metrics(y, mask.astype(float), .5)
-            if metrics['selected'] >= 20:
-                candidates.append({'conditions': [condition], 'validation': metrics, 'mask': mask})
-        candidates.sort(key=lambda row: row['validation']['f1'], reverse=True)
-        seeds = []
-        for candidate in candidates:
-            condition = candidate['conditions'][0]
-            key = (condition['feature'], condition['operator'])
-            if any((row['conditions'][0]['feature'], row['conditions'][0]['operator']) == key for row in seeds):
-                continue
-            seeds.append(candidate)
-            if len(seeds) == 16:
-                break
-        for index, left in enumerate(seeds):
-            for right in seeds[index + 1:]:
-                mask = left['mask'] & right['mask']
-                metrics = binary_metrics(y, mask.astype(float), .5)
-                if metrics['selected'] >= 20:
-                    candidates.append({'conditions': left['conditions'] + right['conditions'], 'validation': metrics, 'mask': mask})
-        for target in ['max_f1', 'precision_80', 'precision_90']:
-            eligible = candidates if target == 'max_f1' else [row for row in candidates if row['validation']['precision'] >= int(target[-2:]) / 100]
-            if not eligible:
-                continue
-            best = max(eligible, key=lambda row: row['validation']['f1'] if target == 'max_f1' else row['validation']['recall'])
-            mask = np.ones(len(test), dtype=bool)
-            for condition in best['conditions']:
-                mask &= rule_mask(test, **condition)
-            test_y = (test.netUsd.to_numpy() > 0 if name == 'positive_pnl' else test.netUsd.to_numpy() < -.1).astype(int)
-            selected.append({'modelLabel': name, 'target': target, 'conditions': best['conditions'],
-                             'validation': best['validation'], 'test': binary_metrics(test_y, mask.astype(float), .5),
-                             'screening': portfolio(test, ~mask if name == 'positive_pnl' else mask)})
-    return selected
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', type=Path, required=True)
@@ -208,13 +155,12 @@ def main() -> None:
         if positive_point is not None and loss_point is not None:
             reject = (predictions.positive_pnl.to_numpy() < positive_point['test']['threshold']) | (predictions.loss_over_5pct.to_numpy() >= loss_point['test']['threshold'])
             results['combinedFilters'].append({'positiveTarget': positive_target, 'lossTarget': loss_target, 'screening': portfolio(test, reject)})
-    results['rules'] = simple_rules(data.loc[masks['train']], data.loc[masks['validation']], test)
     predictions.to_csv(args.output / 'test-predictions.csv', index=False)
     (args.output / 'summary.json').write_text(json.dumps(results, indent=2))
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.with_suffix('.json').write_text(json.dumps(results, indent=2))
     args.report.write_text(report(results))
-    print(json.dumps({'split': split_summary, 'models': {name: {key: value for key, value in model.items() if key not in ['importance', 'operatingPoints']} for name, model in results['models'].items()}, 'rules': len(results['rules'])}))
+    print(json.dumps({'split': split_summary, 'models': {name: {key: value for key, value in model.items() if key not in ['importance', 'operatingPoints']} for name, model in results['models'].items()}}))
 
 
 def report(results: dict[str, Any]) -> str:
@@ -222,7 +168,7 @@ def report(results: dict[str, Any]) -> str:
     split = results['split']
     text = '# Arc chain-based screening: two LightGBM classifiers\n\n'
     text += 'Labels: positive net P&L (`netUsd > 0`) and loss greater than 5% of the $2 stake (`netUsd < -0.10`). Labels include all modeled costs. Only entered positions are trained; never-funded and failed-entry records are excluded. Main-case labels use the existing unknown-honeypot-clear assumption. Current security, addresses, exit outcomes and future observations are excluded from model inputs.\n\n'
-    text += f"Only +4 blocks / 40% at 2.5x is evaluated, one row per token. Token-grouped chronological 60/20/20 split with a {split['purgeSeconds']}-second holding-horizon purge before validation/test. Rows: {split['rows']}; tokens: {split['tokens']}. Thresholds and simple rules are selected using validation only; test data is untouched until evaluation. All model inputs are chain observations at entry.\n\n"
+    text += f"Only +4 blocks / 40% at 2.5x is evaluated, one row per token. Token-grouped chronological 60/20/20 split with a {split['purgeSeconds']}-second holding-horizon purge before validation/test. Rows: {split['rows']}; tokens: {split['tokens']}. Thresholds are selected using validation only; test data is untouched until evaluation. All model inputs are chain observations at entry.\n\n"
     text += 'Two modest LightGBM models (15 leaves, minimum 100 rows/leaf, learning rate 0.03, L2=5, up to 1,000 rounds with 50-round early stopping); no test-driven tuning or class reweighting.\n\n'
     text += '| Model | Test prevalence | Accuracy at 0.5 | ROC AUC | Average precision | Rounds |\n|---|---:|---:|---:|---:|---:|\n'
     for name, model in results['models'].items():
@@ -245,12 +191,7 @@ def report(results: dict[str, Any]) -> str:
     for row in results['combinedFilters']:
         screening = row['screening']
         text += f"| {row['positiveTarget']} / {row['lossTarget']} | {screening['entriesKept']} | ${screening['netUsdKept']:.2f} | {pct(screening['failedExitRecall'])} | {pct(screening['heavyLossRecall'])} | {pct(screening['lossDollarRecall'])} | {pct(screening['positivePositionsRejected'])} |\n"
-    text += '\n## Simple chain rules\n\nSingle conditions use training-quantile cutoffs. Two-condition AND rules combine the best 16 distinct feature/direction conditions by validation F1. Final rules/targets use validation only. Winner rules KEEP matching positions; loss rules REJECT matching positions. Missing values never match a condition. A precision target absent below was unattainable on validation with at least 20 matches.\n\n'
-    text += '| Label / target | Condition | Test precision | Test recall | Failed exits caught | Heavy losses caught | Loss dollars caught | Winners rejected | Kept P&L |\n|---|---|---:|---:|---:|---:|---:|---:|---:|\n'
-    for row in results['rules']:
-        metrics, screening = row['test'], row['screening']
-        condition = ' AND '.join(f"{item['feature']} {item['operator']} {item['threshold']:.6g}" for item in row['conditions'])
-        text += f"| {row['modelLabel']} / {row['target']} | {condition} | {pct(metrics['precision'])} | {pct(metrics['recall'])} | {pct(screening['failedExitRecall'])} | {pct(screening['heavyLossRecall'])} | {pct(screening['lossDollarRecall'])} | {pct(screening['positivePositionsRejected'])} | ${screening['netUsdKept']:.2f} |\n"
+    text += '\nExplicit five-feature screening rules are optimized separately with Optuna in optimize_rule.py.\n'
     text += '\nOutputs: two native LightGBM model files, test-predictions.csv, full summary JSON and this report. Rerun train_screening.py against results468 with the isolated ml-env Python. Feature definitions remain in features-README.md.\n'
     return text
 

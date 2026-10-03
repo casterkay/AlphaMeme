@@ -1,0 +1,288 @@
+{
+  "optunaVersion": "5.0.0",
+  "sampler": "TPE",
+  "objective": "sum of retained netUsd",
+  "variant": "+4 blocks / 40% at 2.5x",
+  "split": {
+    "validationStart": 1790889167.03,
+    "testStart": 1790948250.0,
+    "purgeSeconds": 1201,
+    "rows": {
+      "train": 3698,
+      "test": 1240,
+      "validation": 1210,
+      "purged": 52
+    },
+    "tokens": {
+      "train": 3698,
+      "validation": 1210,
+      "test": 1240,
+      "purged": 52
+    }
+  },
+  "searchSpace": "AND of USDC lower bound, USDC-share interval, holder upper bound, fee upper bound, market-cap interval; explicit missing-holder/fee choices",
+  "studies": {
+    "development": {
+      "rule": {
+        "usdcMin": 0.01,
+        "usdcShareMin": 0.0,
+        "usdcShareMax": 0.5,
+        "holderMax": 0.93,
+        "feeMaxPips": 10008.0,
+        "marketCapMin": 254.82,
+        "marketCapMax": 9903.97,
+        "allowMissingHolder": true,
+        "allowMissingFee": true
+      },
+      "bestTrial": 2145,
+      "fitPnlUsd": 4013.842904006473,
+      "trials": 5000,
+      "seed": 42,
+      "progress": [
+        {
+          "trial": 0,
+          "pnl": 3826.464440971547
+        },
+        {
+          "trial": 500,
+          "pnl": 3947.640543613596
+        },
+        {
+          "trial": 1000,
+          "pnl": 3556.717174470374
+        },
+        {
+          "trial": 1500,
+          "pnl": 3936.875450921111
+        },
+        {
+          "trial": 2000,
+          "pnl": 3261.8430270465947
+        },
+        {
+          "trial": 2145,
+          "pnl": 4013.842904006473
+        },
+        {
+          "trial": 2500,
+          "pnl": 3472.9109876932066
+        },
+        {
+          "trial": 3000,
+          "pnl": 3494.497286141321
+        },
+        {
+          "trial": 3500,
+          "pnl": 3576.7794960044803
+        },
+        {
+          "trial": 4000,
+          "pnl": 3880.1454515341206
+        },
+        {
+          "trial": 4500,
+          "pnl": 3546.5661795562874
+        }
+      ],
+      "evaluations": {
+        "development": {
+          "entriesKept": 3672,
+          "entriesRejected": 1236,
+          "netUsdKept": 4013.842904006473,
+          "netUsdBaseline": 3826.464440971547,
+          "conservativeNetUsdKept": -974.5906844797228,
+          "winRateKept": 0.30610021786492375,
+          "severeLossRecall": 0.1400359066427289,
+          "failedExitRecall": 0.03833333333333333,
+          "heavyLossRecall": 0.17424242424242425,
+          "lossDollarRecall": 0.21265140826442364,
+          "positivePositionsRejected": 0.01056338028169014,
+          "profitPerEntryUsd": 1.0930944727686474
+        },
+        "test": {
+          "entriesKept": 928,
+          "entriesRejected": 312,
+          "netUsdKept": 793.3497639967759,
+          "netUsdBaseline": 792.520919550286,
+          "conservativeNetUsdKept": -756.5568543898274,
+          "winRateKept": 0.375,
+          "severeLossRecall": 0.1987179487179487,
+          "failedExitRecall": 0.01834862385321101,
+          "heavyLossRecall": 0.20588235294117646,
+          "lossDollarRecall": 0.23585657292404769,
+          "positivePositionsRejected": 0.03867403314917127,
+          "profitPerEntryUsd": 0.8549027629275602
+        },
+        "fullSample": {
+          "entriesKept": 4637,
+          "entriesRejected": 1563,
+          "netUsdKept": 4847.044311546679,
+          "netUsdBaseline": 4657.787487173124,
+          "conservativeNetUsdKept": -1761.0561104793212,
+          "winRateKept": 0.32068147509165407,
+          "severeLossRecall": 0.15181058495821728,
+          "failedExitRecall": 0.03288672350791717,
+          "heavyLossRecall": 0.18063314711359404,
+          "lossDollarRecall": 0.2168661526918601,
+          "positivePositionsRejected": 0.017184401850627893,
+          "profitPerEntryUsd": 1.0452974577413583
+        }
+      },
+      "formula": "USDC-side pool principal >= $0.01\n0 <= USDC principal / pool value <= 0.5\nLargest holder share <= 0.93 OR holder share unavailable\nObserved pool fee <= 10008 pips (1.001%) OR pool fee unavailable\n$254.82 <= market cap <= $9903.97",
+      "fullSampleRejection": {
+        "negativePositions": 1537,
+        "positivePositions": 26,
+        "negativePrecision": 0.9833653230966091,
+        "negativeRecall": 0.3279283123533177,
+        "failedExits": 27
+      }
+    },
+    "full_sample": {
+      "rule": {
+        "usdcMin": 0.0,
+        "usdcShareMin": 1.1e-05,
+        "usdcShareMax": 0.5,
+        "holderMax": 0.49942,
+        "feeMaxPips": 10000.0,
+        "marketCapMin": 300.0,
+        "marketCapMax": 9941.18,
+        "allowMissingHolder": true,
+        "allowMissingFee": false
+      },
+      "bestTrial": 4296,
+      "fitPnlUsd": 4852.517869836714,
+      "trials": 5000,
+      "seed": 7,
+      "progress": [
+        {
+          "trial": 0,
+          "pnl": 4657.787487173124
+        },
+        {
+          "trial": 500,
+          "pnl": 4646.328700297784
+        },
+        {
+          "trial": 1000,
+          "pnl": 4683.076234637019
+        },
+        {
+          "trial": 1500,
+          "pnl": 2335.848387782751
+        },
+        {
+          "trial": 2000,
+          "pnl": 3583.2061452888083
+        },
+        {
+          "trial": 2500,
+          "pnl": 4186.769343667523
+        },
+        {
+          "trial": 3000,
+          "pnl": 3720.683056205974
+        },
+        {
+          "trial": 3500,
+          "pnl": 4271.850272761468
+        },
+        {
+          "trial": 4000,
+          "pnl": 4291.46068609331
+        },
+        {
+          "trial": 4296,
+          "pnl": 4852.517869836714
+        },
+        {
+          "trial": 4500,
+          "pnl": 4255.46381952942
+        }
+      ],
+      "evaluations": {
+        "development": {
+          "entriesKept": 3644,
+          "entriesRejected": 1264,
+          "netUsdKept": 4000.017153619414,
+          "netUsdBaseline": 3826.464440971547,
+          "conservativeNetUsdKept": -904.2030037405175,
+          "winRateKept": 0.30817782656421516,
+          "severeLossRecall": 0.11669658886894076,
+          "failedExitRecall": 0.04666666666666667,
+          "heavyLossRecall": 0.1414141414141414,
+          "lossDollarRecall": 0.195178656356792,
+          "positivePositionsRejected": 0.011443661971830986,
+          "profitPerEntryUsd": 1.0976995481941312
+        },
+        "test": {
+          "entriesKept": 945,
+          "entriesRejected": 295,
+          "netUsdKept": 812.6490726738706,
+          "netUsdBaseline": 792.520919550286,
+          "conservativeNetUsdKept": -735.2799297169761,
+          "winRateKept": 0.37883597883597886,
+          "severeLossRecall": 0.1282051282051282,
+          "failedExitRecall": 0.01834862385321101,
+          "heavyLossRecall": 0.125,
+          "lossDollarRecall": 0.18052364606463359,
+          "positivePositionsRejected": 0.011049723756906077,
+          "profitPerEntryUsd": 0.8599461086495985
+        },
+        "fullSample": {
+          "entriesKept": 4626,
+          "entriesRejected": 1574,
+          "netUsdKept": 4852.517869836714,
+          "netUsdBaseline": 4657.787487173124,
+          "conservativeNetUsdKept": -1669.3915050672645,
+          "winRateKept": 0.3233895373973195,
+          "severeLossRecall": 0.11838440111420613,
+          "failedExitRecall": 0.0389768574908648,
+          "heavyLossRecall": 0.13594040968342644,
+          "lossDollarRecall": 0.19131013314576836,
+          "positivePositionsRejected": 0.011235955056179775,
+          "profitPerEntryUsd": 1.0489662494242789
+        }
+      },
+      "formula": "USDC-side pool principal >= $0\n1.1e-05 <= USDC principal / pool value <= 0.5\nLargest holder share <= 0.49942 OR holder share unavailable\nObserved pool fee <= 10000 pips (1%)\n$300 <= market cap <= $9941.18",
+      "fullSampleRejection": {
+        "negativePositions": 1557,
+        "positivePositions": 17,
+        "negativePrecision": 0.9891994917407878,
+        "negativeRecall": 0.3321954341796458,
+        "failedExits": 32
+      }
+    }
+  },
+  "note": "Development rule is selected before the held-out tail. Full-sample rule maximizes observed 72-hour P&L and its test-subset score is in-sample. Optuna reports the best rule found in this search, not a proven global maximum.",
+  "totalTrialsPerStudy": 10000,
+  "searchSeeds": [
+    42,
+    7
+  ],
+  "searchRuns": [
+    {
+      "study": "development",
+      "seed": 42,
+      "trials": 5000,
+      "bestPnlUsd": 4013.842904006473
+    },
+    {
+      "study": "development",
+      "seed": 7,
+      "trials": 5000,
+      "bestPnlUsd": 4004.136853380557
+    },
+    {
+      "study": "full_sample",
+      "seed": 42,
+      "trials": 5000,
+      "bestPnlUsd": 4851.029271382399
+    },
+    {
+      "study": "full_sample",
+      "seed": 7,
+      "trials": 5000,
+      "bestPnlUsd": 4852.517869836714
+    }
+  ]
+}

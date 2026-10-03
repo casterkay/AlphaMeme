@@ -39,7 +39,7 @@ Historical pool and Transfer logs use Arc RPC. When configured, Alchemy handles 
 
 ## Chain screening models
 
-Train two LightGBM classifiers on the +4-block / 40% at 2.5x slice: positive net P&L and net loss greater than $0.10 (5% of stake). Only historical entry features enter the models. A chronological 60/20/20 token split purges the 20-minute holding horizon before validation and test. Thresholds and simple chain rules use validation only.
+Train two LightGBM classifiers on the +4-block / 40% at 2.5x slice: positive net P&L and net loss greater than $0.10 (5% of stake). Only historical entry features enter the models. A chronological 60/20/20 token split purges the 20-minute holding horizon before validation and test. Model thresholds use validation only. Explicit five-feature rules use Optuna in the separate optimizer below.
 
 ```sh
 python3 -m venv .runtime/arc-backtest/ml-env
@@ -52,3 +52,16 @@ python3 -m venv .runtime/arc-backtest/ml-env
 ```
 
 Outputs include two native LightGBM model files, held-out predictions, gain importance, precision/recall operating points, and screening effects on loss dollars, failed exits, heavy losses and retained P&L. Training labels follow the baseline's unknown-honeypot-clear case; retained P&L also shows the unknown-blocked case. Simple-rule missing values never match a condition. macOS LightGBM requires the OpenMP runtime (`libomp`).
+
+
+Optimize an explicit rule with Optuna TPE, using USDC-side LP principal, its share of pool value, largest holder share, observed pool fee and market cap:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 .runtime/arc-backtest/ml-env/bin/python scripts/arc-backtest/optimize_rule.py \
+  --input .runtime/arc-backtest/results468 \
+  --output .runtime/arc-backtest/rule4 \
+  --report docs/reports/2026-10-03-arc-explicit-screening-rule.md \
+  --trials 5000 --seed 42
+```
+
+Repeat with seed 7 and a separate output directory for another TPE run. Select by fit-period P&L. The report distinguishes the development-selected rule's held-out result from fitting the entire observed sample. Native numeric rules can be evaluated offline through `apply_rule`; currency inputs and cutoffs use cents, shares six decimals, fees pips. Missing holder/fee behavior is explicit. No grid search is used.
