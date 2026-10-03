@@ -549,6 +549,24 @@ test('on Arc, the hot-list row\'s distinct sellers stand in for the cannot_sell_
   assert.deepEqual(unsold.secondary.security.unknownFields, ['cannotSellAll']);
 });
 
+test('on Arc, a promoted pool\'s DexScreener 24h sells stand in for the cannot_sell_all GoPlus omits; with none the check stays incomplete', async () => {
+  for (const [scenario, sells24h, verdict, standIns] of [
+    ['sold', 12, 'PASSED', { cannotSellAll: { dexSells24h: 12 } }],
+    ['no sells', 0, 'INCOMPLETE', undefined],
+    ['count missing', null, 'INCOMPLETE', undefined]
+  ]) {
+    const radarFixture = radar({ chain: 'arc', onchain: true });
+    radarFixture.chainLogs = { newPools: newPool(A) };
+    radarFixture.dexMarkets = async () => ({ capturedAt: radarFixture.clock.now, markets: [busyMarket(A, { sells24h })] });
+    radarFixture.secondary = { fetchSource: async () => ({ source: { status: 'OK' },
+      security: { complete: false, verdict: 'UNKNOWN', fatal: [], unknownFields: ['cannotSellAll'], fields: { cannotSellAll: null }, buyTax: 0, sellTax: 0 } }) };
+    await radarFixture.runCycle(`cycle-arc-dex-sells-${sells24h}`);
+    const lead = radarFixture.candidate(A);
+    assert.equal(safetyVerdict(lead), verdict, scenario);
+    assert.deepEqual(lead.secondary.security.standIns, standIns, scenario);
+  }
+});
+
 test('a checkpoint left between the retired DexScreener and GoPlus steps finishes with one GoPlus read', async () => {
   const radarFixture = radar();
   radarFixture.seedCheckpoint({ cycleId: 'cycle-mid-check', chain: 'bsc', phase: 'SECONDARY', endpointIndex: 1, partial: { settings: radarFixture.settings, queue: { selected: [leadItem(A)] },

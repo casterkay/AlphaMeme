@@ -129,11 +129,12 @@ test('batch overlay never applies base-token price or market cap to a requested 
 test('a watch market names each requested token by its own side of the pair', async () => {
   const at = 1_800_000_000_000;
   const fetchImpl = async () => jsonResponse([completeDexPair({
-    quoteToken: { address: otherEvmAddress, symbol: 'QUOTE', name: 'Quote' }, txns: { m5: { buys: 9, sells: 1 } }, pairCreatedAt: at - 600_000
+    quoteToken: { address: otherEvmAddress, symbol: 'QUOTE', name: 'Quote' }, txns: { m5: { buys: 9, sells: 1 }, h24: { buys: 90, sells: 40 } }, pairCreatedAt: at - 600_000
   })]);
   const { markets } = await fetchDexMarkets('bsc', [evmAddress, otherEvmAddress], { fetchImpl, now: () => at });
-  assert.deepEqual(markets.map(market => [market.address, market.symbol, market.name, market.priceUsd]),
-    [[evmAddress, 'DOG', 'Test Dog', 0.000012], [otherEvmAddress, 'QUOTE', 'Quote', null]]);
+  // Trade direction, like price, is defined for the base token only.
+  assert.deepEqual(markets.map(market => [market.address, market.symbol, market.name, market.priceUsd, market.sells24h]),
+    [[evmAddress, 'DOG', 'Test Dog', 0.000012, 40], [otherEvmAddress, 'QUOTE', 'Quote', null, null]]);
 });
 
 test('a watch market keeps its deepest pool but dates the token by its first pool, even one without liquidity figures', async () => {
@@ -275,6 +276,28 @@ for (const [name, chain, overrides, distinctSellers24h, expected, standIn] of [
     // GoPlus's own answer is kept as given: the stand-in never fills its field.
     assert.equal(secondary.security.fields.cannotSellAll, Object.hasOwn(overrides, 'cannot_sell_all') ? null : false);
     assert.deepEqual(value.security, goPlusSecurity);
+  });
+}
+
+// A pool promoted from DexScreener has no AVE seller count; its 24-hour sell transactions stand in instead.
+for (const [name, chain, overrides, counts, expected, standIn] of [
+  ['an Arc record missing only cannot_sell_all, with DexScreener sells', 'arc', { cannot_sell_all: undefined }, { dexSells24h: 3 }, 'PASSED', { dexSells24h: 3 }],
+  ['an Arc record missing only cannot_sell_all, with one DexScreener sell', 'arc', { cannot_sell_all: undefined }, { dexSells24h: 1 }, 'PASSED', { dexSells24h: 1 }],
+  ['an Arc record missing only cannot_sell_all, with zero DexScreener sells', 'arc', { cannot_sell_all: undefined }, { dexSells24h: 0 }, 'INCOMPLETE', null],
+  ['an Arc record missing only cannot_sell_all, without DexScreener sells', 'arc', { cannot_sell_all: undefined }, { dexSells24h: null }, 'INCOMPLETE', null],
+  ['an Arc record missing only cannot_sell_all, with a malformed DexScreener count', 'arc', { cannot_sell_all: undefined }, { dexSells24h: '3' }, 'INCOMPLETE', null],
+  ['a BSC record missing cannot_sell_all, with DexScreener sells', 'bsc', { cannot_sell_all: undefined }, { dexSells24h: 3 }, 'INCOMPLETE', null],
+  ['an Arc record with both counts', 'arc', { cannot_sell_all: undefined }, { distinctSellers24h: 410, dexSells24h: 3 }, 'PASSED', { distinctSellers24h: 410 }],
+  ['an Arc record whose AVE count is zero, with DexScreener sells', 'arc', { cannot_sell_all: undefined }, { distinctSellers24h: 0, dexSells24h: 3 }, 'INCOMPLETE', null],
+  ['an Arc honeypot missing cannot_sell_all, with DexScreener sells', 'arc', { cannot_sell_all: undefined, is_honeypot: '1' }, { dexSells24h: 3 }, 'VETOED', { dexSells24h: 3 }],
+  ['an Arc record GoPlus finds cannot sell all, with DexScreener sells', 'arc', { cannot_sell_all: '1' }, { dexSells24h: 3 }, 'VETOED', null]
+]) {
+  test(`${name} is ${expected}${standIn === null ? '' : ' and records exactly one stand-in source'}`, async () => {
+    const value = await validatorWith(goPlusStub(securityOf(safeEvmSecurity(overrides)))).fetchSource({ chain, tokenAddress: evmAddress });
+    const secondary = aggregateSecondarySources({ chain, tokenAddress: evmAddress, sources: { goPlus: { value, collectedAt: 5 } }, ...counts });
+    assert.equal(safetyVerdict({ status: 'LIVE_READY', secondary }), expected);
+    assert.deepEqual(secondary.security.standIns, standIn === null ? undefined : { cannotSellAll: standIn });
+    assert.equal(secondary.security.fields.cannotSellAll, overrides.cannot_sell_all === '1' ? true : null);
   });
 }
 

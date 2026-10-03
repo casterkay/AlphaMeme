@@ -47,10 +47,11 @@ Live facts below were read from AVE, GoPlus, DexScreener and GeckoTerminal on
    sampled once #102 adds DexScreener sampling. How Performance counts these
    leads until then is still open.
 9. **A promoted Arc lead may stand in DexScreener sells for `cannot_sell_all`.**
-   For a row promoted from DexScreener, at least one DexScreener sell transaction
-   stands in for the field GoPlus omits on Arc, labeled as DexScreener's sell
-   count (decision 6's counterpart for rows without AVE's distinct sellers).
-   It lands after PR #118.
+   For a row promoted from DexScreener, at least one sell transaction in
+   DexScreener's 24-hour window stands in for the field GoPlus omits on Arc,
+   labeled as DexScreener's sell count (decision 6's counterpart for rows
+   without AVE's distinct sellers). One source stands in per check, AVE's when
+   AVE gave a count. Implemented (#119).
 
 ## Where things stand
 
