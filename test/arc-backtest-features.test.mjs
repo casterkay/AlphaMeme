@@ -25,7 +25,7 @@ test('active virtual depth and LP principal remain separate quantities', () => {
   const result = derivePoolEntryFeature(narrow, 4);
   assert.equal(result.activeVirtualQuoteReserveUsd, 1);
   assert.ok(result.poolQuotePrincipalUsd < 0.01); assert.ok(result.poolSizeUsd < 0.02);
-  assert.equal(result.stakeToDepthRatio, 2); assert.equal(result.activePositionCount, 1);
+  assert.equal(result.stakeToDepthRatio, 2); assert.equal(result.liquidityPositionCount, 1);
 });
 
 test('incomplete token history leaves holder features null rather than known zero', () => {
@@ -99,4 +99,11 @@ test('historical RPC maps unordered batch results and offline cache reproduces e
 
 test('legacy capture without decoded entry event payloads is rejected', async () => {
   await assert.rejects(deriveEntryFeatures({ manifest: {}, pools: [pool] }, { cacheDirectory: '/unused' }), /decoded historical event payloads/);
+});
+
+test('missing constructor mint events cannot fabricate a zero-holder ledger', () => {
+  const result = derivePoolEntryFeature(pool, 4, { completeTransferHistory: true, supplyRaw: '10000000', transfers: [] });
+  assert.equal(result.holderCount, null); assert.equal(result.top1HolderShare, null);
+  assert.equal(result.holderHistoryStatus, 'unavailable_nonstandard_transfer_accounting');
+  assert.equal(result.marketCapUsd, 10);
 });
