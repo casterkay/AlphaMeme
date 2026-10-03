@@ -139,6 +139,9 @@ function feedRow(row, screen) {
   };
 }
 
+// The screen's ruleset and per-rule verdicts, stored with each candidate and outcome row it decided.
+const screenRecord = screen => ({ ruleset: screen.ruleset, verdicts: screen.verdicts });
+
 // A lead's clock is its quote's observation time; retaining it never refreshes that evidence.
 function leadCandidate(row, screen, chain, previous, observedAt, settings) {
   const token = publicToken(row, screen, chain);
@@ -156,7 +159,7 @@ function leadCandidate(row, screen, chain, previous, observedAt, settings) {
     deep: {},
     social: socialFrom(token),
     info: { twitter: token.twitter, website: '' },
-    metadata: { qualifiedAt, lastConfirmedAt: observedAt }
+    metadata: { qualifiedAt, lastConfirmedAt: observedAt, screen: screenRecord(screen) }
   };
 }
 
@@ -452,7 +455,7 @@ export class RecoverableScanner {
         }
       } else if (!screen.pass && previous?.status === 'LIVE_READY') {
         // Failing a current screen ends a lead's live state; missing from one hot list does not.
-        eliminated.push({ address: row.address, reasons: screen.reasons });
+        eliminated.push({ address: row.address, reasons: screen.reasons, screen: screenRecord(screen) });
       } else if (!screen.pass && !previous) rejected.push({ row, screen });
     }
     // An AVE baseline is sampled only from AVE's hot list, never from a DexScreener quote.
@@ -474,7 +477,7 @@ export class RecoverableScanner {
     }
     // Only AVE samples outcomes, so only an AVE quote is a baseline. A lead promoted from DexScreener is
     // tracked from its first sighting on the hot list, if any, until a DexScreener sampler exists (#102).
-    for (const { row, candidate, previous } of leads) {
+    for (const { row, screen, candidate, previous } of leads) {
       const price = tokenInfoPrice(row, now), baselineAt = numberOrNull(row.sourceUpdatedAt), key = addressKey(candidate.address);
       const rejection = stored.get(key)?.initialDecision === DISCOVERY_REJECT ? stored.get(key) : null;
       if (row.marketProvider !== 'AVE' || (stored.has(key) && !rejection) || !(price > 0) || !(baselineAt > 0)) continue;
@@ -484,7 +487,7 @@ export class RecoverableScanner {
         latestDecision: safetyVerdict({ status: 'LIVE_READY', secondary: previous?.secondary, deep: previous?.deep }),
         baselineAt, baselinePrice: price, lastAuditedAt: observedAt, latestFailed: [], samples: {}, sampleRetries: {},
         sampling: 'ALL_LEADS', strategyVersion: 'ave-leads-v1',
-        cohortMetadata: { baselineProvider: 'AVE', ...(rejection ? { rejectedAt: rejection.baselineAt } : {}) } });
+        cohortMetadata: { baselineProvider: 'AVE', screen: screenRecord(screen), ...(rejection ? { rejectedAt: rejection.baselineAt } : {}) } });
     }
     // The control cohort: a stable sample of hot-list tokens the screen rejected, sampled like leads.
     let rejectedToday = [...stored.values()].filter(outcome => outcome.initialDecision === DISCOVERY_REJECT && now - outcome.baselineAt < 86_400_000).length;
@@ -496,7 +499,7 @@ export class RecoverableScanner {
       rejectedToday += 1;
       outcomes.set(key, { chain, address: row.address, symbol: String(row.symbol || '?').slice(0, 30), initialDecision: DISCOVERY_REJECT, latestDecision: null,
         baselineAt, baselinePrice: price, lastAuditedAt: observedAt, latestFailed: screen.reasons, samples: {}, sampleRetries: {},
-        sampling: 'FNV1A_MOD5', strategyVersion: 'ave-rejected-v1', cohortMetadata: { baselineProvider: 'AVE' } });
+        sampling: 'FNV1A_MOD5', strategyVersion: 'ave-rejected-v1', cohortMetadata: { baselineProvider: 'AVE', screen: screenRecord(screen) } });
     }
     const discoveryError = record?.error || null;
     const feed = {

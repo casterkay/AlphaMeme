@@ -5,11 +5,12 @@
  *   giving way to the lead it became, re-baselined at the alert.
  * - latestDecision: a lead's latest safetyVerdict (PENDING | INCOMPLETE | PASSED | VETOED),
  *   reconciled from its candidate every screen; null for a rejection that never became a lead.
- * - latestFailed: the screen reasons of a rejection; empty for a lead.
+ * - latestFailed: the screen reasons (rule ids) of a rejection; empty for a lead.
  * - sampling / strategyVersion: how the row was admitted (ALL_LEADS / ave-leads-v1,
  *   FNV1A_MOD5 / ave-rejected-v1).
- * - cohortMetadata: baselineProvider ('AVE' is the only one sampled) and, for a lead that
- *   was first a sampled rejection, rejectedAt (that rejection's baseline time).
+ * - cohortMetadata: baselineProvider ('AVE' is the only one sampled); screen, the ruleset and
+ *   per-rule verdicts of the screen that admitted or rejected it; and, for a lead that was
+ *   first a sampled rejection, rejectedAt (that rejection's baseline time).
  * - samples / sampleRetries: per-horizon price samples and backoff state.
  */
 // A market lead (LIVE_READY) is the only screen pass.
