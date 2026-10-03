@@ -25,6 +25,8 @@ Historical RPC pool events supply ordered prices, liquidity changes and fills. O
 
 ## Execution model
 
+**Block offsets (+4/+6/+8) are modeled execution-latency assumptions measured from first active liquidity, not deliberate waiting rules or production system settings.** Strategy settings are stake, screening and exit policies.
+
 The following rules describe the original six-cell comparison. Subsequent experiments change only the post-TP ATH threshold.
 
 - One $2 purchase per token, at the end of block +4/+6/+8 after first active liquidity. No security or liquidity-size entry filter.
@@ -388,4 +390,4 @@ Replay the original matrix with `node scripts/arc-backtest/run.mjs --dataset DAT
 
 For timer reproduction, use the extended dataset and `--trailing-ath-fraction 0.98 --time-stop-minutes MINUTES` for MINUTES 5, 10, 15, 20, 25 or 30.
 
-The best observed configuration among the settings tested is **+4 blocks, 40% at 2.5x, 98% ATH after TP, 50% hard stop and 15-minute time stop**, with the existing full-sample screening rule if optimizing observed total P&L. The session has not independently validated that combined configuration on a new cohort, retrained models for 98%-ATH labels, tested the full ATH × timer interaction, or tested other TP/delay combinations at 98%. The models and explicit-rule optimization retain their original 90%-ATH / 20-minute labels. The three follow-up studies support retaining the unconditional 15-minute timer and existing screening rule, without an age cutoff or four-block check under the modeled honeypot labels.
+The best observed strategy configuration among the settings tested is **$2 stake, 40% at 2.5x, 98% ATH after TP, 50% hard stop and 15-minute time stop**, evaluated under a **modeled four-block execution latency from first active liquidity**, with the existing full-sample screening rule if optimizing observed total P&L. The session has not independently validated that combined configuration on a new cohort, retrained models for 98%-ATH labels, tested the full ATH × timer interaction, or tested other TP/delay combinations at 98%. The models and explicit-rule optimization retain their original 90%-ATH / 20-minute labels. The three follow-up studies support retaining the unconditional 15-minute timer and existing screening rule, without an age cutoff or four-block check under the modeled honeypot labels.

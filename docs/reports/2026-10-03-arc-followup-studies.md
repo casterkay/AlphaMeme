@@ -1,5 +1,7 @@
 # Arc follow-up studies: conditional timers, pool age and delayed honeypot checks
 
+Block offsets are modeled execution latency from first active liquidity, not an intentional wait or production setting.
+
 Three separate experiments against the same control: **+4 blocks after first active liquidity, 40% of original quantity at 2.5x, 98% ATH since entry after TP, flat 15-minute time stop, 50% hard stop and $2 stake**. The existing full-sample Optuna rule is fixed. Control P&L is **$6,224.55 unfiltered / $6,416.98 screened**. No rule or model is retrained. Historical capture extends through 2026-10-03 16:29:25 Asia/Taipei, covering every requested deadline.
 
 ## 1. Different deadlines before and after TP fills

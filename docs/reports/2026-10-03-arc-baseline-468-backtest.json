@@ -1428,7 +1428,8 @@
           "mainUnknownPolicy": "Assume selling succeeds subject to liquidity, tax and modeled execution",
           "unknownBlockedPolicy": "Assume unknown honeypot flags block selling",
           "perfectCheckScope": "Reject the 16 provider-flagged tokens before entry; unclassified-token detection is not established"
-        }
+        },
+        "delayInterpretation": "Modeled execution latency from first active liquidity; not intentional strategy waiting or production configuration"
       },
       "control": {
         "all": {
@@ -1930,6 +1931,7 @@
       "mainUnknownPolicy": "Assume selling succeeds subject to liquidity, tax and modeled execution",
       "unknownBlockedPolicy": "Assume unknown honeypot flags block selling",
       "perfectCheckScope": "Reject the 16 provider-flagged tokens before entry; unclassified-token detection is not established"
-    }
+    },
+    "executionLatencyInterpretation": "Modeled execution latency from first active liquidity; not intentional strategy waiting or production configuration"
   }
 }
