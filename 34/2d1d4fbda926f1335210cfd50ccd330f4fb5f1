@@ -1,0 +1,37 @@
+.gitignore
+  s_02320cd7492a13::t_25582939e611c9 31-32
+docs/reports/2026-10-03-arc-chain-screening-lightgbm.md
+  s_02320cd7492a13::t_d90da704d83be2 5,106
+docs/reports/2026-10-03-arc-explicit-screening-rule.json
+  s_02320cd7492a13::t_67f7676a163093 1-288
+docs/reports/2026-10-03-arc-explicit-screening-rule.md
+  s_02320cd7492a13::t_f93f72eaed57f9 1-44
+scripts/arc-backtest/README.md
+  s_02320cd7492a13::t_2f26340cad9642 42,55-67
+scripts/arc-backtest/optimize_rule.py
+  s_02320cd7492a13::t_401bb65ce7b630 1-128
+scripts/arc-backtest/requirements-ml.txt
+  s_02320cd7492a13::t_0fb3e3e1edcade 5-6
+scripts/arc-backtest/train_screening.py
+  s_02320cd7492a13::t_a668393517ffca 163,171,194
+test/test_arc_rule.py
+  s_02320cd7492a13::t_992987aa572e26 1-38
+test/test_arc_screening.py
+  s_02320cd7492a13::t_43cd5a24efec02 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "342d1d4fbda926f1335210cfd50ccd330f4fb5f1",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
