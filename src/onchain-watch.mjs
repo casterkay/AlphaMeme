@@ -10,10 +10,9 @@ const WATCH_MS = 6 * 60 * 60_000;
 const UNLISTED_MS = 10 * 60_000;
 // Most new pools never trade; one with no trade for this long is dropped.
 const IDLE_MS = 15 * 60_000;
-// A promoted token is screened again only after this long, which keeps an off-list lead current.
+// A token that passed the screen is screened again after this long, which keeps an off-list lead current.
+// One that failed is screened again the next cycle: an early failure (no sells yet, a stale read) is often temporary.
 const REPROMOTE_MS = 5 * 60_000;
-// One that failed the screen waits longer: most never pass later.
-const REJECTED_MS = 30 * 60_000;
 
 export const emptyWatchState = () => ({ cursor: null, pools: [] });
 
@@ -34,32 +33,34 @@ const traded = market => (market.buys5m ?? 0) + (market.sells5m ?? 0) > 0 || mar
 
 /**
  * Tokens worth screening: listed on DexScreener with market cap, volume, liquidity, buys and age (from the
- * token's first pool) inside the thresholds, not excluded (on this cycle's hot list, or vetoed), not promoted within REPROMOTE_MS and
- * not rejected within REJECTED_MS. At most two, busiest first.
+ * token's first pool) inside the thresholds, not excluded (on this cycle's hot list, or vetoed), and not
+ * passed within REPROMOTE_MS. At most two: those never screened first, so a token that keeps failing
+ * cannot hold a slot a new one needs, then busiest first.
  */
 export function promotions(state, markets, { now, settings, excluded }) {
   const pools = new Map(state.pools.map(pool => [pool.token, pool]));
+  const screened = market => pools.get(market.address)?.promotedAt !== undefined;
   return markets.filter(market => {
     const pool = pools.get(market.address);
-    return !excluded.has(market.address) && !(pool?.promotedAt > now - REPROMOTE_MS) && !(pool?.rejectedAt > now - REJECTED_MS)
+    return !excluded.has(market.address) && !(pool?.passed === true && pool.promotedAt > now - REPROMOTE_MS)
       && market.marketCap >= settings.discoveryMinMarketCap && market.marketCap <= settings.discoveryMaxMarketCap
       && market.volume5m >= settings.onchainMinVolume5m && market.liquidity >= settings.minLiquidity && (market.buys5m ?? 0) >= settings.onchainMinBuys5m
-      // The screen rejects a token younger than minAgeSec, so promoting one earlier would only start its rejection wait.
+      // The screen rejects a token younger than minAgeSec, so promoting one earlier would only spend a slot.
       && now - market.firstPairCreatedAt >= settings.minAgeSec * 1000;
-  }).sort((a, b) => b.volume5m - a.volume5m).slice(0, MAX_PROMOTIONS_PER_CYCLE).map(market => market.address);
+  }).sort((a, b) => screened(a) - screened(b) || b.volume5m - a.volume5m).slice(0, MAX_PROMOTIONS_PER_CYCLE).map(market => market.address);
 }
 
 /**
- * The watchlist after one cycle: new pools added, checked ones updated, promoted ones stamped (and
- * `rejected` ones, which failed the screen, stamped again), and expired ones dropped.
+ * The watchlist after one cycle: new pools added, checked ones updated, promoted ones stamped with
+ * whether they `passed` the screen, and expired ones dropped.
  */
-export function nextWatchState(state, { newPools = null, checked = [], markets = [], promoted = [], rejected = [], now }) {
+export function nextWatchState(state, { newPools = null, checked = [], markets = [], promoted = [], passed = [], now }) {
   const found = new Map(markets.map(market => [market.address, market]));
   const pools = mergePools(state.pools, newPools?.pools ?? [], now).map(pool => {
     if (!checked.includes(pool.token)) return pool;
     const market = found.get(pool.token);
     return { ...pool, checkedAt: now, ...(market ? { listedAt: now } : {}), ...(market && traded(market) ? { tradedAt: now } : {}),
-      ...(promoted.includes(pool.token) ? { promotedAt: now } : {}), ...(rejected.includes(pool.token) ? { rejectedAt: now } : {}) };
+      ...(promoted.includes(pool.token) ? { promotedAt: now, passed: passed.includes(pool.token) } : {}) };
   }).filter(pool => now - pool.firstSeenAt <= WATCH_MS && now - (pool.listedAt ?? pool.firstSeenAt) <= UNLISTED_MS
     && now - (pool.tradedAt ?? pool.firstSeenAt) <= IDLE_MS)
     .sort((a, b) => b.firstSeenAt - a.firstSeenAt).slice(0, MAX_WATCHED);

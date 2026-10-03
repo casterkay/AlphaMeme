@@ -417,11 +417,12 @@ test('a checkpoint written while promotions read AVE screens its recorded promot
     assert.equal(radarFixture.store.read(cycleId).phase, 'SCREEN', scenario);
     await radarFixture.step(cycleId);
     assert.equal(radarFixture.store.read(cycleId).phase, 'BUILD_QUEUE', scenario);
-    // The old watch kept no first-pool time, so neither promotion can be dated; both wait out the rejection.
+    // The old watch kept no first-pool time, so neither promotion can be dated; both fail the screen.
     for (const token of [A, B]) {
       assert.equal(radarFixture.candidate(token), null, `${scenario}: ${token}`);
       assert.deepEqual(radarFixture.state('feed.snapshot:arc').rows.find(row => row.address === token).reasons, reasons, `${scenario}: ${token}`);
-      assert.equal(radarFixture.state('discovery.pools:arc').pools.find(pool => pool.token === token).rejectedAt, NOW + elapsed, `${scenario}: ${token}`);
+      const pool = radarFixture.state('discovery.pools:arc').pools.find(item => item.token === token);
+      assert.deepEqual([pool.promotedAt, pool.passed], [NOW + elapsed, false], `${scenario}: ${token}`);
     }
     assert.equal(radarFixture.aveRequests.length, 1, scenario);
   }
@@ -510,7 +511,7 @@ test('the log cursor advances only when the screen commits, so an interrupted cy
   assert.equal(radarFixture.state('discovery.pools:arc').cursor, 1_000);
 });
 
-test('a promoted token that fails the screen is not promoted again for thirty minutes', async () => {
+test('a promoted token that fails the screen is screened again the next cycle', async () => {
   // Sampled for the control cohort were it an AVE row.
   const P = address('8');
   assert.ok(sampledForRejection('arc', P));
@@ -522,18 +523,38 @@ test('a promoted token that fails the screen is not promoted again for thirty mi
     radarFixture.chainLogs = { newPools: newPool(P) };
     radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(P) ? [market] : [] });
     const tag = scenario.replaceAll(' ', '-');
-    for (const [cycle, at, promoted] of [[1, NOW, NOW], [2, NOW + 6 * MINUTE, NOW], [3, NOW + 31 * MINUTE, NOW + 31 * MINUTE]]) {
+    for (const [cycle, at] of [[1, NOW], [2, NOW + scannerSettings.scanIntervalMs]]) {
       radarFixture.clock.now = at;
       await radarFixture.runCycle(`cycle-rejected-${tag}-${cycle}`);
-      assert.equal(promotedAt(radarFixture, P), promoted, `${scenario}, cycle ${cycle}`);
-      const screened = radarFixture.state('feed.snapshot:arc').rows.find(row => row.address === P);
-      assert.equal(screened?.reasons.includes(reason) ?? false, promoted === at, `${scenario}, cycle ${cycle}: screened only when promoted`);
+      assert.equal(promotedAt(radarFixture, P), at, `${scenario}, cycle ${cycle}`);
+      assert.ok(radarFixture.state('feed.snapshot:arc').rows.find(row => row.address === P).reasons.includes(reason), `${scenario}, cycle ${cycle}`);
     }
     assert.equal(radarFixture.candidate(P), null, scenario);
     // Only an AVE quote is a baseline, so a rejected DexScreener row joins no cohort.
     assert.equal(radarFixture.outcome(P), null, scenario);
-    assert.equal(radarFixture.aveRequests.length, 3, scenario);
+    assert.equal(radarFixture.aveRequests.length, 2, scenario);
   }
+});
+
+test('a new pool never screened takes a promotion slot ahead of busier pools that keep failing', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  const failing = [B, C, D].map((token, index) => busyMarket(token, { sells5m: 0, volume5m: 9_000 - index * 1_000 }));
+  let pools = [B, C, D];
+  radarFixture.chainLogs = { newPools: async (chain, options) => {
+    const reads = await Promise.all(pools.map(token => newPool(token)(chain, options)));
+    return { ...reads[0], pools: reads.flatMap(read => read.pools) };
+  } };
+  radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now,
+    markets: [...failing, busyMarket(A, { volume5m: 500 })].filter(market => addresses.includes(market.address)) });
+  await radarFixture.runCycle('cycle-slots-1');
+  assert.deepEqual([B, C, D].map(token => promotedAt(radarFixture, token)), [NOW, NOW, null], 'the two busiest first');
+
+  pools = [A];
+  radarFixture.clock.now = NOW + scannerSettings.scanIntervalMs;
+  await radarFixture.runCycle('cycle-slots-2');
+  assert.deepEqual([A, B, C, D].map(token => promotedAt(radarFixture, token)), [radarFixture.clock.now, NOW, NOW, radarFixture.clock.now],
+    'the new pool and the one never screened, though both failing ones are busier');
+  assert.equal(radarFixture.candidate(A).status, 'LIVE_READY');
 });
 
 test('a token vetoed as a lead is never promoted from the watch again', async () => {
