@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DexBatchMarketOverlay, SecondaryValidator, aggregateSecondarySources, dexScreenerTokenUrl, secondaryChainSupport } from '../src/providers/secondary.mjs';
+import { DexBatchMarketOverlay, SecondaryValidator, aggregateSecondarySources, dexScreenerTokenUrl, fetchDexMarkets, secondaryChainSupport } from '../src/providers/secondary.mjs';
 import { safetyVerdict } from '../src/scoring/safety.mjs';
 
 const evmAddress = '0x1111111111111111111111111111111111111111';
@@ -124,6 +124,16 @@ test('batch overlay never applies base-token price or market cap to a requested 
   assert.deepEqual([result.buys_5m, result.sells_5m, result.swaps_5m], [null, null, 10]);
   for (const field of ['buy_volume_5m', 'sell_volume_5m', 'volume', 'swaps', 'buys', 'sells']) assert.equal(result[field], null);
   assert.equal(result.marketOverlayPriceUpdated, false);
+});
+
+test('a watch market names each requested token by its own side of the pair', async () => {
+  const at = 1_800_000_000_000;
+  const fetchImpl = async () => jsonResponse([completeDexPair({
+    quoteToken: { address: otherEvmAddress, symbol: 'QUOTE', name: 'Quote' }, txns: { m5: { buys: 9, sells: 1 } }, pairCreatedAt: at - 600_000
+  })]);
+  const { markets } = await fetchDexMarkets('bsc', [evmAddress, otherEvmAddress], { fetchImpl, now: () => at });
+  assert.deepEqual(markets.map(market => [market.address, market.symbol, market.name, market.priceUsd]),
+    [[evmAddress, 'DOG', 'Test Dog', 0.000012], [otherEvmAddress, 'QUOTE', 'Quote', null]]);
 });
 
 test('batch overlay never mixes a different Dex pool with pair-scoped AVE evidence', async () => {

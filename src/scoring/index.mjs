@@ -130,23 +130,26 @@ export function createdAt(row) {
 // AVE discovery is a market-only shortlist screened on token-level facts; it
 // does not screen by pool, so a pool's type, hook or history never decides it.
 // Missing proprietary GMGN fields do not block the shortlist, but are never
-// fabricated into a deep-audit pass.
+// fabricated into a deep-audit pass. A promoted new pool's DexScreener row is
+// screened the same way; it has no launch time, so its pool's creation dates it.
 export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
-  const now = nowSec * 1000, chain = config.chain;
+  const now = nowSec * 1000, chain = config.chain, dexScreener = row.marketProvider === 'DEXSCREENER';
   const mcValue = optionalNonNegativeNumber(row.market_cap), liquidityValue = optionalNonNegativeNumber(row.liquidity);
-  const launchAt = optionalNumber(row.launch_at), tokenAt = row.ageBasis === 'launch' || row.ageBasis === 'token'
+  const fallbackBasis = dexScreener ? 'pool' : 'token';
+  const launchAt = optionalNumber(row.launch_at), tokenAt = row.ageBasis === 'launch' || row.ageBasis === fallbackBasis
     ? optionalNumber(row.creation_timestamp) : null;
   const created = launchAt !== null && launchAt > 0 ? launchAt : tokenAt;
-  const ageBasis = launchAt !== null && launchAt > 0 ? 'launch' : tokenAt !== null && tokenAt > 0 ? 'token' : 'unknown';
+  const ageBasis = launchAt !== null && launchAt > 0 ? 'launch' : tokenAt !== null && tokenAt > 0 ? fallbackBasis : 'unknown';
   const ageSec = created !== null && created > 0 ? nowSec - created : 0;
   const mc = mcValue ?? 0, liquidity = liquidityValue ?? 0, volume = optionalNonNegativeNumber(row.volume_5m);
   const reasons = knownRiskReasons(row, { ...config, strictLiquidity: config.minLiquidity });
   if (row.chain !== chain || !validTokenAddress(row.address) || /^0x(?:0{40}|e{40})$/i.test(row.address || '')) reasons.push('链或代币地址不匹配');
   if (!(optionalNumber(row.price) > 0)) reasons.push('价格数据未知');
+  // DexScreener keeps no source clock: our read time stands in, so its row is fresh for a minute after the read.
   const capturedAt = optionalNumber(row.capturedAt), sourceUpdatedAt = optionalNumber(row.sourceUpdatedAt);
   if (row.stale === true || capturedAt === null || sourceUpdatedAt === null || capturedAt <= 0 || sourceUpdatedAt <= 0 ||
     capturedAt > now || sourceUpdatedAt > capturedAt || now - capturedAt > 60000 || now - sourceUpdatedAt > 60000 ||
-    row.expiresAt != null && (optionalNumber(row.expiresAt) === null || row.expiresAt <= now)) reasons.push('AVE 行情已过期或原始时间未核验');
+    row.expiresAt != null && (optionalNumber(row.expiresAt) === null || row.expiresAt <= now)) reasons.push(dexScreener ? 'DexScreener 行情已过期或读取时间未核验' : 'AVE 行情已过期或原始时间未核验');
   // A fresh pool response may omit market cap. Token fallback keeps its own
   // original clock; a fresh pool must never refresh an old token market cap.
   if (Object.hasOwn(row, 'marketCapSourceUpdatedAt') && (optionalNumber(row.marketCapSourceUpdatedAt) === null ||
@@ -180,7 +183,7 @@ export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
   const signals = discoverySignalView(row), priorityBand = mc >= config.priorityMinMarketCap && mc <= config.priorityMaxMarketCap;
   const score = (priorityBand ? 35 : 10) + Math.min(25, liquidity / 1000) + Math.min(20, (volume || 0) / 1000) + Math.min(20, num(row.holder_count) / 10);
   return { pass: reasons.length === 0, reasons: [...new Set(reasons)], priorityBand, score, mc, liquidity, ageSec, ageBasis,
-    marketProvider: 'AVE', createdAt: created, signals,
+    marketProvider: row.marketProvider, createdAt: created, signals,
     unknownFields: ['rugRatio', 'bundler', 'insider', 'wash', 'honeypot'].filter(field => ({ rugRatio: optionalRate(row.rug_ratio), bundler: optionalRate(row.bundler_rate),
       insider: optionalRate(row.rat_trader_amount_rate), wash: optionalBoolean(row.is_wash_trading), honeypot: optionalBoolean(row.is_honeypot) })[field] === null) };
 }
@@ -201,7 +204,7 @@ export function knownRiskReasons(row, config) {
 }
 
 export function discoveryScreen(row, config, nowSec = Date.now() / 1000) {
-  if (row?.marketProvider === 'AVE') return aveDiscoveryScreen(row, config, nowSec);
+  if (row?.marketProvider === 'AVE' || row?.marketProvider === 'DEXSCREENER') return aveDiscoveryScreen(row, config, nowSec);
   const mcValue = optionalNumber(first(row.market_cap, row.usd_market_cap, row.mcp));
   const createdValue = optionalNumber(first(row.creation_timestamp, row.created_timestamp, row.open_timestamp));
   const liquidityValue = optionalNumber(row.liquidity);

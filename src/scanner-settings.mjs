@@ -17,7 +17,7 @@ export const scannerSettings = Object.freeze({
   priorityMinMarketCap: 20_000,
   priorityMaxMarketCap: 80_000,
   minLiquidity: 3_000,
-  // A new pool on the watchlist is read from AVE (5 credits) only once it trades this much in 5 minutes,
+  // A new pool on the watchlist is screened only once it trades this much in 5 minutes,
   // within the market-cap band, above minLiquidity and at least minAgeSec old.
   onchainMinVolume5m: 300,
   onchainMinBuys5m: 5,

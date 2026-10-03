@@ -52,6 +52,8 @@ export function publicToken(row, screen, chain) {
   const twitter = first(row.twitter, row.twitter_username, row.link?.twitter_username) || '';
   const duplicateValue = first(row.twitter_dup, row.social_dup);
   const duplicateSocial = ['1', 'true', 'yes'].includes(String(duplicateValue ?? '').toLowerCase());
+  // A screened market row (AVE, or DexScreener for a promoted new pool) keeps its unknown fields unknown.
+  const market = row.marketProvider === 'AVE' || row.marketProvider === 'DEXSCREENER';
   return {
     address: String(row.address),
     chain,
@@ -61,7 +63,7 @@ export function publicToken(row, screen, chain) {
     liquidity: screen.liquidity,
     price: numberOrNull(first(row.price, row.price_usd, row.usd_price)),
     createdAt: createdAt(row),
-    ...(row.marketProvider === 'AVE' ? { marketProvider: 'AVE', ageBasis: screen.ageBasis || row.ageBasis || 'unknown',
+    ...(market ? { marketProvider: row.marketProvider, ageBasis: screen.ageBasis || row.ageBasis || 'unknown',
       capturedAt: row.capturedAt, sourceUpdatedAt: row.sourceUpdatedAt, expiresAt: row.expiresAt, stale: row.stale,
       pairAddress: row.pairAddress, poolCreatedAt: row.poolCreatedAt, firstTradeAt: row.firstTradeAt,
       volume5m: numberOrNull(row.volume_5m), buys5m: numberOrNull(row.buys_5m), sells5m: numberOrNull(row.sells_5m),
@@ -69,10 +71,10 @@ export function publicToken(row, screen, chain) {
     ageSec: screen.ageSec,
     priorityBand: screen.priorityBand,
     discoveryScore: screen.score,
-    holders: row.marketProvider === 'AVE' ? numberOrNull(row.holder_count) : num(row.holder_count),
-    volume1h: row.marketProvider === 'AVE' ? numberOrNull(row.volume_1h) : num(first(row.volume_1h, row.volume)),
-    buys: row.marketProvider === 'AVE' ? numberOrNull(row.buys_5m) : num(first(row.buys_24h, row.buys)),
-    sells: row.marketProvider === 'AVE' ? numberOrNull(row.sells_5m) : num(first(row.sells_24h, row.sells)),
+    holders: market ? numberOrNull(row.holder_count) : num(row.holder_count),
+    volume1h: market ? numberOrNull(row.volume_1h) : num(first(row.volume_1h, row.volume)),
+    buys: market ? numberOrNull(row.buys_5m) : num(first(row.buys_24h, row.buys)),
+    sells: market ? numberOrNull(row.sells_5m) : num(first(row.sells_24h, row.sells)),
     twitter: twitterHandle(twitter),
     socialHints: {
       followerCount: num(first(row.x_user_follower, row.x_follower)),

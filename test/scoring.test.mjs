@@ -332,3 +332,17 @@ test('an AVE token without a launch time is dated by its creation time, as the l
   assert.equal(screen.ageBasis, 'token');
   assert.equal(createdAt({ ...row, pool_created_at: nowSec - 3600 }), nowSec - 30 * 3600);
 });
+
+test('a promoted pool\'s DexScreener row is dated by its pool and fresh for a minute after our read; an AVE row is never dated by a pool', () => {
+  const now = Date.now(), nowSec = Math.floor(now / 1000);
+  const row = { address: `0x${'a'.repeat(40)}`, chain: 'arc', marketProvider: 'DEXSCREENER', price: 0.5, market_cap: 50_000, liquidity: 12_000,
+    holder_count: null, buy_tax: null, sell_tax: null, creation_timestamp: nowSec - 3600, launch_at: null, ageBasis: 'pool',
+    volume_5m: 900, buys_5m: 20, sells_5m: 5, capturedAt: now - 1_000, sourceUpdatedAt: now - 1_000 };
+  const screen = discoveryScreen(row, { ...config, chain: 'arc' }, now / 1000);
+  assert.equal(screen.pass, true, screen.reasons.join(' | '));
+  assert.deepEqual([screen.ageBasis, screen.createdAt, screen.marketProvider], ['pool', nowSec - 3600, 'DEXSCREENER']);
+  assert.deepEqual(discoveryScreen({ ...row, capturedAt: now - 61_000, sourceUpdatedAt: now - 61_000 }, { ...config, chain: 'arc' }, now / 1000).reasons,
+    ['DexScreener 行情已过期或读取时间未核验']);
+  const avePool = { ...row, marketProvider: 'AVE' };
+  assert.deepEqual(discoveryScreen(avePool, { ...config, chain: 'arc' }, now / 1000).reasons, ['上线时间未知']);
+});

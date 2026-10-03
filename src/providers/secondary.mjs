@@ -211,7 +211,8 @@ function parseDexBatch(payload, { dexChainId, tokenAddresses, capturedAt }) {
       swaps5m: buys5m !== null && sells5m !== null && Number.isSafeInteger(buys5m + sells5m) ? buys5m + sells5m : null
     };
     for (const tokenAddress of members) {
-      const market = { ...poolMarket,
+      const token = tokenAddress === baseAddress ? pair.baseToken : pair.quoteToken;
+      const market = { ...poolMarket, symbol: cleanString(token?.symbol, 40), name: cleanString(token?.name, 100),
         // DexScreener's price/market-cap fields describe baseToken only. Pool
         // metrics remain valid when the requested token happens to be quote.
         priceUsd: tokenAddress === baseAddress ? optionalNonNegative(pair.priceUsd) : null,
