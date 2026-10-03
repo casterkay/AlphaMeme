@@ -11,6 +11,7 @@ import { safetyVerdict } from '../src/scoring/safety.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
 import { SqliteRecoverableScannerStore, stableEffectId } from '../src/storage/recoverable-scanner.mjs';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
+import { readTelegramStatistics } from '../src/bot/statistics.mjs';
 import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 
 const NOW = 1_800_000_000_000;
@@ -302,8 +303,7 @@ test('a new pool that trades enough is screened from its DexScreener market with
   assert.deepEqual(radarFixture.events().map(event => [event.type, event.address]), [['CANDIDATE_NEW', A]]);
   const [row] = radarFixture.state('feed.snapshot:arc').rows;
   assert.deepEqual([row.address, row.pass, row.ageBasis, row.holders], [A, true, 'pool', null]);
-  // Its baseline price is DexScreener's, so AVE candles never sample it.
-  assert.deepEqual(radarFixture.outcome(A).cohortMetadata, { baselineProvider: 'DEXSCREENER' });
+  assert.equal(radarFixture.outcome(A), null, 'a DexScreener quote is not an outcome baseline');
   const watched = radarFixture.state('discovery.pools:arc');
   assert.equal(watched.cursor, 1_000);
   assert.deepEqual(watched.pools.map(pool => [pool.token, pool.promotedAt]), [[A, NOW]]);
@@ -314,6 +314,25 @@ test('a new pool that trades enough is screened from its DexScreener market with
   assert.deepEqual(cursors, [null, 1_000], 'the next cycle reads on from the committed cursor');
   assert.equal(promotedAt(radarFixture, A), NOW, 'a promoted token is not promoted again within five minutes');
   assert.equal(radarFixture.aveRequests.length, 2);
+});
+
+test('a promoted lead is not counted in outcomes until the hot list quotes it, which then sets its AVE baseline', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  radarFixture.chainLogs = { newPools: newPool(A) };
+  radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [busyMarket(A)] : [] });
+  radarFixture.hotList = [radarFixture.quote(B)];
+  await radarFixture.runCycle('cycle-outcomes-1');
+  assert.deepEqual([A, B].map(token => radarFixture.candidate(token).status), ['LIVE_READY', 'LIVE_READY']);
+  // Performance counts the hot-list lead alone.
+  const performance = readTelegramStatistics(radarFixture.storage, TENANT, NOW + 7 * 60 * MINUTE).arc;
+  assert.equal(performance.tracked, 1);
+  assert.deepEqual(['eligible', 'completed', 'missing'].map(key => performance.coverage.passed.h6[key]), [1, 0, 1]);
+
+  radarFixture.clock.now = NOW + 10 * MINUTE;
+  radarFixture.hotList = [radarFixture.quote(A, { price: 0.003 })];
+  await radarFixture.runCycle('cycle-outcomes-2');
+  const outcome = radarFixture.outcome(A);
+  assert.deepEqual([outcome.cohortMetadata, outcome.baselineAt, outcome.baselinePrice], [{ baselineProvider: 'AVE' }, NOW + 10 * MINUTE - 5_000, 0.003]);
 });
 
 test('a promoted pool keeps its taxes and holder count unknown in the screened row', async () => {

@@ -455,12 +455,14 @@ export class RecoverableScanner {
       if (sampled) outcomes.push(sampled);
     }
     const tracked = new Set(stored.map(outcome => addressKey(outcome.address)));
+    // Only AVE samples outcomes, so only an AVE quote is a baseline. A lead promoted from DexScreener is
+    // tracked from its first sighting on the hot list, if any, until a DexScreener sampler exists (#102).
     for (const { row, candidate } of leads) {
       const price = tokenInfoPrice(row, now), baselineAt = numberOrNull(row.sourceUpdatedAt);
-      if (tracked.has(addressKey(candidate.address)) || !(price > 0) || !(baselineAt > 0)) continue;
+      if (row.marketProvider !== 'AVE' || tracked.has(addressKey(candidate.address)) || !(price > 0) || !(baselineAt > 0)) continue;
       outcomes.push({ chain, address: candidate.address, symbol: candidate.symbol, initialDecision: 'LIVE_READY', latestDecision: 'LIVE_READY',
         baselineAt, baselinePrice: price, lastAuditedAt: observedAt, latestFailed: [], samples: {}, sampleRetries: {},
-        sampling: 'ALL_LEADS', strategyVersion: 'ave-leads-v1', cohortMetadata: { baselineProvider: row.marketProvider } });
+        sampling: 'ALL_LEADS', strategyVersion: 'ave-leads-v1', cohortMetadata: { baselineProvider: 'AVE' } });
     }
     const discoveryError = record?.error || null;
     const feed = {
