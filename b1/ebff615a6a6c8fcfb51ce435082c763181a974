@@ -1,0 +1,19 @@
+docs/reports/2026-10-03-ave-gmgn-screening-comparison.md
+  s_706bba7c303a46::t_f967b3604bdfe9 1-167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b1ebff615a6a6c8fcfb51ce435082c763181a974",
+  "prompts": {},
+  "sessions": {
+    "s_706bba7c303a46": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10025-71a2-7702-b8af-dba7723bb6d3",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
