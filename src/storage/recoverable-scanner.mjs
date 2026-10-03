@@ -588,10 +588,11 @@ export class SqliteRecoverableScannerStore {
     }
     const leads = value.leads.map(item => candidateInput(item, this.tenantId, next.chain));
     const eliminated = [...new Map(value.eliminated.map(item => {
-      if (!item || typeof item.address !== 'string' || !Array.isArray(item.reasons) || !item.reasons.every(reason => typeof reason === 'string')) {
-        throw new RecoverableScannerError('SCREEN_COMMIT_INVALID', 'an eliminated lead needs its address and screen reasons');
+      if (!item || typeof item.address !== 'string' || !Array.isArray(item.reasons) || !item.reasons.every(reason => typeof reason === 'string')
+        || typeof item.screen?.ruleset !== 'string' || !item.screen.verdicts || typeof item.screen.verdicts !== 'object') {
+        throw new RecoverableScannerError('SCREEN_COMMIT_INVALID', 'an eliminated lead needs its address, screen reasons and verdicts');
       }
-      return [canonicalAddress(item.address), item.reasons.slice(0, 3)];
+      return [canonicalAddress(item.address), { reasons: item.reasons.slice(0, 3), screen: item.screen }];
     })).entries()];
     const outcomes = value.outcomes.map(item => outcomeInput(item, this.tenantId, next.chain));
     const events = value.events.map(item => ({ address: canonicalAddress(item.address),
@@ -603,13 +604,13 @@ export class SqliteRecoverableScannerStore {
         throw new RecoverableScannerError('CYCLE_CHECKPOINT_IMMUTABLE_CONFLICT', 'cycle identity and epochs cannot change after creation');
       }
       for (const lead of leads) this.#upsertCandidate(lead, { keepEvidence: true });
-      // A lead that fails a screen is no longer live, but stays with the reasons it failed.
-      for (const [address, reasons] of eliminated) {
+      // A lead that fails a screen is no longer live, but stays with the reasons it failed and that screen's verdicts.
+      for (const [address, { reasons, screen }] of eliminated) {
         this.storage.sql.exec(
           `UPDATE candidates SET stale_at = MIN(COALESCE(stale_at, ?), ?),
-             metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.screenFailedAt', ?, '$.screenReasons', json(?))
+             metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.screenFailedAt', ?, '$.screenReasons', json(?), '$.screen', json(?))
            WHERE tenant_id = ? AND chain = ? AND address = ? AND status = 'LIVE_READY'`,
-          next.updatedAt, next.updatedAt, next.updatedAt, JSON.stringify(reasons), this.tenantId, next.chain, address
+          next.updatedAt, next.updatedAt, next.updatedAt, JSON.stringify(reasons), JSON.stringify(screen), this.tenantId, next.chain, address
         );
       }
       for (const outcome of outcomes) this.#upsertOutcome(outcome);

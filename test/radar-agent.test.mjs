@@ -9,6 +9,7 @@ import { SecondaryValidator } from '../src/providers/secondary.mjs';
 import { scannerSettings } from '../src/scanner-settings.mjs';
 import { DISCOVERY_REJECT, REJECTED_SAMPLE_DAILY_CAP, outcomeCohort, sampledForRejection } from '../src/scoring/outcomes.mjs';
 import { safetyVerdict } from '../src/scoring/safety.mjs';
+import { RULESET_VERSION, SCREEN_RULES } from '../src/scoring/screen.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
 import { SqliteRecoverableScannerStore, stableEffectId } from '../src/storage/recoverable-scanner.mjs';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
@@ -173,6 +174,10 @@ test('a fresh AVE trending row that passes the screen becomes a lead with an eve
   assert.equal(lead.status, 'LIVE_READY');
   assert.equal(lead.staleAt, NOW + scannerSettings.liveLeadRetentionMs);
   assert.equal(lead.metadata.qualifiedAt, NOW);
+  // The lead and its outcome carry the screen's ruleset and every rule's verdict.
+  assert.equal(lead.metadata.screen.ruleset, RULESET_VERSION);
+  assert.deepEqual(Object.keys(lead.metadata.screen.verdicts), SCREEN_RULES.map(rule => rule.id));
+  assert.equal(lead.metadata.screen.verdicts.MARKET_CAP_OUT_OF_RANGE, 'CLEAR');
   assert.equal(lead.secondary, null);
   assert.deepEqual(radarFixture.events().map(({ type, address: token }) => ({ type, token })), [{ type: 'CANDIDATE_NEW', token: A }]);
   assert.equal(JSON.parse(radarFixture.events()[0].data_json).reviewRevision, lead.reviewRevision);
@@ -182,6 +187,7 @@ test('a fresh AVE trending row that passes the screen becomes a lead with an eve
   assert.equal(outcome.baselineAt, NOW - 5_000);
   assert.equal(outcome.baselinePrice, 0.002);
   assert.deepEqual(outcome.samples, {});
+  assert.deepEqual(outcome.cohortMetadata, { baselineProvider: 'AVE', screen: lead.metadata.screen });
   const feed = radarFixture.state('feed.snapshot:bsc');
   assert.equal(feed.status, 'READY');
   assert.equal(feed.leadCount, 1);
@@ -223,7 +229,8 @@ test('a lead that fails a later screen or leaves the hot list stays, no longer l
   assert.equal(failed.status, 'LIVE_READY', 'a failing screen keeps the lead and its evidence');
   assert.equal(failed.staleAt, NOW + 10 * MINUTE, 'it is no longer live, so it cannot alert');
   assert.equal(failed.metadata.screenFailedAt, NOW + 10 * MINUTE);
-  assert.ok(failed.metadata.screenReasons.length > 0);
+  assert.deepEqual(failed.metadata.screenReasons, ['MARKET_CAP_OUT_OF_RANGE']);
+  assert.equal(failed.metadata.screen.verdicts.MARKET_CAP_OUT_OF_RANGE, 'HIT', 'the failing screen\'s verdicts replace the passing one\'s');
   assert.equal(radarFixture.candidate(B).status, 'LIVE_READY', 'absence from one hot list is not elimination');
 
   radarFixture.clock.now = NOW + 11 * MINUTE;
@@ -231,6 +238,7 @@ test('a lead that fails a later screen or leaves the hot list stays, no longer l
   await radarFixture.runCycle('cycle-leads-3');
   assert.ok(radarFixture.candidate(A).staleAt > radarFixture.clock.now, 'passing again makes it live again');
   assert.equal(radarFixture.candidate(A).metadata.screenFailedAt, undefined);
+  assert.equal(radarFixture.candidate(A).metadata.screen.verdicts.MARKET_CAP_OUT_OF_RANGE, 'CLEAR');
   assert.deepEqual(radarFixture.events().map(event => event.type), ['CANDIDATE_NEW', 'CANDIDATE_NEW'], 'a lead that passes again is not new again');
 
   radarFixture.clock.now = NOW + scannerSettings.liveLeadRetentionMs + 1;
@@ -335,7 +343,7 @@ test('a promoted lead is not counted in outcomes until the hot list quotes it, w
   radarFixture.hotList = [radarFixture.quote(A, { price: 0.003 })];
   await radarFixture.runCycle('cycle-outcomes-2');
   const outcome = radarFixture.outcome(A);
-  assert.deepEqual([outcome.cohortMetadata, outcome.baselineAt, outcome.baselinePrice], [{ baselineProvider: 'AVE' }, NOW + 10 * MINUTE - 5_000, 0.003]);
+  assert.deepEqual([outcome.cohortMetadata.baselineProvider, outcome.baselineAt, outcome.baselinePrice], ['AVE', NOW + 10 * MINUTE - 5_000, 0.003]);
   // Its verdict starts from the check it already had, not as pending.
   assert.equal(outcome.latestDecision, safetyVerdict(radarFixture.candidate(A)));
   assert.notEqual(outcome.latestDecision, 'PENDING');
@@ -703,7 +711,8 @@ test('hot-list tokens the screen rejects fill a stable one-in-five control cohor
   for (const row of baselines) {
     assert.deepEqual([row.initialDecision, row.latestDecision, row.baselineAt, row.baselinePrice, outcomeCohort(row)],
       [DISCOVERY_REJECT, null, NOW - 5_000, 0.001, 'rejected']);
-    assert.ok(row.latestFailed.includes('MARKET_CAP_OUT_OF_RANGE'), JSON.stringify(row.latestFailed));
+    assert.deepEqual(row.latestFailed, ['MARKET_CAP_OUT_OF_RANGE']);
+    assert.deepEqual([row.cohortMetadata.screen.ruleset, row.cohortMetadata.screen.verdicts.MARKET_CAP_OUT_OF_RANGE], [RULESET_VERSION, 'HIT']);
   }
   assert.deepEqual(radarFixture.store.readCandidateAddresses('bsc'), []);
   assert.equal(radarFixture.secondaryCalls.length, 0);
@@ -732,8 +741,9 @@ test('a sampled rejection that later passes the screen gives way to a lead basel
   radarFixture.hotList = [radarFixture.quote(token, { price: 0.002 })];
   await radarFixture.runCycle('cycle-late-lead-2');
   const lead = radarFixture.outcome(token);
-  assert.deepEqual([lead.initialDecision, lead.baselineAt, lead.baselinePrice, lead.samples, lead.cohortMetadata],
-    ['LIVE_READY', NOW + 7 * MINUTE - 5_000, 0.002, {}, { baselineProvider: 'AVE', rejectedAt: NOW - 5_000 }]);
+  assert.deepEqual([lead.initialDecision, lead.baselineAt, lead.baselinePrice, lead.samples, lead.cohortMetadata.rejectedAt],
+    ['LIVE_READY', NOW + 7 * MINUTE - 5_000, 0.002, {}, NOW - 5_000]);
+  assert.equal(lead.cohortMetadata.screen.verdicts.MARKET_CAP_OUT_OF_RANGE, 'CLEAR', 'the lead carries the screen that admitted it');
   assert.equal(outcomeCohort(lead), 'passed');
 });
 
