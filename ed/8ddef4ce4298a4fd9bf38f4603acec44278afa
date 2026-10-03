@@ -1,0 +1,49 @@
+src/bot/panels.mjs
+  s_e9d978d309853c::t_0c1e09fba115af 201-224,319-320,334
+src/providers/secondary.mjs
+  s_e9d978d309853c::t_5ec9a7d43d8e4e 377-420,434,463,544-549,561,572
+src/recoverable-scanner.mjs
+  s_e9d978d309853c::t_f5f29088c4f9c5 2-3,568-571,584-588
+src/render/whitelist.mjs
+  s_e9d978d309853c::t_22ee4d8d41e86c 49-65,103-104
+src/scanner-settings.mjs
+  s_e9d978d309853c::t_8a36bfe2aa4876 37
+src/scoring/audit.mjs
+  s_e9d978d309853c::t_f7cf4efbc60ac6 1-85
+src/scoring/index.mjs
+  s_e9d978d309853c::t_9714b946daec29 423
+src/scoring/rules.mjs
+  s_e9d978d309853c::t_8495c49af9d156 12-14
+src/scoring/screen.mjs
+  s_e9d978d309853c::t_13318daa60da2a 3
+test/audit.test.mjs
+  s_e9d978d309853c::t_274f27306d39fe 1-117
+test/fixtures/goplus-arc-memespad.json
+  s_e9d978d309853c::t_ee506988a55ff1 1-148
+test/fixtures/goplus-bsc-tart.json
+  s_e9d978d309853c::t_178b0b656d0a18 1-176
+test/fixtures/goplus-eth-agl.json
+  s_e9d978d309853c::t_a095b1e56fe438 1-150
+test/radar-agent.test.mjs
+  s_e9d978d309853c::t_93a784b7fab62e 3,635-676
+test/telegram-panels.test.mjs
+  s_e9d978d309853c::t_360a6ab0399d86 9-10,309-337
+test/whitelist.test.mjs
+  s_e9d978d309853c::t_a00bc47f4ad19d 27-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ed8ddef4ce4298a4fd9bf38f4603acec44278afa",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
