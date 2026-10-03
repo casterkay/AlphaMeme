@@ -496,6 +496,37 @@ test('a token 61 s old that passes every other check becomes a lead that cycle o
   }
 });
 
+test('more than one batch of young pools is read every cycle in parallel requests, a failed one shown in source health', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  const tokens = Array.from({ length: 40 }, (_, index) => `0x${(index + 1).toString(16).padStart(40, '0')}`);
+  radarFixture.chainLogs = { newPools: async (_chain, { cursor }) => ({ head: 1_000, fromBlock: (cursor ?? 880) + 1, toBlock: 1_000, skippedBlocks: 0,
+    pools: cursor === null ? tokens.map(token => ({ token, pool: `0x${'9'.repeat(64)}`, venue: 'Uniswap v4', block: 995 })) : [] }) };
+  let batches = [], failing = null;
+  radarFixture.dexMarkets = async (_chain, addresses) => {
+    batches.push(addresses);
+    if (addresses.includes(failing)) throw Object.assign(new Error('DexScreener rate limit'), { code: 'HTTP_429' });
+    return { capturedAt: radarFixture.clock.now, markets: [] };
+  };
+  const checkedAt = () => new Map(radarFixture.state('discovery.pools:arc').pools.map(pool => [pool.token, pool.checkedAt]));
+  for (const cycle of [1, 2]) {
+    batches = [];
+    radarFixture.clock.now = NOW + (cycle - 1) * scannerSettings.scanIntervalMs;
+    await radarFixture.runCycle(`cycle-young-${cycle}`);
+    assert.deepEqual(batches.map(batch => batch.length), [30, 10], `cycle ${cycle}`);
+    assert.deepEqual(batches.flat().sort(), [...tokens].sort(), `cycle ${cycle}: every young pool`);
+    assert.ok(tokens.every(token => checkedAt().get(token) === radarFixture.clock.now), `cycle ${cycle}`);
+    assert.deepEqual(radarFixture.state('runtime.sourceHealth').discovery.watch, { ok: true, count: 40, requests: 2, failedRequests: 0 });
+  }
+
+  failing = tokens[0];
+  radarFixture.clock.now += scannerSettings.scanIntervalMs;
+  await radarFixture.runCycle('cycle-young-3');
+  const failed = batches.find(batch => batch.includes(failing)), read = batches.find(batch => !batch.includes(failing));
+  assert.ok(failed.every(token => checkedAt().get(token) < radarFixture.clock.now), 'a failed batch leaves its tokens unchecked');
+  assert.ok(read.every(token => checkedAt().get(token) === radarFixture.clock.now));
+  assert.deepEqual(radarFixture.state('runtime.sourceHealth').discovery.watch, { ok: true, count: 40, requests: 2, failedRequests: 1 });
+});
+
 test('the log cursor advances only when the screen commits, so an interrupted cycle replays its range', async () => {
   const radarFixture = radar({ chain: 'arc', onchain: true });
   radarFixture.chainLogs = { newPools: newPool(A) };

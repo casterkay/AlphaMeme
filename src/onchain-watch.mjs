@@ -16,11 +16,16 @@ const REPROMOTE_MS = 5 * 60_000;
 
 export const emptyWatchState = () => ({ cursor: null, pools: [] });
 
-/** The tokens to check on DexScreener this cycle: those checked longest ago first, newest pools first among equals. */
-export function watchTargets(state, newPools, now) {
-  return mergePools(state.pools, newPools, now)
-    .sort((a, b) => (a.checkedAt ?? 0) - (b.checkedAt ?? 0) || b.firstSeenAt - a.firstSeenAt)
-    .slice(0, WATCH_BATCH).map(pool => pool.token);
+/**
+ * The tokens to check on DexScreener this cycle, in batches of WATCH_BATCH: every young pool (first seen
+ * within youngPoolAgeMs), in as many batches as they need up to maxWatchRequestsPerCycle, with older pools
+ * filling the slots left. Within each group, those checked longest ago first, newest pools first among equals.
+ */
+export function watchTargets(state, newPools, now, { youngPoolAgeMs, maxWatchRequestsPerCycle }) {
+  const pools = mergePools(state.pools, newPools, now), young = pool => now - pool.firstSeenAt < youngPoolAgeMs;
+  const requests = Math.min(maxWatchRequestsPerCycle, Math.max(1, Math.ceil(pools.filter(young).length / WATCH_BATCH)));
+  return pools.sort((a, b) => young(b) - young(a) || (a.checkedAt ?? 0) - (b.checkedAt ?? 0) || b.firstSeenAt - a.firstSeenAt)
+    .slice(0, requests * WATCH_BATCH).map(pool => pool.token);
 }
 
 function mergePools(pools, newPools, now) {
