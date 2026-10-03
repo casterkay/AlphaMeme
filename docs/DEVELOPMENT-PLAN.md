@@ -1,12 +1,15 @@
 # Development plan: screening, measurement and hosting
 
-Status: proposed, 2026-10-02. It reconciles open issues #1, #2, #76 and #102–#107,
+Status: accepted, 2026-10-02; updated 2026-10-03. It reconciles open issues #1, #2, #76 and #102–#107,
 PR #112 and the VPS move (`docs/VPS-MIGRATION-PLAN.md`) into one sequence.
 Live facts below were read from AVE, GoPlus, DexScreener and GeckoTerminal on
-2026-10-02.
+2026-10-02 and 2026-10-03.
 
 ## Principles
 
+- **Alert as early as possible.** Most tokens live 15–20 minutes. A token with
+  no obvious problem (high tax, trap, scam) is alerted in its first minutes, not
+  after its run.
 - **An alert never waits for a per-token read.** The hot-list screen uses only
   fields already in the AVE trending row. Everything that needs a per-token read
   runs after the alert and moves the token's safety verdict
@@ -21,7 +24,9 @@ Live facts below were read from AVE, GoPlus, DexScreener and GeckoTerminal on
 - **Measure before enforcing.** New rules ship in shadow mode and are enforced
   only once outcomes (#102) show that they help.
 
-## Decisions (owner, 2026-10-02)
+## Decisions (owner)
+
+Decisions 1–9 date from 2026-10-02, 10–13 from 2026-10-03.
 
 1. **The `PASSED` badge is the end state.** There is no manual review step: #1's
    "memo" is `PASSED`, and K4 (a person states the launch reason) is dropped. The
@@ -54,6 +59,18 @@ Live facts below were read from AVE, GoPlus, DexScreener and GeckoTerminal on
    labeled as DexScreener's sell count (decision 6's counterpart for rows
    without AVE's distinct sellers). One source stands in per check, AVE's when
    AVE gave a count. Implemented (#119).
+10. **The minimum age is 60 s**, not 5 minutes, on both discovery paths. The
+    5-minute minimum fed the old deep audit's 5-minute candle observation; the
+    other screen checks stay, and GoPlus still vetoes after the alert (#120).
+11. **A promoted pool that fails the screen is rechecked every cycle**, whatever
+    the reason, instead of waiting 30 minutes. Pools never screened go first,
+    so one that keeps failing cannot starve new pools (#120).
+12. **Young pools are read every cycle.** Pools under about 20 minutes old are
+    re-read on DexScreener each cycle, with more than one request when needed,
+    up to a fixed cap; older idle pools less often (#120).
+13. **Each token's stage times are recorded**, from pool creation to alert
+    delivery and the first complete GoPlus check, as structured logs and as
+    facts on the lead, so latency tuning rests on data (#120).
 
 ## Where things stand
 
@@ -69,6 +86,23 @@ Discovery has two entrances, both screened by `aveDiscoveryScreen`:
 A passing token becomes a lead and is alerted → GoPlus check (at most 3 per
 cycle) → a fatal flag vetoes the lead and edits the alert. Nothing else runs
 after the alert.
+
+### How early alerts are (2026-10-03)
+
+A passing token's alert is enqueued within seconds: the scheduler reconciles
+notifications on every step. The delay is all before the screen:
+
+- **The hot list finds tokens late.** It ranks by popularity. In a live Arc
+  snapshot of 100 rows, 74 were 6–24 h old, 4 under 1 h, none under 5 minutes;
+  the youngest (about 17 minutes) already had 441 buys in 5 minutes. AVE's
+  "New" ranking lists no Arc tokens. The hot list confirms runs; it cannot
+  catch launches.
+- **The new-pool path is the only early path, and it is mostly down on
+  Cloudflare**, where Arc's public RPC and DexScreener answer 429. The VPS move
+  is therefore the precondition for early alerts, not only for GMGN.
+- **Inside that path**, the 5-minute minimum age, a 30-minute lockout after one
+  failed screen, and a watchlist that re-reads each pool only every few cycles
+  added minutes more. Decisions 10–13 remove them (#120).
 
 ### Data each source gives
 
@@ -125,12 +159,15 @@ before, so its checks stay in shadow until it proves stable from the VPS IP.
    It carries everything the screen gates on (the token's first pool's creation
    stands in for launch time) except taxes, which stay unknown so GoPlus decides
    after the alert, and AVE's source clock, for which our read time stands in.
+4. **Discovery is too slow for 15–20 minute tokens** (#120). See "How early
+   alerts are" above; fix: decisions 10–13.
 
 ## How the issues fit
 
 | Item | Disposition |
 |---|---|
-| PR #112 | Merge first (AVE taxes at the screen, GoPlus tax veto, gap rule removed). |
+| PR #112 | Merged with #115 (AVE taxes at the screen, GoPlus tax veto, gap rule removed). |
+| #120 discovery latency | **First**, before the foundation: alert speed is the product. Independent of the VPS, but it pays off once the new-pool path works there. |
 | #105 rule table | **Foundation.** Every later rule lands as a row in it. Absorbs #76 (screen reasons localized from rule ids). |
 | #103 remove GMGN code | **Rescoped:** delete the non-AVE `discoveryScreen` branch, the 1 m→5 m fallbacks and the `X_REVIEW`/`QUALIFIED` manual-review path (after checking stored rows); port the deep-audit checks into #105 instead of deleting them. |
 | #102 outcomes | **Measurement**, needed before any shadow rule is enforced. Off-list price samples come from DexScreener. Its cohorts gain the per-rule verdicts from #105. |
@@ -140,7 +177,7 @@ before, so its checks stay in shadow until it proves stable from the VPS IP.
 | #1 two-stage filter | Its rules become rule-table rows; placement below. K1 and K4 are dropped (decisions 1 and 3). |
 | #2 Pons origin (Robinhood) | Later. It adds a new provider (Bitquery) and matters only while scanning Robinhood. |
 | #60 unused DexScreener overlay | Unchanged: the unused overlay goes. The watch's DexScreener reader (`dexMarkets`) is the client that #102, #106 and promotions extend. |
-| VPS move | Separate track owned by its own session. GMGN, DexScreener and GeckoTerminal depend on it. |
+| VPS move | Separate track owned by its own session. GMGN, DexScreener and GeckoTerminal depend on it, and so do early alerts: it unblocks the new-pool path. |
 
 ### #1's rules, placed
 
@@ -174,8 +211,8 @@ before, so its checks stay in shadow until it proves stable from the VPS IP.
 Each step is one issue, one branch, one PR. Items in the same step can run in
 parallel.
 
-1. **Now:** merge PR #112. Fix defects 1 and 3 (decisions 6 and 7), one PR
-   each.
+1. **Done:** PR #112 and #115; defects 1 and 3 (#118, #119).
+   **Now:** #120, discovery latency (decisions 10–13).
 2. **Foundation:** #105 rule table with a parity test over recorded rows,
    folding in #76 and rescoped #103. In parallel: #102's rejected cohort and
    cohort split, which need no new reads.
