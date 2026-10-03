@@ -164,3 +164,17 @@ for (const minutes of [15, 20, 25, 30]) {
     assert.equal(incomplete.gasUsd, 0);
   });
 }
+
+for (const [beforeMinutes, afterMinutes] of [[5, 20], [5, 30], [10, 20], [10, 30], [15, 20], [15, 30]]) {
+  test(`TP fill extends the ${beforeMinutes}m timer to ${afterMinutes}m since entry, while unfilled TP exits at ${beforeMinutes}m`, () => {
+    const policy = { ...POLICIES[2], trailingAthFraction: 0.98,
+      timeStopSeconds: beforeMinutes * 60, timeStopAfterTakeProfitSeconds: afterMinutes * 60 };
+    const result = replay(pool([point(0, 1), point(2, 3), point(3, 3)]), clean, 1, policy, 1, costs);
+    assert.equal(result.fills[1].reason, 'take_profit');
+    assert.equal(result.fills[2].reason, 'time_stop');
+    assert.equal(result.fills[2].blockNumber, afterMinutes * 60 + 2);
+    const unfilled = replay(pool([point(0, 1)]), clean, 1, policy, 1, costs);
+    assert.equal(unfilled.fills[1].reason, 'time_stop');
+    assert.equal(unfilled.fills[1].blockNumber, beforeMinutes * 60 + 2);
+  });
+}
