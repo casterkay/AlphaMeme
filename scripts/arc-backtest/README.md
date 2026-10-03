@@ -36,3 +36,19 @@ node scripts/arc-backtest/run.mjs \
 ```
 
 Historical pool and Transfer logs use Arc RPC. When configured, Alchemy handles batched historical token metadata calls. Entry features are saved separately and joined to trades by `entryFeatureKey`, so screening rules can filter the existing ledger without another chain download or execution replay. See [feature definitions and offline filtering](features-README.md). To replay saved features, replace `--capture-entry-features` with `--features-file ENTRY_FEATURES.json`.
+
+## Chain screening models
+
+Train two LightGBM classifiers on the +4-block / 40% at 2.5x slice: positive net P&L and net loss greater than $0.10 (5% of stake). Only historical entry features enter the models. A chronological 60/20/20 token split purges the 20-minute holding horizon before validation and test. Thresholds and simple chain rules use validation only.
+
+```sh
+python3 -m venv .runtime/arc-backtest/ml-env
+.runtime/arc-backtest/ml-env/bin/pip install -r scripts/arc-backtest/requirements-ml.txt
+.runtime/arc-backtest/ml-env/bin/python scripts/arc-backtest/train_screening.py \
+  --input .runtime/arc-backtest/results468 \
+  --output .runtime/arc-backtest/screening4 \
+  --report docs/reports/2026-10-03-arc-chain-screening-lightgbm.md
+.runtime/arc-backtest/ml-env/bin/python -m unittest discover -s test -p test_arc_screening.py
+```
+
+Outputs include two native LightGBM model files, held-out predictions, gain importance, precision/recall operating points, and screening effects on loss dollars, failed exits, heavy losses and retained P&L. Training labels follow the baseline's unknown-honeypot-clear case; retained P&L also shows the unknown-blocked case. Simple-rule missing values never match a condition. macOS LightGBM requires the OpenMP runtime (`libomp`).
