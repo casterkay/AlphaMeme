@@ -1,0 +1,158 @@
+{
+  "configuration": {
+    "delayBlocks": 4,
+    "takeProfitFraction": 0.4,
+    "takeProfitMultiple": 2.5,
+    "stakeUsd": 2,
+    "trailingActiveAfterTakeProfit": true,
+    "athSinceEntry": true,
+    "fixedScreenRule": {
+      "usdcMin": 0.0,
+      "usdcShareMin": 1.1e-05,
+      "usdcShareMax": 0.5,
+      "holderMax": 0.49942,
+      "feeMaxPips": 10000.0,
+      "marketCapMin": 300.0,
+      "marketCapMax": 9941.18,
+      "allowMissingHolder": true,
+      "allowMissingFee": false
+    }
+  },
+  "manifest": {
+    "chainId": 5042,
+    "fromBlock": 23507072,
+    "toBlock": 24017877,
+    "captureToBlock": 24020322,
+    "fromTimestamp": 1790755125,
+    "toTimestamp": 1791014325,
+    "captureToTimestamp": 1791015565,
+    "blockSeconds": 0.5075,
+    "followUpSeconds": 1241,
+    "fromBlockHash": "0xc6522a790ebba247bcd4b18f3301f7853da9a859b9d93b8e6208f0668f410277",
+    "captureToBlockHash": "0xd13e3141fd097fe4e2d96b3ba67e4f97ee519de16f8571030432a5906cd07fc0",
+    "sampledBaseFeePerGas": "0x4a817c800",
+    "timestampSource": "RPC log blockTimestamp; interpolated only when absent",
+    "eventDataThroughDelayBlocks": 20,
+    "scope": "Earliest native-USDC or ERC20-USDC paired pool per token created in window, across the two configured Arc Uniswap v3/v4 factories; not token deployment or pre-migration curves",
+    "discoveryLogs": 7488,
+    "nonQuotePools": 66,
+    "duplicateTokenPools": 652,
+    "pools": 6770,
+    "fundedPools": 6200,
+    "noFundedPools": 570,
+    "requestCount": 0,
+    "cacheHits": 309
+  },
+  "costs": {
+    "stakeUsd": 2,
+    "slippageBps": 50,
+    "gasPriceUsdPerUnit": 2e-08,
+    "swapGasUnits": 250000,
+    "approvalGasUnits": 50000,
+    "exitDelayBlocks": 1,
+    "dynamicFeePips": 3000
+  },
+  "securitySummary": {
+    "queried": 6200,
+    "unavailableResponses": 0,
+    "honeypots": 16,
+    "incomplete": 2988,
+    "missingBuyTax": 0,
+    "missingSellTax": 0
+  },
+  "rows": [
+    {
+      "athPercent": 80,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 16862.837698880256,
+      "gasUsd": 77.54500000000154,
+      "netUsd": 4385.292698880221,
+      "conservativeNetUsd": -3927.0569647734237,
+      "evPerEntryUsd": 0.7073052740129389,
+      "winRate": 0.22370967741935485,
+      "failedExits": 1016,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3843,
+        "trailing_stop": 1089,
+        "honeypot": 16,
+        "stop_loss": 252,
+        "liquidity_disappeared": 1000,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 4584.406301173078,
+        "conservativeNetUsd": -1681.8848072350893,
+        "failedExits": 984
+      }
+    },
+    {
+      "athPercent": 85,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 16771.41828464995,
+      "gasUsd": 77.54500000000154,
+      "netUsd": 4293.873284649906,
+      "conservativeNetUsd": -3923.9297100879935,
+      "evPerEntryUsd": 0.6925602072015977,
+      "winRate": 0.22693548387096774,
+      "failedExits": 975,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3836,
+        "trailing_stop": 1137,
+        "honeypot": 16,
+        "stop_loss": 252,
+        "liquidity_disappeared": 959,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 4490.259031542956,
+        "conservativeNetUsd": -1680.047285137359,
+        "failedExits": 943
+      }
+    },
+    {
+      "athPercent": 90,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 17135.332487173288,
+      "gasUsd": 77.54500000000154,
+      "netUsd": 4657.787487173215,
+      "conservativeNetUsd": -3912.143176242056,
+      "evPerEntryUsd": 0.7512560463182605,
+      "winRate": 0.24403225806451612,
+      "failedExits": 821,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3833,
+        "trailing_stop": 1294,
+        "honeypot": 16,
+        "stop_loss": 252,
+        "liquidity_disappeared": 805,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 4852.517869836714,
+        "conservativeNetUsd": -1669.3915050672647,
+        "failedExits": 789
+      }
+    }
+  ]
+}

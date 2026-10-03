@@ -131,8 +131,8 @@ export function replay(pool, security, delay, policy, blockSeconds, costs = DEFA
     const prices = observations.length ? observations : latestDepth ? [{ price: latestDepth.price, high }] : [];
     let reason = null;
     if (prices.some(point => point.price <= entryPrice * 0.5)) reason = 'stop_loss';
-    else if (takeProfitFilled && (trailingWasActive ? prices.some(point => point.price <= point.high * 0.9)
-      : latestDepth && latestDepth.price <= high * 0.9)) reason = 'trailing_stop';
+    else if (takeProfitFilled && (trailingWasActive ? prices.some(point => point.price <= point.high * (policy.trailingAthFraction ?? 0.9))
+      : latestDepth && latestDepth.price <= high * (policy.trailingAthFraction ?? 0.9))) reason = 'trailing_stop';
     else if (block >= deadlineBlock) reason = 'time_stop';
     else if (!takeProfitFilled && prices.some(point => point.price >= entryPrice * policy.multiple)) reason = 'take_profit';
     if (reason) pending = { reason, blockNumber: block + costs.exitDelayBlocks };

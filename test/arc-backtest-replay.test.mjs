@@ -138,3 +138,15 @@ test('requested grid produces six cells and joins entry features without changin
   assert.deepEqual(joined.rows.map(row => [row.delayBlocks, row.policy]), grid.delays.flatMap(delay => grid.policies.map(policy => [delay, policy.name])));
   assert.ok(joined.trades.every(trade => trade.entryFeatureKey === `token:${trade.delayBlocks}`));
 });
+
+for (const [trailingAthFraction, expectedExitBlock] of [[0.9, 5], [0.85, 7], [0.8, 9]]) {
+  test(`${trailingAthFraction * 100}% ATH trailing stop waits for its own retracement after take-profit`, () => {
+    const source = pool([point(0, 1), point(2, 4), point(3, 4), point(4, 3.5),
+      point(5, 3.5), point(6, 3.3), point(7, 3.3), point(8, 3.1), point(9, 3.1)]);
+    const result = replay(source, clean, 1, { ...POLICIES[2], trailingAthFraction }, 1, costs);
+    assert.equal(result.fills[1].reason, 'take_profit');
+    assert.equal(result.fills[1].blockNumber, 3);
+    assert.equal(result.fills[2].reason, 'trailing_stop');
+    assert.equal(result.fills[2].blockNumber, expectedExitBlock);
+  });
+}
