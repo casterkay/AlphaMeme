@@ -1,0 +1,54 @@
+src/scoring/screen.mjs
+  s_e9d978d309853c::t_7aaf4d4ea1d9b0 1-143,146-160
+  s_e9d978d309853c::t_7601f00572a321 144-145
+test/screen-parity.test.mjs
+  s_e9d978d309853c::t_8aa479aed9cc6e 1-108
+test/screen-rules.test.mjs
+  s_e9d978d309853c::t_a9129e7977e3ff 1-41
+src/bot/panels.mjs
+  s_e9d978d309853c::t_5b0bb580baec54 112-113,161,191-204
+src/recoverable-scanner.mjs
+  s_e9d978d309853c::t_852040398b8cb2 3
+  s_e9d978d309853c::t_aae87be7bb327e 142-144,162,458,480,490,502
+src/scanner-settings.mjs
+  s_e9d978d309853c::t_72c7a38d9164fe 13-14
+src/scoring/index.mjs
+  s_e9d978d309853c::t_2aa016cdb8b60e 3
+src/scoring/parse.mjs
+  s_e9d978d309853c::t_09858096434a7a 1-59
+test/ave-provider.test.mjs
+  s_e9d978d309853c::t_424d7ed6ee525c 5,101
+test/fixtures/discovery-screen-oracle.mjs
+  s_e9d978d309853c::t_b79093979665f1 1-149
+test/fixtures/screen-rows.json
+  s_e9d978d309853c::t_d0fa9a7c6bbce9 1-198
+test/radar-agent.test.mjs
+  s_e9d978d309853c::t_230e04d9767650 198-200,369-371,400-402,503-504
+  s_e9d978d309853c::t_44f494b376b002 12,177-180,190,232-233,241,346,714-715,744-746
+test/risk-filters.test.mjs
+  s_e9d978d309853c::t_ef7ffb42489a74 5-6,16-17,61-66
+test/scoring.test.mjs
+  s_e9d978d309853c::t_a69d3340b7ffdd 5,7,269,276,283-284,289,324,326
+test/telegram-panels.test.mjs
+  s_e9d978d309853c::t_0898fa397829ec 3,8,124,130-143,358-360,364-366
+src/scoring/outcomes.mjs
+  s_e9d978d309853c::t_f105b950b4b476 8,11-13
+src/storage/recoverable-scanner.mjs
+  s_e9d978d309853c::t_61f9c1f8d008eb 591-593,595,607-608,611,613
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "56a870d0c9cf917f02d87b9259a716706e720eb5",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
