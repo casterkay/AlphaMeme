@@ -1,6 +1,6 @@
 # Arc immediate baseline
 
-Read-only research CLI with selectable block delays and take-profit policies. Stake is fixed at $2. No screening, signing, deployment, or production integration.
+Read-only research CLI with selectable block delays and take-profit policies. Stake is fixed at $2. Block delays are modeled execution latency from first active liquidity, not intentional waiting rules or production settings. No screening, signing, deployment, or production integration.
 
 ```sh
 node scripts/arc-backtest/run.mjs --hours 72 --env-file .dev.vars
