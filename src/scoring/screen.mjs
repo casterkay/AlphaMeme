@@ -1,6 +1,6 @@
 import { validTokenAddress } from '../address.mjs';
 import { num, optionalCount, optionalNonNegativeNumber, optionalNumber, optionalRate } from './parse.mjs';
-import { ADMIT, CLEAR, DROP, ENFORCE, HIT, SHADOW, UNKNOWN, evaluateRules, rulesetVersion } from './rules.mjs';
+import { ADMIT, CLEAR, DROP, ENFORCE, HIT, SHADOW, UNKNOWN, evaluateRules, known, rulesetVersion } from './rules.mjs';
 import { taxBreaches } from './tax.mjs';
 
 /**
@@ -15,7 +15,6 @@ import { taxBreaches } from './tax.mjs';
  * cycle snapshots them.
  */
 
-const known = (value, hit) => value === null ? UNKNOWN : hit ? HIT : CLEAR;
 const required = present => present ? CLEAR : UNKNOWN;
 const ageVerdict = (market, hit) => market.ageSec === null ? UNKNOWN : hit(market.ageSec) ? HIT : CLEAR;
 // A 5-minute side volume AVE reports must be positive; one it reports but that cannot be read counts as none.

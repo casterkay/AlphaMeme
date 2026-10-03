@@ -198,6 +198,30 @@ const screenReasonLabels = {
   NO_SELL_VOLUME_5M:['近5分钟卖出额不足或未核验','No verified 5m sell volume'],NO_BUYS_5M:['近5分钟无买入成交','No buys in 5m'],NO_SELLS_5M:['近5分钟无卖出成交','No sells in 5m'],
   NAME_BLOCKLISTED:['名称含官方、空投等仿冒词','Name has an impersonation term (official, airdrop…)']
 };
+
+// The post-alert audit's checks (src/scoring/audit.mjs), with the fact each one shows.
+const auditLabels = {
+  OWNER_NOT_RENOUNCED:['所有者','Owner'],LP_NOT_LOCKED:['LP锁定或销毁','LP locked or burned',['lpLockedRate','rate']],TOP10_CONCENTRATED:['前十持仓','Top-10 holders',['top10Rate','rate']],
+  DEV_HOLD_TOO_HIGH:['创建者持仓','Creator holdings',['creatorRate','rate']],LIQUIDITY_BELOW_STRICT:['流动性','Liquidity',['liquidity','money']],CREATOR_HONEYPOT_HISTORY:['创建者貔貅记录','Creator honeypot history'],
+  SELL_ALL_SIMULATION:['全额卖出模拟','full-balance sell'],OBSERVATION_5M:['5分钟观察','5m observation'],CHART_RISK:['K线风险','chart risk'],RUG_RATIO:['跑路比例','rug ratio'],
+  INSIDER_RATE:['内部人','insiders'],BUNDLER_RATE:['捆绑','bundlers'],SNIPER_RATE:['狙击','snipers'],WASH_TRADING:['刷量','wash trading'],WALLET_ANALYSIS:['钱包分析','wallet analysis'],
+  MARKET_BEHAVIOR:['市场行为','market behavior'],CREATOR_LAUNCHES_24H:['创建者24小时发币','creator launches in 24h'],SELF_TRADING:['对倒','self-trading'],HOLDERS_GROWING:['持有人增长','holder growth']
+};
+
+// The shadow audit, grouped by verdict; it never moves the safety verdict, so it says so.
+function auditLines(audit,locale) {
+  if (!audit) return [];
+  const L = (zh,en) => localize(locale,zh,en), notRun = new Set(audit.notRun);
+  const label = id => {
+    const [zh,en,fact] = auditLabels[id], value = fact && audit.evidence[fact[0]];
+    return `${L(zh,en)}${present(value) ? ` ${fact[1] === 'money' ? money(value,locale) : percent(value,locale)}` : ''}`;
+  };
+  const ran = verdict => Object.entries(audit.verdicts).filter(([id,value]) => value === verdict && !notRun.has(id) && auditLabels[id]).map(([id]) => label(id));
+  const groups = [[L('发现风险','Flagged'),ran('HIT')],[L('未见风险','Clear'),ran('CLEAR')],[L('未知','Unknown'),ran('UNKNOWN')],
+    [L('未运行（暂无数据源）','Not run, no source yet'),[...notRun].filter(id => auditLabels[id]).map(id => L(...auditLabels[id]))]];
+  return [L('影子审计（不影响结论）','Shadow audit, not enforced'),...groups.filter(([,items]) => items.length).map(([title,items]) => `${title}${L('：',': ')}${items.join(L('、',', '))}`)];
+}
+
 /** The first screen reason that names a rule, localized; null when there is none. */
 export const screenReasonText = (reasons,locale) => {
   const id = (reasons || []).find(value => Object.hasOwn(screenReasonLabels,value));
@@ -292,7 +316,8 @@ function detailPanel(snapshot,session,locale) {
       [L('合约与供应','Contract and supply'),[safeTelegramText(deep.honeypotEvidence,500),...evidenceLines(deep.security || {},locale)]],
       [L('持有人与钱包','Holders and wallets'),evidenceLines(deep.wallets || {},locale)],
       [L('价格与可卖出性','Price and sellability'),[...evidenceLines(deep.observation || {},locale),...evidenceLines(deep.chartRisk || {},locale),...evidenceLines(deep.marketBehavior || {},locale),...evidenceLines(deep.sellability || {},locale)]],
-      [L('第二来源','Second sources'),evidenceLines(row.secondary || {},locale)],
+      // The summary shows the audit; its raw rule ids stay off the evidence pages.
+      [L('第二来源','Second sources'),evidenceLines(Object.fromEntries(Object.entries(row.secondary || {}).filter(([key]) => key !== 'audit')),locale)],
       [L('完整备注','Full note'),[annotation?.note || L('无备注','No note')]]
     ];
     const pages = sections.flatMap(([title,lines]) => textPages(lines.filter(Boolean).length ? lines.filter(Boolean) : [L('未知；未视为通过','Unknown; not treated as passed')],1800).map((items,index) => ({ title:`${ICONS.evidence} ${title} · ${index+1}`,items })));
@@ -306,6 +331,7 @@ function detailPanel(snapshot,session,locale) {
     `<code>${userText(row.address,80)}</code>`];
   blocks.push([annotation?.favorite ? `${ICONS.saved} ${L('已加入自选','In watchlist')}` : '',mark?.decision === 'ignored' ? `${ICONS.ignore} ${name('ignored',locale)}` : '',
     annotation?.note ? `${ICONS.note} "${userText(annotation.note,140)}${annotation.note.length>140 ? `…"${L('（完整备注见证据）',' (full note in Evidence)')}` : '"'}` : ''].filter(Boolean).join(' · '));
+  blocks.push(auditLines(row.secondary?.audit,locale).join('\n'));
   if (!row.auditedAt) blocks.push(L('审计快照已不再保留，或尚未审计。','Audit snapshot no longer retained, or not yet audited.'));
   if (backendDisposition(row) === 'lead' && safety.verdict !== 'VETOED' && row.secondary?.status !== 'COMPLETE') blocks.push(L('市场线索：安全性尚未核验。','Market lead: safety not yet verified.'));
   // Buy follows the engine's safetyState: a vetoed lookup of the same token vetoes it too.

@@ -9,6 +9,9 @@ export const HIT = 'HIT', CLEAR = 'CLEAR', UNKNOWN = 'UNKNOWN';
 export const ADMIT = 'ADMIT', DROP = 'DROP', UNDECIDED = 'UNDECIDED';
 export const ENFORCE = 'ENFORCE', SHADOW = 'SHADOW';
 
+/** A fact's verdict: UNKNOWN when it was not read, else HIT when the rule's condition holds. */
+export const known = (value, hit) => value === null ? UNKNOWN : hit ? HIT : CLEAR;
+
 /**
  * The ruleset's identity: a hash of every rule's id, version, role and mode and
  * the values of the settings it declares, so a changed rule or threshold changes

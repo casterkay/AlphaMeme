@@ -374,6 +374,50 @@ function findGoPlusRecord(payload, tokenAddress) {
 // stays UNKNOWN so callers can recheck instead of treating it as a clean bill.
 const securityVerdict = (fatal, complete) => fatal.length ? 'FATAL' : complete ? 'NO_FATAL_FLAGS' : 'UNKNOWN';
 
+const walletAddress = value => {
+  const address = normalizedAddress(value);
+  return /^0x[0-9a-f]{40}$/.test(address) ? address : null;
+};
+
+// A holder list as GoPlus sent it, or null when it sent none or any entry cannot be read: a partial list would understate a share.
+function holderList(value, entry) {
+  if (!Array.isArray(value) || value.length > 100) return null;
+  const list = value.map(entry);
+  return list.every(Boolean) ? list : null;
+}
+
+function holderEntry(item) {
+  const address = walletAddress(item?.address), rate = optionalRate(item?.percent), locked = optionalBoolean(item?.is_locked);
+  return address && rate !== null && locked !== null ? { address, rate, locked, contract: optionalBoolean(item.is_contract), tag: cleanString(item.tag, 60) } : null;
+}
+
+// A V3 or V4 liquidity position is an NFT, which GoPlus lists under the holder's NFT_list.
+function lpHolderEntry(item) {
+  const holder = holderEntry(item);
+  return holder && { ...holder, nftPositions: Array.isArray(item.NFT_list) && item.NFT_list.length > 0 };
+}
+
+/**
+ * The holder distribution in a GoPlus token record, validated: top holders and
+ * LP holders (null when absent or unreadable), the creator's address and share,
+ * the owner's address (null when GoPlus omits it), whether the creator made a
+ * honeypot before, and the token's pools (pair addresses; venue types such as
+ * UniV2 or UniV4, whose pools have no address of their own).
+ */
+function parseHoldings(record) {
+  const dex = Array.isArray(record.dex) ? record.dex.filter(item => item && typeof item === 'object') : [];
+  return {
+    holders: holderList(record.holders, holderEntry),
+    lpHolders: holderList(record.lp_holders, lpHolderEntry),
+    lpTotalSupply: optionalNonNegative(record.lp_total_supply),
+    creatorAddress: walletAddress(record.creator_address), creatorRate: optionalRate(record.creator_percent),
+    ownerAddress: walletAddress(record.owner_address),
+    creatorHoneypots: optionalBoolean(record.honeypot_with_same_creator),
+    pairAddresses: [...new Set(dex.map(item => walletAddress(item.pair)).filter(Boolean))],
+    venues: [...new Set(dex.map(item => cleanString(item.liquidity_type, 16)).filter(Boolean))]
+  };
+}
+
 function parseGoPlus(payload, { tokenAddress }) {
   if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
     const error = new Error('unexpected GoPlus JSON shape');
@@ -387,7 +431,7 @@ function parseGoPlus(payload, { tokenAddress }) {
   }
   const record = findGoPlusRecord(payload, tokenAddress);
   if (!record) return {
-    found: false,
+    found: false, holdings: null,
     security: { complete: false, verdict: 'UNKNOWN', fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null }
   };
   const fields = {};
@@ -416,6 +460,7 @@ function parseGoPlus(payload, { tokenAddress }) {
   const complete = unknownFields.length === 0;
   return {
     found: true,
+    holdings: parseHoldings(record),
     security: {
       complete,
       verdict: securityVerdict(fatal, complete),
@@ -496,6 +541,12 @@ export function aggregateSecondarySources({ chain, tokenAddress, sources = {}, d
   };
 }
 
+/** The holder distribution of a recorded GoPlus check, or null when GoPlus did not answer it. */
+export function goPlusHoldings(sources) {
+  const value = sources?.goPlus?.value;
+  return value?.source?.status === 'OK' && value.holdings && typeof value.holdings === 'object' ? value.holdings : null;
+}
+
 /** Reads a token's GoPlus security record, signed in with the app key when `goPlusAuth` holds one. */
 export class SecondaryValidator {
   constructor({ goPlusAuth = null, fetchImpl = globalThis.fetch, timeoutMs = 8_000, maxResponseBytes = DEFAULT_MAX_BYTES, now = () => Date.now() } = {}) {
@@ -507,7 +558,7 @@ export class SecondaryValidator {
     this.now = now;
   }
 
-  /** The token's GoPlus check as a source record; a failure is recorded, never thrown. */
+  /** The token's GoPlus check as a source record, with its holder distribution; a failure is recorded, never thrown. */
   async fetchSource({ chain, tokenAddress, signal } = {}) {
     const chainId = GOPLUS_EVM_CHAIN_IDS[cleanString(chain, 24).toLowerCase()];
     const address = cleanString(tokenAddress, 128);
@@ -518,7 +569,7 @@ export class SecondaryValidator {
       const headers = this.goPlusAuth ? { Authorization: await this.goPlusAuth.accessToken({ signal }) } : {};
       const payload = await requestJson(this.fetchImpl, url, { ...this, signal, headers });
       const parsed = parseGoPlus(payload, { tokenAddress: address });
-      return { source: sourceState(parsed.found ? 'OK' : 'NO_DATA'), security: parsed.security };
+      return { source: sourceState(parsed.found ? 'OK' : 'NO_DATA'), security: parsed.security, holdings: parsed.holdings };
     } catch (error) {
 
       // A refused request may mean the token was revoked early; the next check signs in again.

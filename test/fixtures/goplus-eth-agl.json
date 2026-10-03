@@ -1,0 +1,150 @@
+{
+ "code": 1,
+ "message": "OK",
+ "result": {
+  "0x63401cdd577478f9389a1683e866a937f072d1c2": {
+   "token_symbol": "AGL",
+   "is_honeypot": "0",
+   "is_open_source": "1",
+   "is_mintable": "0",
+   "owner_change_balance": "0",
+   "hidden_owner": "0",
+   "cannot_sell_all": "0",
+   "selfdestruct": "0",
+   "external_call": "0",
+   "slippage_modifiable": "0",
+   "personal_slippage_modifiable": "0",
+   "transfer_pausable": "0",
+   "is_blacklisted": "0",
+   "trading_cooldown": "0",
+   "buy_tax": "0",
+   "sell_tax": "0",
+   "holders": [
+    {
+     "address": "0x000000000004444c5dc75cb358380d2e3de08a90",
+     "tag": "",
+     "is_contract": 1,
+     "balance": "192895716.938206990700951099",
+     "percent": "0.193507957243243663",
+     "is_locked": 0
+    },
+    {
+     "address": "0xe484e65d448614340fea2d04a6cecf37c9682716",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "142762959.578932931194206091",
+     "percent": "0.143216081293131198",
+     "is_locked": 0
+    },
+    {
+     "address": "0x24c4aca603a15e879b247267915532269d710ccc",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "121018108.461440810259662183",
+     "percent": "0.121402213224446660",
+     "is_locked": 0
+    },
+    {
+     "address": "0x431f51879bf087251a1446c30649d0cf71715c7e",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "25499249.749687068112273882",
+     "percent": "0.025580182953869905",
+     "is_locked": 0
+    },
+    {
+     "address": "0x8f6869cde54151b13dc94b9b083f533f3bd1152f",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "24460260.896974444365296884",
+     "percent": "0.024537896408174714",
+     "is_locked": 0
+    },
+    {
+     "address": "0xa946e5d929ace7e4d23ddfa050799553871db039",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "24025414.588200464487705328",
+     "percent": "0.024101669921338962",
+     "is_locked": 0
+    },
+    {
+     "address": "0x2385a8a95066e23fdf604f10b7e90ffb4c0877a9",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "20581701.375190365488323463",
+     "percent": "0.020647026553624248",
+     "is_locked": 0
+    },
+    {
+     "address": "0xcb4da8cb56945525614377fe6a0c7f797dc7c451",
+     "tag": "",
+     "is_contract": 1,
+     "balance": "18540077.265776328538186344",
+     "percent": "0.018598922442542169",
+     "is_locked": 0
+    },
+    {
+     "address": "0x03cbfe1b86ee20420ae88d16125c5642a7813ec2",
+     "tag": "",
+     "is_contract": 0,
+     "balance": "17577359.610323661910849048",
+     "percent": "0.017633149174656037",
+     "is_locked": 0
+    },
+    {
+     "address": "0xf4cae757d3d028b5f77557c4253e08fd3da28007",
+     "tag": "",
+     "is_contract": 1,
+     "balance": "14821895.897920226197639379",
+     "percent": "0.014868939773283573",
+     "is_locked": 0
+    }
+   ],
+   "lp_holders": [
+    {
+     "address": "0x63401cdd577478f9389a1683e866a937f072d1c2",
+     "tag": "",
+     "value": "416917.15446015975986089290",
+     "is_contract": 1,
+     "balance": "192469.621223142870118663",
+     "percent": "1.000000000000000000",
+     "NFT_list": [
+      {
+       "value": "416917.15446015975986089290",
+       "NFT_id": "428051",
+       "amount": "192469.621223142870118663",
+       "in_effect": "1",
+       "NFT_percentage": "1.000000000000000000"
+      }
+     ],
+     "is_locked": 0
+    }
+   ],
+   "lp_total_supply": "192469.6212231429",
+   "creator_address": "0xcc4981815cdbdd881a2a110ef60d099990bc70ae",
+   "creator_percent": "0.000000",
+   "owner_address": "0x9afdee0b0af90945e47e0d4e8d3139669a7c5f1a",
+   "owner_percent": "0.0",
+   "holder_count": "447",
+   "honeypot_with_same_creator": "0",
+   "dex": [
+    {
+     "name": "UniswapV4",
+     "liquidity_type": "UniV4",
+     "pair": "0x02a13b057643e001f9436fa86e3c28945b6c4475a34e068df5c6ab4d42ff93bf"
+    },
+    {
+     "name": "UniswapV4",
+     "liquidity_type": "UniV4",
+     "pair": "0x287ca685e0da66d3501904d815122201cafe1af2633ee0588825664d19224b9a"
+    },
+    {
+     "name": "UniswapV4",
+     "liquidity_type": "UniV4",
+     "pair": "0x1d8e5a570965965c0ed9692252772f4e719b03a3c39280e91db5223587e966b1"
+    }
+   ]
+  }
+ }
+}
