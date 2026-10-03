@@ -468,7 +468,7 @@ test('a new pool too quiet, too young or already on the hot list is not promoted
     ['few buys', busyMarket(A, { buys5m: 2 }), []],
     ['thin liquidity', busyMarket(A, { liquidity: 1_000 }), []],
     ['too large', busyMarket(A, { marketCap: 500_000 }), []],
-    ['too young', busyMarket(A, { pairCreatedAt: NOW - MINUTE, firstPairCreatedAt: NOW - MINUTE }), []],
+    ['too young', busyMarket(A, { pairCreatedAt: NOW - 59_000, firstPairCreatedAt: NOW - 59_000 }), []],
     ['on the hot list', busyMarket(A), [A]]
   ]) {
     const radarFixture = radar({ chain: 'arc', onchain: true });
@@ -477,6 +477,21 @@ test('a new pool too quiet, too young or already on the hot list is not promoted
     radarFixture.hotList = hotList.map(token => radarFixture.quote(token));
     await radarFixture.runCycle(`cycle-quiet-${scenario.replaceAll(" ", "-")}`);
     assert.deepEqual(radarFixture.state('discovery.pools:arc').pools.map(pool => [pool.token, pool.promotedAt ?? null]), [[A, null]], scenario);
+  }
+});
+
+test('a token 61 s old that passes every other check becomes a lead that cycle on either path; at 59 s it does not', async () => {
+  for (const [ageMs, lead] of [[61_000, true], [59_000, false]]) {
+    const hotList = radar();
+    hotList.hotList = [hotList.quote(A, { launchedAgoMs: ageMs })];
+    await hotList.runCycle(`cycle-age-hot-${ageMs}`);
+    assert.equal(hotList.candidate(A)?.status === 'LIVE_READY', lead, `hot list, ${ageMs} ms`);
+
+    const pools = radar({ chain: 'arc', onchain: true });
+    pools.chainLogs = { newPools: newPool(A) };
+    pools.dexMarkets = async () => ({ capturedAt: pools.clock.now, markets: [busyMarket(A, { pairCreatedAt: NOW - ageMs, firstPairCreatedAt: NOW - ageMs })] });
+    await pools.runCycle(`cycle-age-pool-${ageMs}`);
+    assert.equal(pools.candidate(A)?.status === 'LIVE_READY', lead, `new pool, ${ageMs} ms`);
   }
 });
 

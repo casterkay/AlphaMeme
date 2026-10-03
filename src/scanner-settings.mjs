@@ -12,7 +12,8 @@ export const scannerSettings = Object.freeze({
   liveLeadRetentionMs: 30 * 60_000,
   // A screened quote, and an AVE market cap's own clock, are trusted this long after their source time.
   maxQuoteAgeMs: 60_000,
-  minAgeSec: 5 * 60,
+  // One minute: most tokens live 15–20 minutes, so a later alert spends too much of the run.
+  minAgeSec: 60,
   maxAgeSec: 7 * 86400,
   discoveryMinMarketCap: 10_000,
   discoveryMaxMarketCap: 150_000,
