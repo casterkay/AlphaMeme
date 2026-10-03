@@ -1,0 +1,25 @@
+src/scoring/screen.mjs
+  s_e9d978d309853c::t_ca25ba0f6b1428 15-17,30,32,34,36,38,40,42,44,46,49,51,53,56,59,61,63,65,67,69,71-76,78-79,83-89,159,164,168
+test/radar-agent.test.mjs
+  s_e9d978d309853c::t_ce7ecb0c7685f2 12,178,715
+test/screen-parity.test.mjs
+  s_e9d978d309853c::t_e5de3250bb3218 11-14,20
+test/screen-rules.test.mjs
+  s_e9d978d309853c::t_898aa7f157d64a 3-4,6,25,27,29,33-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9d6669b804b273a636b5def09eb4f00d534cef32",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
