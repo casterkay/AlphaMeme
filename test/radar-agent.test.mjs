@@ -9,7 +9,7 @@ import { SecondaryValidator } from '../src/providers/secondary.mjs';
 import { scannerSettings } from '../src/scanner-settings.mjs';
 import { DISCOVERY_REJECT, REJECTED_SAMPLE_DAILY_CAP, outcomeCohort, sampledForRejection } from '../src/scoring/outcomes.mjs';
 import { safetyVerdict } from '../src/scoring/safety.mjs';
-import { RULESET_VERSION, SCREEN_RULES } from '../src/scoring/screen.mjs';
+import { SCREEN_RULES, rulesetVersion } from '../src/scoring/screen.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
 import { SqliteRecoverableScannerStore, stableEffectId } from '../src/storage/recoverable-scanner.mjs';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
@@ -175,7 +175,7 @@ test('a fresh AVE trending row that passes the screen becomes a lead with an eve
   assert.equal(lead.staleAt, NOW + scannerSettings.liveLeadRetentionMs);
   assert.equal(lead.metadata.qualifiedAt, NOW);
   // The lead and its outcome carry the screen's ruleset and every rule's verdict.
-  assert.equal(lead.metadata.screen.ruleset, RULESET_VERSION);
+  assert.equal(lead.metadata.screen.ruleset, rulesetVersion(SCREEN_RULES, radarFixture.settings));
   assert.deepEqual(Object.keys(lead.metadata.screen.verdicts), SCREEN_RULES.map(rule => rule.id));
   assert.equal(lead.metadata.screen.verdicts.MARKET_CAP_OUT_OF_RANGE, 'CLEAR');
   assert.equal(lead.secondary, null);
@@ -712,7 +712,7 @@ test('hot-list tokens the screen rejects fill a stable one-in-five control cohor
     assert.deepEqual([row.initialDecision, row.latestDecision, row.baselineAt, row.baselinePrice, outcomeCohort(row)],
       [DISCOVERY_REJECT, null, NOW - 5_000, 0.001, 'rejected']);
     assert.deepEqual(row.latestFailed, ['MARKET_CAP_OUT_OF_RANGE']);
-    assert.deepEqual([row.cohortMetadata.screen.ruleset, row.cohortMetadata.screen.verdicts.MARKET_CAP_OUT_OF_RANGE], [RULESET_VERSION, 'HIT']);
+    assert.deepEqual([row.cohortMetadata.screen.ruleset, row.cohortMetadata.screen.verdicts.MARKET_CAP_OUT_OF_RANGE], [rulesetVersion(SCREEN_RULES, radarFixture.settings), 'HIT']);
   }
   assert.deepEqual(radarFixture.store.readCandidateAddresses('bsc'), []);
   assert.equal(radarFixture.secondaryCalls.length, 0);
