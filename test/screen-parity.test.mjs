@@ -89,7 +89,10 @@ test('generated rows across boundaries, missing fields, encodings and clocks pas
       sells_5m: field(() => pick([ABSENT, null, 5, '3']), [...malformed, 0, '0', 1.5]),
       buy_tax: field(() => pick([ABSENT, null, 0, .03, ...encodings(.05)]), [...malformed, .0500001, ...encodings(.06), 1.5, '-1']),
       sell_tax: field(() => pick([ABSENT, null, 0, .03, ...encodings(.05)]), [...malformed, .0500001, ...encodings(.06), 1.5, '-1']),
-      holder_count: pick([ABSENT, null, 0, 150, '2000'])
+      holder_count: pick([ABSENT, null, 0, 150, '2000']),
+      // Names the shadow name rule hits, clears and cannot read; the screen's pass must not follow them.
+      symbol: field(() => pick(['PEPE', 'HOOD', 'OFFICIAL', 'ＡＩＲＤＲＯＰ']), [ABSENT, null, '', 42]),
+      name: field(() => pick(['Pepe', 'Robinhood', 'Teneo Protocol', '官方空投']), [ABSENT, null, '', 42])
     };
     // An AVE row carries its market cap's own clock (the mapper always sets it); a DexScreener row never does.
     if (provider === 'AVE' || next() < .1) {
