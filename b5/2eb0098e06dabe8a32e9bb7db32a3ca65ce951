@@ -1,0 +1,23 @@
+src/scoring/index.mjs
+  s_e9d978d309853c::t_cd37a55ad9cf5f 102-105,120-129,185
+test/risk-filters.test.mjs
+  s_e9d978d309853c::t_1b6a0427fe2365 16,62,65-67
+test/scoring.test.mjs
+  s_e9d978d309853c::t_047945d3f89fe8 19-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b52eb0098e06dabe8a32e9bb7db32a3ca65ce951",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
