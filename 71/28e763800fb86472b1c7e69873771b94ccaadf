@@ -1,0 +1,25 @@
+docs/reports/2026-10-03-arc-baseline-468-backtest.json
+  s_02320cd7492a13::t_9eb9ef1dcc186a 1417-1431,1920-1932
+docs/reports/2026-10-03-arc-baseline-468-backtest.md
+  s_02320cd7492a13::t_2561b83feb24e4 47-50,271,357
+docs/reports/2026-10-03-arc-followup-studies.json
+  s_02320cd7492a13::t_7e68739c5f2c03 22-36
+docs/reports/2026-10-03-arc-followup-studies.md
+  s_02320cd7492a13::t_e86c841ba42b44 36-40,57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7128e763800fb86472b1c7e69873771b94ccaadf",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
