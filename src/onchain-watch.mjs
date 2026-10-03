@@ -1,5 +1,5 @@
 // The new-pool watchlist: tokens whose pools the chain logs just created, watched on
-// DexScreener until they trade enough to be worth an AVE market read, or go quiet.
+// DexScreener until they trade enough to be screened from that market, or go quiet.
 // Pure functions over plain JSON, so the state can live in a checkpoint and replay.
 
 const MAX_WATCHED = 500;
@@ -10,9 +10,9 @@ const WATCH_MS = 6 * 60 * 60_000;
 const UNLISTED_MS = 10 * 60_000;
 // Most new pools never trade; one with no trade for this long is dropped.
 const IDLE_MS = 15 * 60_000;
-// A promoted token is read from AVE again only after this long, which keeps an off-list lead current.
+// A promoted token is screened again only after this long, which keeps an off-list lead current.
 const REPROMOTE_MS = 5 * 60_000;
-// One whose read failed or that failed the screen waits longer: most never pass later.
+// One that failed the screen waits longer: most never pass later.
 const REJECTED_MS = 30 * 60_000;
 
 export const emptyWatchState = () => ({ cursor: null, pools: [] });
@@ -33,8 +33,8 @@ function mergePools(pools, newPools, now) {
 const traded = market => (market.buys5m ?? 0) + (market.sells5m ?? 0) > 0 || market.volume5m > 0;
 
 /**
- * Tokens worth an AVE market read: listed on DexScreener with market cap, volume, liquidity, buys and pool age
- * inside the thresholds, not excluded (on this cycle's hot list, or vetoed), not read within REPROMOTE_MS and
+ * Tokens worth screening: listed on DexScreener with market cap, volume, liquidity, buys and pool age
+ * inside the thresholds, not excluded (on this cycle's hot list, or vetoed), not promoted within REPROMOTE_MS and
  * not rejected within REJECTED_MS. At most two, busiest first.
  */
 export function promotions(state, markets, { now, settings, excluded }) {
@@ -44,14 +44,14 @@ export function promotions(state, markets, { now, settings, excluded }) {
     return !excluded.has(market.address) && !(pool?.promotedAt > now - REPROMOTE_MS) && !(pool?.rejectedAt > now - REJECTED_MS)
       && market.marketCap >= settings.discoveryMinMarketCap && market.marketCap <= settings.discoveryMaxMarketCap
       && market.volume5m >= settings.onchainMinVolume5m && market.liquidity >= settings.minLiquidity && (market.buys5m ?? 0) >= settings.onchainMinBuys5m
-      // AVE's screen rejects a token younger than minAgeSec, so reading one earlier would only spend credits.
+      // The screen rejects a token younger than minAgeSec, so promoting one earlier would only start its rejection wait.
       && now - market.pairCreatedAt >= settings.minAgeSec * 1000;
   }).sort((a, b) => b.volume5m - a.volume5m).slice(0, MAX_PROMOTIONS_PER_CYCLE).map(market => market.address);
 }
 
 /**
  * The watchlist after one cycle: new pools added, checked ones updated, promoted ones stamped (and
- * `rejected` ones, whose read failed or that failed the screen, stamped again), and expired ones dropped.
+ * `rejected` ones, which failed the screen, stamped again), and expired ones dropped.
  */
 export function nextWatchState(state, { newPools = null, checked = [], markets = [], promoted = [], rejected = [], now }) {
   const found = new Map(markets.map(market => [market.address, market]));

@@ -65,22 +65,17 @@ function radar({ chain = 'bsc', settings: overrides = {}, onchain = false } = {}
     hotList: [],
     trendingStatus: 200,
     trendingRequests: 0,
+    // Every AVE request the cycle made, as its URL.
+    aveRequests: [],
     verdicts: new Map(),
     secondaryCalls: [],
     priceAt: async () => null,
-    marketRows: new Map(),
-    marketRequests: [],
     // The chain-log and DexScreener stubs a new-pool cycle reads; tests replace them.
     chainLogs: { newPools: async () => assert.fail('no new-pool read expected') },
     dexMarkets: async () => assert.fail('no DexScreener batch expected')
   };
   const fetchImpl = async url => {
-    // An AVE token read for a promoted new pool answers with the row the test set in fixture.marketRows.
-    const details = url.match(/^https:\/\/prod\.ave-api\.com\/v2\/tokens\/(0x[0-9a-f]{40})-/);
-    if (details) {
-      fixture.marketRequests.push(details[1]);
-      return Response.json({ status: 1, data: { token: fixture.marketRows.get(details[1]), pairs: [] } });
-    }
+    fixture.aveRequests.push(url);
     assert.ok(url.startsWith('https://prod.ave-api.com/v2/tokens/trending?'), url);
     fixture.trendingRequests += 1;
     if (fixture.trendingStatus !== 200) return new Response('upstream unavailable', { status: fixture.trendingStatus });
@@ -89,7 +84,6 @@ function radar({ chain = 'bsc', settings: overrides = {}, onchain = false } = {}
   const client = new AveClient({ apiKey: API_KEY, fetchImpl, now: () => clock.now });
   fixture.ave = {
     trending: (name, options) => client.trending(name, options),
-    market: (name, address, options) => client.market(name, address, options),
     priceAt: (...args) => fixture.priceAt(...args)
   };
   fixture.secondary = {
@@ -283,31 +277,74 @@ test('a queued lead that leaves the hot list still gets its check, and a forgott
 // A new pool for `token` in blocks after `cursor`, as the chain-log source reports it.
 const newPool = (token, { head = 1_000 } = {}) => async (_chain, { cursor }) => ({ head, fromBlock: (cursor ?? head - 120) + 1, toBlock: head, skippedBlocks: 0,
   pools: [{ token, pool: `0x${'9'.repeat(64)}`, venue: 'Uniswap v4', block: head - 5 }] });
-const busyMarket = (address, overrides = {}) => ({ address, marketCap: 50_000, liquidity: 20_000, volume5m: 2_000, buys5m: 20, sells5m: 5,
-  pairCreatedAt: NOW - 30 * MINUTE, priceUsd: 0.001, ...overrides });
+// A token's DexScreener market as the watch's batch read returns it.
+const busyMarket = (address, overrides = {}) => ({ address, symbol: 'POOL', name: 'Pool token', marketCap: 50_000, liquidity: 20_000,
+  volume5m: 2_000, buys5m: 20, sells5m: 5, swaps5m: 25, pairCreatedAt: NOW - 30 * MINUTE, pairAddress: `0x${'9'.repeat(40)}`, priceUsd: 0.001, ...overrides });
+const promotedAt = (radarFixture, token) => radarFixture.state('discovery.pools:arc').pools.find(pool => pool.token === token)?.promotedAt ?? null;
+const trendingReads = radarFixture => radarFixture.aveRequests.filter(url => url.startsWith('https://prod.ave-api.com/v2/tokens/trending?')).length;
 
-test('a new pool that trades enough is read from AVE, screened with the hot list and becomes a lead, and its watchlist commits with the screen', async () => {
+test('a new pool that trades enough is screened from its DexScreener market with no AVE read, becomes a lead, and its watchlist commits with the screen', async () => {
   const radarFixture = radar({ chain: 'arc', onchain: true });
   const cursors = [];
   radarFixture.chainLogs = { newPools: async (chain, options) => { cursors.push(options.cursor); return newPool(A)(chain, options); } };
   radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [busyMarket(A)] : [] });
-  radarFixture.marketRows.set(A, radarFixture.quote(A));
   await radarFixture.runCycle('cycle-pools-1');
 
-  assert.deepEqual(radarFixture.marketRequests, [A]);
-  assert.equal(radarFixture.candidate(A).status, 'LIVE_READY');
+  assert.equal(radarFixture.aveRequests.length, 1, 'the hot list is the only AVE read');
+  assert.equal(trendingReads(radarFixture), 1);
+  const lead = radarFixture.candidate(A);
+  assert.equal(lead.status, 'LIVE_READY');
+  assert.equal(lead.symbol, 'POOL');
+  assert.equal(lead.createdAt, Math.floor((NOW - 30 * MINUTE) / 1000), 'the pool creation stands in for launch time');
+  assert.equal(lead.holders, null, 'DexScreener has no holder count');
+  assert.match(lead.decisionReason, /DexScreener 行情筛选/);
   assert.deepEqual(radarFixture.events().map(event => [event.type, event.address]), [['CANDIDATE_NEW', A]]);
+  const [row] = radarFixture.state('feed.snapshot:arc').rows;
+  assert.deepEqual([row.address, row.pass, row.ageBasis, row.holders], [A, true, 'pool', null]);
+  // Its baseline price is DexScreener's, so AVE candles never sample it.
+  assert.deepEqual(radarFixture.outcome(A).cohortMetadata, { baselineProvider: 'DEXSCREENER' });
   const watched = radarFixture.state('discovery.pools:arc');
   assert.equal(watched.cursor, 1_000);
   assert.deepEqual(watched.pools.map(pool => [pool.token, pool.promotedAt]), [[A, NOW]]);
+  assert.deepEqual(radarFixture.state('runtime.sourceHealth').discovery.promoted, { ok: true, count: 1 });
 
   radarFixture.clock.now = NOW + MINUTE;
   await radarFixture.runCycle('cycle-pools-2');
   assert.deepEqual(cursors, [null, 1_000], 'the next cycle reads on from the committed cursor');
-  assert.deepEqual(radarFixture.marketRequests, [A], 'a promoted token is not read from AVE again within five minutes');
+  assert.equal(promotedAt(radarFixture, A), NOW, 'a promoted token is not promoted again within five minutes');
+  assert.equal(radarFixture.aveRequests.length, 2);
 });
 
-test('a new pool too quiet, too young or already on the hot list costs no AVE read and stays watched', async () => {
+test('a promoted pool keeps its taxes and holder count unknown in the screened row', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  radarFixture.chainLogs = { newPools: newPool(A) };
+  radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [busyMarket(A)] : [] });
+  radarFixture.begin('cycle-pools-unknown');
+  for (let step = 0; step < 4; step++) await radarFixture.step('cycle-pools-unknown');
+  const checkpoint = radarFixture.store.read('cycle-pools-unknown');
+  assert.equal(checkpoint.phase, 'BUILD_QUEUE');
+  const [{ row, screen }] = checkpoint.partial.leads;
+  assert.deepEqual([row.marketProvider, row.buy_tax, row.sell_tax, row.holder_count], ['DEXSCREENER', null, null, null]);
+  assert.deepEqual([screen.pass, screen.marketProvider, screen.ageBasis], [true, 'DEXSCREENER', 'pool']);
+});
+
+test('a checkpoint written while promotions read AVE screens its promotions from the watch without an AVE read', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  radarFixture.chainLogs = { newPools: newPool(A) };
+  radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [busyMarket(A)] : [] });
+  radarFixture.begin('cycle-upgrade');
+  for (let step = 0; step < 3; step++) await radarFixture.step('cycle-upgrade');
+  // The old code stood here, on DISCOVER with a `market:0` read of A still to make.
+  radarFixture.storage.sql.exec('UPDATE cycle_checkpoint SET phase = ?, endpoint_index = ? WHERE tenant_id = ? AND cycle_id = ?', 'DISCOVER', 3, TENANT, 'cycle-upgrade');
+  assert.equal(radarFixture.scanner.nextRequest('cycle-upgrade'), null);
+  await radarFixture.step('cycle-upgrade');
+  assert.equal(radarFixture.store.read('cycle-upgrade').phase, 'SCREEN');
+  await radarFixture.step('cycle-upgrade');
+  assert.equal(radarFixture.candidate(A).status, 'LIVE_READY');
+  assert.equal(radarFixture.aveRequests.length, 1);
+});
+
+test('a new pool too quiet, too young or already on the hot list is not promoted and stays watched', async () => {
   for (const [scenario, market, hotList] of [
     ['quiet', busyMarket(A, { volume5m: 100 }), []],
     ['few buys', busyMarket(A, { buys5m: 2 }), []],
@@ -321,8 +358,7 @@ test('a new pool too quiet, too young or already on the hot list costs no AVE re
     radarFixture.dexMarkets = async () => ({ capturedAt: NOW, markets: [market] });
     radarFixture.hotList = hotList.map(token => radarFixture.quote(token));
     await radarFixture.runCycle(`cycle-quiet-${scenario.replaceAll(" ", "-")}`);
-    assert.deepEqual(radarFixture.marketRequests, [], scenario);
-    assert.deepEqual(radarFixture.state('discovery.pools:arc').pools.map(pool => pool.token), [A], scenario);
+    assert.deepEqual(radarFixture.state('discovery.pools:arc').pools.map(pool => [pool.token, pool.promotedAt ?? null]), [[A, null]], scenario);
   }
 });
 
@@ -341,21 +377,24 @@ test('the log cursor advances only when the screen commits, so an interrupted cy
   assert.equal(radarFixture.state('discovery.pools:arc').cursor, 1_000);
 });
 
-test('a promoted token whose AVE read fails or that fails the screen is not read again for thirty minutes', async () => {
-  for (const [scenario, row] of [['fails the screen', A => ({ ...A, market_cap: 5_000_000 })], ['read fails', () => undefined]]) {
+test('a promoted token that fails the screen is not promoted again for thirty minutes', async () => {
+  for (const [scenario, market, reason] of [
+    ['no sells', busyMarket(A, { sells5m: 0 }), '近5分钟无卖出成交'],
+    ['no price', busyMarket(A, { priceUsd: null }), '价格数据未知']
+  ]) {
     const radarFixture = radar({ chain: 'arc', onchain: true });
     radarFixture.chainLogs = { newPools: newPool(A) };
-    radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [busyMarket(A)] : [] });
-    const answer = row(radarFixture.quote(A));
-    if (answer) radarFixture.marketRows.set(A, answer);
+    radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [market] : [] });
     const tag = scenario.replaceAll(' ', '-');
-    for (const [cycle, at, reads] of [[1, NOW, 1], [2, NOW + 6 * MINUTE, 1], [3, NOW + 31 * MINUTE, 2]]) {
+    for (const [cycle, at, promoted] of [[1, NOW, NOW], [2, NOW + 6 * MINUTE, NOW], [3, NOW + 31 * MINUTE, NOW + 31 * MINUTE]]) {
       radarFixture.clock.now = at;
       await radarFixture.runCycle(`cycle-rejected-${tag}-${cycle}`);
-      assert.equal(radarFixture.marketRequests.length, reads, `${scenario}, cycle ${cycle}`);
+      assert.equal(promotedAt(radarFixture, A), promoted, `${scenario}, cycle ${cycle}`);
+      const screened = radarFixture.state('feed.snapshot:arc').rows.find(row => row.address === A);
+      assert.equal(screened?.reasons.includes(reason) ?? false, promoted === at, `${scenario}, cycle ${cycle}: screened only when promoted`);
     }
-    assert.equal(radarFixture.candidate(A)?.status === 'LIVE_READY', false, scenario);
-    if (!answer) assert.equal(radarFixture.state('runtime.sourceHealth').discovery.promoted.ok, false, 'a failed read shows in source health');
+    assert.equal(radarFixture.candidate(A), null, scenario);
+    assert.equal(radarFixture.aveRequests.length, 3, scenario);
   }
 });
 
@@ -372,7 +411,7 @@ test('a token vetoed as a lead is never promoted from the watch again', async ()
   radarFixture.clock.now = NOW + MINUTE;
   radarFixture.dexMarkets = async () => ({ capturedAt: radarFixture.clock.now, markets: [busyMarket(A)] });
   await radarFixture.runCycle('cycle-vetoed-2');
-  assert.deepEqual(radarFixture.marketRequests, []);
+  assert.equal(promotedAt(radarFixture, A), null);
 });
 
 test('a failed new-pool read still screens the hot list, keeps the cursor and shows in source health', async () => {
@@ -583,9 +622,8 @@ test('secondary checks per cycle are bounded by maxSecondaryChecksPerCycle', asy
   assert.deepEqual(leads.filter(lead => lead.secondary).map(lead => lead.address).sort(), checked.sort());
 });
 
-test('recoverableRequestCost charges AVE credits only for trending, market and candle reads', () => {
+test('recoverableRequestCost charges AVE credits only for trending and candle reads', () => {
   assert.equal(recoverableRequestCost({ kind: 'DISCOVER', endpoint: 'trending' }), 5);
-  assert.equal(recoverableRequestCost({ kind: 'DISCOVER', endpoint: 'market:0' }), 5);
   assert.equal(recoverableRequestCost({ kind: 'DISCOVER', endpoint: 'newPools' }), 0);
   assert.equal(recoverableRequestCost({ kind: 'DISCOVER', endpoint: 'watch' }), 0);
   assert.equal(recoverableRequestCost({ kind: 'OUTCOMES_SAMPLE' }), 10);

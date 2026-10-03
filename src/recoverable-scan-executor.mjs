@@ -12,7 +12,7 @@ function cycleProgress(checkpoint) {
 
 /** The AVE credit units the scanner's next request costs; zero when it makes no AVE request. */
 export function recoverableRequestCost(next) {
-  if (next?.kind === 'DISCOVER') return next.endpoint === 'trending' ? AVE_CU.trending : next.endpoint.startsWith('market:') ? AVE_CU.details : 0;
+  if (next?.kind === 'DISCOVER') return next.endpoint === 'trending' ? AVE_CU.trending : 0;
   if (next?.kind === 'OUTCOMES_SAMPLE') return AVE_CU.klines;
   return 0;
 }
@@ -23,7 +23,6 @@ function discoveryOperation(next, { ave, chainLogs, dexMarkets }) {
   if (next.endpoint === 'newPools') return ({ signal }) => chainLogs.newPools(chain, { cursor: next.cursor, signal });
   if (next.endpoint === 'watch') return async ({ signal }) => next.addresses.length
     ? { addresses: next.addresses, ...await dexMarkets(chain, next.addresses, { signal }) } : { addresses: [], markets: [] };
-  if (next.endpoint.startsWith('market:')) return ({ signal }) => ave.market(chain, next.address, { signal });
   throw safeError('RECOVERABLE_SCAN_ENDPOINT_UNSUPPORTED');
 }
 
@@ -31,7 +30,6 @@ function discoveryOperation(next, { ave, chainLogs, dexMarkets }) {
 function logDiscovery(next, value) {
   if (next.endpoint === 'newPools') console.log(JSON.stringify({ event: 'onchain_poll', chain: next.checkpoint.chain, fromBlock: value.fromBlock, toBlock: value.toBlock, head: value.head, pools: value.pools.length }));
   if (value.skippedBlocks > 0) console.log(JSON.stringify({ event: 'onchain_gap_skipped', chain: next.checkpoint.chain, skippedBlocks: value.skippedBlocks }));
-  if (next.endpoint.startsWith('market:')) console.log(JSON.stringify({ event: 'pool_promoted', chain: next.checkpoint.chain, address: next.address }));
 }
 
 async function record(request, operation, onValue, onError) {
