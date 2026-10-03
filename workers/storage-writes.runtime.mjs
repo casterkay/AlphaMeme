@@ -110,7 +110,7 @@ describe('Durable Object storage writes', () => {
 
           await runCycles(WARM_UP_CYCLES, false);
           expect((await instance.getStatus(tenantId)).control).toMatchObject({ configured: true, activeChain: 'arc' });
-          expect(state.storage.sql.exec("SELECT COUNT(*) AS count FROM candidates WHERE tenant_id = ? AND status IN ('LIVE_READY', 'X_REVIEW')", tenantId).one().count).toBe(PASSING);
+          expect(state.storage.sql.exec("SELECT COUNT(*) AS count FROM candidates WHERE tenant_id = ? AND status = 'LIVE_READY'", tenantId).one().count).toBe(PASSING);
           await runCycles(MEASURED_CYCLES, true);
           expect(JSON.parse(state.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'discovery.pools:arc').one().value_json).pools.length,
             'the new-pool watch ran and committed each cycle').toBeGreaterThan(MEASURED_CYCLES);

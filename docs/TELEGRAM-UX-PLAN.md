@@ -194,8 +194,8 @@ Wallet and Status live on Radar. Deleting the AVE key lives in the AVE key panel
 - Keyboard: token buttons in pairs; `[👁️ Chain] [🔽 Filter] [↕️ Sort]` on one row;
   `[🔍 Search]` (plus `[✖ Clear]` when active); pagination `[◀] [▶]`; standard footer.
   Viewing a chain gets 👁️, not the scan chain's 🔗: one icon never opens two panels.
-- Filter labels shorten: Alerted, Leads, Needs X review, Rechecking, Approved, Ignored,
-  Vetoed, Last 5 min, Favorites.
+- Filter labels shorten: Alerted, Leads, Rechecking, Ignored, Vetoed, Last 5 min,
+  Favorites.
 
 ### 3.5 Token detail (`detailPanel`)
 
@@ -211,7 +211,6 @@ MC $120K · Liq $30K · 2,431 holders
 [Sell 25%] [Sell 50%] [Sell 100%] [Sell …]
 [𝕏] [🌐 Site] [📊 Chart] [🔭 AVE] [🔎 Evidence]
 [⭐ Watch] [📝 Note] [🙈 Ignore]
-[👍 Approve]                ← only when eligible today
 [🔄 Refresh] [⬅ Back] [🏠 Home]
 ```
 

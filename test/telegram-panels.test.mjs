@@ -7,7 +7,7 @@ import { money, officialXUrl } from '../src/render/telegram.mjs';
 import { aveTokenUrl } from '../src/providers/ave.mjs';
 
 const now=1_800_000_000_000;
-function candidate(index=0,changes={}) { return projectTelegramCandidate({ chain:'robinhood',address:'a'.repeat(32)+index,symbol:'COIN'+index,name:'Research token',status:'X_REVIEW',marketCap:20000+index,liquidity:8000,holders:0,auditedAt:now-60_000,reviewRevision:'revision',deep:{chainPass:true,chartRisk:{version:CHART_RISK_VERSION,pass:true},checks:{openSource:true,ownerRenounced:false},failed:[],unknownFields:[],blockingUnknownFields:[]},...changes }); }
+function candidate(index=0,changes={}) { return projectTelegramCandidate({ chain:'robinhood',address:'a'.repeat(32)+index,symbol:'COIN'+index,name:'Research token',status:'LIVE_READY',marketCap:20000+index,liquidity:8000,holders:0,auditedAt:now-60_000,reviewRevision:'revision',deep:{chainPass:true,chartRisk:{version:CHART_RISK_VERSION,pass:true},checks:{openSource:true,ownerRenounced:false},failed:[],unknownFields:[],blockingUnknownFields:[]},...changes }); }
 function fixture() { return {at:now,control:{configured:true,paused:false,notifications:false,activeChain:'robinhood',scanChain:'robinhood'},candidates:Array.from({length:13},(_,index)=>candidate(index)),annotations:[],marks:[],events:[],queue:[],delivery:[],metrics:{},sourceHealth:{},feedByChain:{},ave:{cuUsed:0,blockedUntil:0,readyAt:0},outcomes:[]}; }
 function session(panel='audits',query={}) { return {panel,viewChain:'robinhood',query,version:2}; }
 const actions=result=>result.keyboard.flat().filter(item=>item.action).map(item=>item.action);
@@ -99,13 +99,13 @@ test('no icon leads to two different panels',()=>{
   assert.ok(owners.get('🛜')?.has('sources')&&owners.get('📡')?.has('radar'));
 });
 
-test('audit filters use effective marks while overview keeps original on-chain candidate count',()=>{
-  const snapshot=fixture();snapshot.marks=[{chain:'robinhood',address:snapshot.candidates[0].address,decision:'passed',at:now-1,reviewRevision:'revision'}];
-  assert.equal(selectPanelRows(snapshot,session('audits',{filter:'chain'})).length,12);
-  assert.equal(selectPanelRows(snapshot,session('audits',{filter:'passed'})).length,1);
-  snapshot.candidates[1]={...snapshot.candidates[1],status:'LIVE_READY'};snapshot.candidates[2]={...snapshot.candidates[2],status:'HARD_REJECT'};
-  assert.match(renderPanel(snapshot,session('radar'),'en').text,/Last 30 min: 1 lead · 1 vetoed/);
-  assert.equal(selectPanelRows(snapshot,session('audits',{filter:'lead'})).length,1);
+test('audit filters use ignore marks while overview counts recent leads and vetoes',()=>{
+  const snapshot=fixture();snapshot.marks=[{chain:'robinhood',address:snapshot.candidates[0].address,decision:'ignored',at:now-1,reviewRevision:'revision'}];
+  snapshot.candidates[1]={...snapshot.candidates[1],status:'HARD_REJECT'};
+  assert.equal(selectPanelRows(snapshot,session('audits',{filter:'ignored'})).length,1);
+  assert.equal(selectPanelRows(snapshot,session('audits',{filter:'lead'})).length,11);
+  assert.equal(selectPanelRows(snapshot,session('audits',{filter:'rejected'})).length,1);
+  assert.match(renderPanel(snapshot,session('radar'),'en').text,/Last 30 min: 12 leads · 1 vetoed/);
 });
 
 test('Leads lists every kept token whatever its age, the fresh cutoff is inclusive, and saved records survive evidence expiry',()=>{
@@ -115,7 +115,7 @@ test('Leads lists every kept token whatever its age, the fresh cutoff is inclusi
   assert.equal(selectPanelRows(snapshot,session('audits',{filter:'fresh'})).length,1);
   assert.equal(selectPanelRows(snapshot,{...session('saved'),viewChain:'all'}).length,1);
   const detail=renderPanel(snapshot,session('detail',{selectedToken:snapshot.annotations[0]}),'en');
-  assert.match(detail.text,/no longer retained/);assert.ok(!actions(detail).includes('mark.set_passed'));
+  assert.match(detail.text,/no longer retained/);
 });
 
 test('Leads finds alerted tokens and says when a kept lead is no longer live, and why in its detail',()=>{
@@ -188,25 +188,24 @@ test('malicious labels and credentials are escaped or redacted and unsafe links 
   assert.equal(safeTelegramUrl('http://example.com'),'');assert.equal(officialXUrl('https://evil.com/user'),'');assert.equal(officialXUrl('https://x.com/home'),'');assert.equal(officialXUrl('@valid_user'),'https://x.com/valid_user');
 });
 
-test('manual approval creation is unavailable for ignored, stale or revisionless evidence but undo remains available',()=>{
+test('a token detail offers ignore, then only its undo, and never a manual approval',()=>{
   const snapshot=fixture(),selected=snapshot.candidates[0];
-  assert.ok(actions(renderPanel(snapshot,session('detail',{selectedToken:selected}))).includes('mark.set_passed'));
-  for(const changes of [{auditedAt:now-600_001},{reviewRevision:''}]) {
-    snapshot.candidates=[{...selected,...changes}];assert.ok(!actions(renderPanel(snapshot,session('detail',{selectedToken:selected}))).includes('mark.set_passed'));
-  }
-  snapshot.marks=[{...selected,decision:'passed',at:now-86400000,reviewRevision:'revision',version:3}];
-  const stale=renderPanel(snapshot,session('detail',{selectedToken:selected}),'en');assert.ok(actions(stale).includes('mark.clear'));assert.match(stale.text,/Prior approval is invalid/);
-  snapshot.marks[0].decision='ignored';assert.ok(!actions(renderPanel(snapshot,session('detail',{selectedToken:selected}))).includes('mark.set_passed'));
+  const fresh=actions(renderPanel(snapshot,session('detail',{selectedToken:selected})));
+  assert.ok(fresh.includes('mark.set_ignored'));assert.ok(!fresh.includes('mark.clear'));
+  snapshot.marks=[{...selected,decision:'ignored',at:now-1,reviewRevision:'revision',version:3}];
+  const ignored=renderPanel(snapshot,session('detail',{selectedToken:selected}),'en');
+  assert.ok(actions(ignored).includes('mark.clear'));assert.ok(!actions(ignored).includes('mark.set_ignored'));assert.match(ignored.text,/Ignored/);
+  assert.deepEqual(actions(ignored).filter(action=>action.startsWith('mark.')),['mark.clear']);
 });
 
-test('a lead detail links AVE only by our own token-page link, never a stored referral link, and offers no manual approval',()=>{
+test('a lead detail links AVE only by our own token-page link, never a stored referral link',()=>{
   const snapshot=fixture();
   const address='0x59a0d858b0825098b5218f08e09901381c25a57d';
   snapshot.candidates=[candidate(0,{address,status:'LIVE_READY',aveUrl:`https://pro.ave.ai/token/${address}-robinhood?ref=0001`})];
   const lead=renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en');
   assert.deepEqual(lead.keyboard.flat().filter(item=>String(item.url).includes('ave.ai')).map(item=>item.url),[`https://ave.ai/token/${address}-robinhood`]);
   assert.doesNotMatch(lead.text,/Trade on AVE/);
-  assert.match(lead.text,/Market lead/);assert.ok(!actions(lead).includes('mark.set_passed'));
+  assert.match(lead.text,/Market lead/);
 });
 
 test('the chain panel selects exactly one scan chain',()=>{
@@ -299,7 +298,6 @@ test('the safety verdict leads the detail and marks each list row, from the reco
   // [scenario, row, detail verdict line, list badge, lead caveat shown]
   const cases=[
     ['lead before its check',lead(),'⏳ Checking','⏳ Checking',true],
-    ['candidate with no recorded check',candidate(0),'⏳ Checking','⏳ Checking',false],
     ['complete check without fatal flags',lead({secondary:complete}),'✅ No failures found · checked 2m ago','✅ No failures found',false],
     ['incomplete GoPlus fields',degraded({complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['buyTax','sellTax']}),'⚠️ Needs review: 2 fields unknown · checked 2m ago','⚠️ Needs review',true],
     ['GoPlus check missing',degraded({complete:false,verdict:'UNKNOWN',fatal:[],unknownFields:['tokenSecurity']}),'⚠️ Needs review: GoPlus check unavailable · checked 2m ago','⚠️ Needs review',true],
@@ -428,7 +426,6 @@ test('radar leads with the newest leads on the scan chain, vetoed last, and leav
     candidate(1,{symbol:'DOGE2',status:'LIVE_READY',auditedAt:now-30_000,metadata:{qualifiedAt:now-60_000},marketCap:undefined}),
     candidate(2,{symbol:'RUGME',status:'HARD_REJECT',auditedAt:now-1000}),
     candidate(3,{symbol:'OLD',status:'LIVE_READY',auditedAt:now-1_800_001}),
-    candidate(4,{symbol:'REVIEW',status:'X_REVIEW',auditedAt:now-1000}),
     {...candidate(5,{symbol:'ELSEWHERE',status:'LIVE_READY',auditedAt:now-1000}),chain:'base'}
   ];
   snapshot.feedByChain={robinhood:{rows:[projectTelegramFeedRow({address:snapshot.candidates[0].address,symbol:'PEPE',priceChange5m:.35},'robinhood')]}};

@@ -539,7 +539,7 @@ export class SqliteRecoverableScannerStore {
          WHERE tenant_id = ? AND chain = ? AND ${KEPT_TOKEN} AND address NOT IN (
            SELECT address FROM candidates
            WHERE tenant_id = ? AND chain = ?
-           ORDER BY CASE status WHEN 'LIVE_READY' THEN 3 WHEN 'X_REVIEW' THEN 3 WHEN 'WAIT_RECHECK' THEN 2 WHEN 'HARD_REJECT' THEN 1 ELSE 0 END DESC,
+           ORDER BY CASE status WHEN 'LIVE_READY' THEN 3 WHEN 'WAIT_RECHECK' THEN 2 WHEN 'HARD_REJECT' THEN 1 ELSE 0 END DESC,
                     priority_band DESC, discovery_score DESC, address ASC
            LIMIT ?
          )`,

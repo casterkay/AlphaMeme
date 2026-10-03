@@ -74,7 +74,7 @@ export class TelegramCommands {
     const revision = token ? this.storage.sql.exec('SELECT review_revision FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, token.chain, token.address).toArray()[0]?.review_revision ?? null : null;
     this.outbox.enqueueInTransaction({ id: `panel:${session.id}:${session.version}`, chatId: this.tenantId,
       method: session.messageId ? keyboardOnly ? 'editMessageReplyMarkup' : 'editMessageText' : 'sendMessage', params: { ...(session.messageId ? { message_id: session.messageId } : {}), ...(!keyboardOnly ? { text: rendered.text, parse_mode: 'HTML', link_preview_options: { is_disabled: true } } : {}), reply_markup: { inline_keyboard: keyboard } },
-      sessionId: session.id, sessionVersion: session.version, desiredRevision: revision, token, projectionRevision: token ? reviewProjectionRevision(this.storage, this.tenantId, token, this.now()) : null, deliveryClass, expiresAt: deliveryClass === 'PANEL_UPDATE' ? this.now() + 900_000 : session.expiresAt });
+      sessionId: session.id, sessionVersion: session.version, desiredRevision: revision, token, projectionRevision: token ? reviewProjectionRevision(this.storage, this.tenantId, token) : null, deliveryClass, expiresAt: deliveryClass === 'PANEL_UPDATE' ? this.now() + 900_000 : session.expiresAt });
     return session;
   }
 
@@ -270,7 +270,7 @@ export class TelegramCommands {
     }
     else if (action === 'input.begin' || action === 'note.begin') return this.beginInputInTransaction(session, action === 'note.begin' ? 'note' : params.kind, token, params.expectedAnnotationVersion);
     else if (action === 'input.cancel') { const { pendingInput, ...query } = session.query; changes = { query }; }
-    else if (['mark.set_passed','mark.set_ignored','mark.clear'].includes(action)) setManualMarkInTransaction(this.storage, this.tenantId, { token, decision: action === 'mark.clear' ? null : action === 'mark.set_passed' ? 'passed' : 'ignored', expectedMarkVersion: binding.expectedMarkVersion, reviewRevision: binding.reviewRevision }, this.now());
+    else if (action === 'mark.set_ignored' || action === 'mark.clear') setManualMarkInTransaction(this.storage, this.tenantId, { token, decision: action === 'mark.clear' ? null : 'ignored', expectedMarkVersion: binding.expectedMarkVersion, reviewRevision: binding.reviewRevision }, this.now());
     else if (action === 'favorite.set' || action === 'note.clear') annotateInTransaction(this.storage, this.tenantId, { token, field: action === 'favorite.set' ? 'favorite' : 'note', value: action === 'favorite.set' ? params.value : '', expectedVersion: params.expectedAnnotationVersion }, this.now());
     else if (action === 'scan.pause' || action === 'scan.resume') this.applyControl(action.split('.')[1]);
     else if (action === 'notifications.set') { if (typeof params.value !== 'boolean') throw new ReviewConflict('invalid_notifications'); this.setNotifications(params.value); }

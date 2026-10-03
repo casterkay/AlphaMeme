@@ -7,7 +7,7 @@ const address = '0x' + '1'.repeat(40);
 
 test('historical samples survive delisting; missing prices stay missing and retries back off', async () => {
   const now = 1800000000000;
-  const rows = [{ address, chain: 'bsc', baselineAt: now-1900000, baselinePrice: 2, cohortMetadata: { baselineProvider: 'AVE' }, initialDecision:'X_REVIEW', samples: {} }];
+  const rows = [{ address, chain: 'bsc', baselineAt: now-1900000, baselinePrice: 2, cohortMetadata: { baselineProvider: 'AVE' }, initialDecision:'LIVE_READY', samples: {} }];
   const calls = [];
   const gmgn = { priceAt: async (a, at, chain) => { calls.push([a,at,chain]); return { at, price: 3, source: 'GMGN_1M_CLOSE' }; } };
   await collectOutcomeSamples(rows, gmgn, 'bsc', { now: () => now, limit: 3 });
@@ -26,7 +26,7 @@ test('AVE sampling leaves legacy and unknown baselines readable without adding c
   const now = 1_800_000_000_000;
   const rows = ['AVE', 'GMGN', 'LEGACY_UNKNOWN', undefined].map((baselineProvider, index) => ({
     address: `${address.slice(0, -1)}${index}`, chain: 'bsc', baselineAt: now - 600_000,
-    baselinePrice: 2, cohortMetadata: baselineProvider ? { baselineProvider } : {}, initialDecision: 'X_REVIEW', samples: {}
+    baselinePrice: 2, cohortMetadata: baselineProvider ? { baselineProvider } : {}, initialDecision: 'LIVE_READY', samples: {}
   }));
   const calls = [];
   const provider = { priceAt: async token => { calls.push(token); return { at: now - 300_000, price: 3, source: 'AVE' }; } };

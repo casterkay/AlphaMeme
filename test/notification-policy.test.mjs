@@ -4,7 +4,6 @@ import { DatabaseSync } from 'node:sqlite';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
 import { NotificationPolicy } from '../src/bot/notification-policy.mjs';
 import { TelegramOutbox } from '../src/bot/outbox.mjs';
-import { CHART_RISK_VERSION } from '../src/scoring/chart-risk.mjs';
 import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 const START = 1800000000000;
 function fixture() {
@@ -19,8 +18,9 @@ function fixture() {
   const scanChain = chain => { const state = readSchedulerStateInTransaction(storage, '123'); writeSchedulerStateInTransaction(storage, '123', { ...state, runtime: { ...state.runtime, control: { ...state.runtime.control, activeChain: chain } } }); };
   scanChain('bsc');
   const candidate = (address, options = {}) => {
-    const { status = 'X_REVIEW', revision = 'r1', qualified = true, age = 0 } = options;
-    sql('INSERT INTO candidates (tenant_id,chain,address,status,audited_at,stale_at,review_revision,deep_json,audit_health_json) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,chain,address) DO UPDATE SET status=excluded.status,audited_at=excluded.audited_at,stale_at=excluded.stale_at,review_revision=excluded.review_revision,deep_json=excluded.deep_json', '123','bsc',address,status,now-age,now+600000,revision,JSON.stringify({chainPass:qualified,chartRisk:{pass:qualified,version:CHART_RISK_VERSION}}),'{}');
+    // Only a market lead qualifies; a token still being rechecked never alerts.
+    const { qualified = true, status = qualified ? 'LIVE_READY' : 'WAIT_RECHECK', revision = 'r1', age = 0 } = options;
+    sql('INSERT INTO candidates (tenant_id,chain,address,status,audited_at,stale_at,review_revision,deep_json,audit_health_json) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,chain,address) DO UPDATE SET status=excluded.status,audited_at=excluded.audited_at,stale_at=excluded.stale_at,review_revision=excluded.review_revision,deep_json=excluded.deep_json', '123','bsc',address,status,now-age,now+600000,revision,'{}','{}');
   };
   const event = (id,type,address) => sql('INSERT INTO events (tenant_id,id,at,type,chain,address) VALUES (?,?,?,?,?,?)','123',id,now,type,'bsc',address);
   return { storage, sql, pref, scanChain, candidate, event, policy: create(), create, now: () => now, advance: ms => { now += ms; } };

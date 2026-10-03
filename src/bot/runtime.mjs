@@ -6,7 +6,7 @@ import { TelegramInbox } from './inbox.mjs';
 import { TelegramOutbox } from './outbox.mjs';
 import { createTelegramTransport } from './telegram-transport.mjs';
 import { TelegramCommands } from './commands.mjs';
-import { annotationVersion, nextReviewExpiry, reviewProjectionRevision } from './review.mjs';
+import { annotationVersion, reviewProjectionRevision } from './review.mjs';
 import { createTelegramExport, projectTelegramCandidate, readTelegramSnapshot } from './snapshot.mjs';
 import { readTelegramStatistics } from './statistics.mjs';
 import { scannerSettings } from '../scanner-settings.mjs';
@@ -301,7 +301,7 @@ export class TelegramRuntime {
 
   deliveryIneligibleReason(row, payload) {
     // A new-lead alert is corrected after it is sent instead of cancelled before.
-    if (payload.token && !payload.notification && payload.projectionRevision !== reviewProjectionRevision(this.storage, this.tenantId, payload.token, this.now())) return 'projection_changed';
+    if (payload.token && !payload.notification && payload.projectionRevision !== reviewProjectionRevision(this.storage, this.tenantId, payload.token)) return 'projection_changed';
     return this.notifications.ineligibleReason(row, payload, { issues: this.actionableIssues() });
   }
 
@@ -354,7 +354,7 @@ export class TelegramRuntime {
         const replyTo = token ? this.alertMessageId(token) : null;
         if (replyTo !== null) params = { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } };
       }
-      const tracked = notification.actionReason === 'CANDIDATE_NEW' ? { token, projectionRevision: reviewProjectionRevision(this.storage, this.tenantId, token, this.now()) } : {};
+      const tracked = notification.actionReason === 'CANDIDATE_NEW' ? { token, projectionRevision: reviewProjectionRevision(this.storage, this.tenantId, token) } : {};
       this.outbox.enqueueInTransaction({ id: notification.id, chatId: this.tenantId, method: 'sendMessage', params: { ...params, text: rendered.text, parse_mode: 'HTML', reply_markup: { inline_keyboard: this.commands.sessions.bindKeyboardInTransaction(session, rendered.keyboard, this.control.snapshot()) }, link_preview_options: { is_disabled: true } }, sessionId: session.id, sessionVersion: session.version, deliveryClass: notification.deliveryClass, actionReason: notification.actionReason, notification, expiresAt: notification.expiresAt, ...tracked });
     }
   }
@@ -371,21 +371,20 @@ export class TelegramRuntime {
       if (!payload?.token || !row.ui_session_id) continue;
       const session = this.commands.sessions.get(row.ui_session_id);
       if (!session || session.version !== payload.sessionVersion || session.expiresAt <= this.now()) continue;
-      if (payload.projectionRevision === reviewProjectionRevision(this.storage, this.tenantId, payload.token, this.now())) continue;
+      if (payload.projectionRevision === reviewProjectionRevision(this.storage, this.tenantId, payload.token)) continue;
       this.commands.renderInTransaction(this.commands.sessions.advanceInTransaction(session));
     }
   }
 
   reconcileCardsInTransaction() {
     const maps = this.storage.sql.exec('SELECT * FROM message_map WHERE tenant_id=?', this.tenantId).toArray();
-    let nextAt = null;
     for (const map of maps) {
       const token = { chain: map.chain, address: map.address };
       const session = map.ui_session_id ? this.commands.sessions.get(map.ui_session_id) : null;
       if (!session || !['alert','detail','evidence'].includes(session.panel) || session.query.selectedToken?.address !== map.address || session.query.selectedToken?.chain !== map.chain) continue;
       // An alert keeps the last facts it showed once its token is no longer stored.
       if (session.panel === 'alert' && !this.storage.sql.exec('SELECT 1 FROM candidates WHERE tenant_id=? AND chain=? AND address=?', this.tenantId, map.chain, map.address).toArray().length) continue;
-      const fingerprint = reviewProjectionRevision(this.storage, this.tenantId, token, this.now());
+      const fingerprint = reviewProjectionRevision(this.storage, this.tenantId, token);
       const rendered = this.storage.sql.exec('SELECT value_json FROM scheduler_state WHERE tenant_id=? AND key=?', this.tenantId, `telegram.rendered:${map.message_id}`).toArray()[0];
       if (!rendered || JSON.parse(rendered.value_json) !== fingerprint) {
         const pending = this.outbox.correctionRows(session.id).some(row => this.outbox.payload(row)?.projectionRevision === fingerprint);
@@ -402,10 +401,7 @@ export class TelegramRuntime {
           this.commands.renderInTransaction(next, { deliveryClass: 'PANEL_UPDATE', snapshot });
         }
       }
-      const expiry = nextReviewExpiry(this.storage, this.tenantId, token, this.now());
-      if (expiry !== null && expiry > this.now()) nextAt = Math.min(nextAt ?? Infinity, expiry);
     }
-    return nextAt;
   }
 
   reconcileInTransaction({ recover = false, tasks: suppliedTasks = null } = {}) {
@@ -415,17 +411,16 @@ export class TelegramRuntime {
     const pending = this.storage.sql.exec('SELECT generation FROM keys WHERE tenant_id=? AND name=?', this.tenantId, CONNECTION_KEY_NAMES.PENDING_KEY_NAME).toArray()[0];
     if (pending && !this.storage.sql.exec("SELECT update_id FROM inbox WHERE tenant_id=? AND command_type='credential' AND generation=? AND status IN ('RECEIVED','RUNNING')", this.tenantId, pending.generation).toArray().length) this.storage.sql.exec('DELETE FROM keys WHERE tenant_id=? AND name=? AND generation=?', this.tenantId, CONNECTION_KEY_NAMES.PENDING_KEY_NAME, pending.generation);
     this.reconcileRequestedPanelsInTransaction();
-    const correctionsAt = this.reconcileCardsInTransaction();
+    this.reconcileCardsInTransaction();
     this.reconcileNotificationsInTransaction();
     const state = readSchedulerStateInTransaction(this.storage, this.tenantId);
     const ownedOutbox = new Set(this.outbox.ids().map(row => `outbox:${row.id}`));
-    const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'telegram:corrections' && task.id !== 'telegram:expiry' && !task.id.startsWith('inbox:') && task.kind !== 'trade' && task.kind !== 'lookup');
+    const tasks = (suppliedTasks ?? state.tasks).filter(task => !ownedOutbox.has(task.id) && task.id !== 'telegram:expiry' && !task.id.startsWith('inbox:') && task.kind !== 'trade' && task.kind !== 'lookup');
     tasks.push(...this.trading.tasksInTransaction(state.runtime.retries), ...this.lookups.tasksInTransaction(state.runtime.retries));
     this.outbox.scrubSecretsInTransaction();
     tasks.push(...state.tasks.filter(task => task.id.startsWith('inbox:')));
     const expiry = this.storage.sql.exec("SELECT MIN(expires_at) AS at FROM inbox WHERE tenant_id=? AND status IN ('RECEIVED','RUNNING')", this.tenantId).toArray()[0]?.at;
     if (Number.isSafeInteger(expiry)) tasks.push({ id: 'telegram:expiry', kind: 'local-control', dueAt: expiry, enabled: true, aveCost: 0 });
-    if (correctionsAt !== null) tasks.push({ id: 'telegram:corrections', kind: 'local-control', dueAt: correctionsAt, enabled: true, aveCost: 0 });
     tasks.push(...this.outbox.reconcileInTransaction({ recoverSending: recover }));
     const current = readSchedulerStateInTransaction(this.storage, this.tenantId);
     writeSchedulerStateInTransaction(this.storage, this.tenantId, { ...current, tasks });

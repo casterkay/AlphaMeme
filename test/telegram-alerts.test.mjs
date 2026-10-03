@@ -53,7 +53,7 @@ test('an edited alert shows each finished check with the shared badge, and a vet
   for (const [secondary, extra, expected, closing] of [
     [clean, {}, '✅ No failures found', 'Checks are not a safety guarantee.'],
     [{ ...clean, status: 'DEGRADED' }, {}, '⚠️ Needs review', 'Checks are not a safety guarantee.'],
-    [clean, { status: 'X_REVIEW', deep: { failed: [], blockingUnknownFields: ['lpBurned'] } }, '⚠️ Needs review', 'Checks are not a safety guarantee.'],
+    [clean, { status: 'LIVE_READY', deep: { failed: [], blockingUnknownFields: ['lpBurned'] } }, '⚠️ Needs review', 'Checks are not a safety guarantee.'],
     [{ ...clean, security: { verdict: 'FATAL', fatal: [{ field: 'isHoneypot' }] } }, { status: 'HARD_REJECT' }, '⛔ Vetoed: Honeypot', 'Buying is blocked; selling still works.']
   ]) {
     const lines = alert({ ...pepe, secondary, ...extra }).text.split('\n');

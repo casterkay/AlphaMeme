@@ -1,6 +1,6 @@
 import { publicCandidate } from '../render/whitelist.mjs';
-import { CHART_RISK_VERSION, applyRiskExclusion } from '../scoring/chart-risk.mjs';
-import { effectiveStatus } from '../scoring/manual-review.mjs';
+import { applyRiskExclusion } from '../scoring/chart-risk.mjs';
+import { effectiveStatus } from '../scoring/disposition.mjs';
 import { DEFAULT_SCAN_CHAIN, SCAN_CHAINS } from '../chains.mjs';
 import { readSchedulerStateInTransaction } from '../storage/scheduler-state.mjs';
 import { listLookups, lookupVerdict, lookupVerified, LOOKUP_SETTINGS } from '../lookup.mjs';
@@ -72,8 +72,7 @@ export function projectTelegramCandidate(source) {
   if (Array.isArray(source.metadata?.screenReasons)) row.screenReasons = source.metadata.screenReasons.slice(0, 3).map(value => safeTelegramText(value, 120));
   if (Number.isSafeInteger(source.alertedAt)) row.alertedAt = source.alertedAt;
   row.auditError = source.auditError ? 'AUDIT_FAILED' : '';
-  row.decisionReason = source.deep?.chartRisk?.version !== CHART_RISK_VERSION && ['X_REVIEW', 'QUALIFIED'].includes(source.status)
-    ? 'STALE_RULES' : safeTelegramText(source.decisionReason, 120);
+  row.decisionReason = safeTelegramText(source.decisionReason, 120);
   for (const key of ['openSource', 'ownerRenounced']) row.deep.security[key] = typeof source.deep?.security?.[key] === 'boolean' ? source.deep.security[key] : null;
   if (source.auditHealth?.earlyExit) {
     for (const key of ['sampled', 'ordinaryCount', 'ordinaryHoldRate', 'botHoldRate', 'linkedHoldRate']) row.deep.wallets[key] = null;
@@ -185,7 +184,7 @@ export function createTelegramExport(snapshot) {
       annotations: snapshot.annotations.filter(row => row.chain === chain).map(row => ({ chain, address: row.address, favorite: row.favorite, note: safeTelegramText(row.note, 500), updatedAt: row.updatedAt })),
       manualMarks: snapshot.marks.filter(row => row.chain === chain).map(mark => {
         const candidate = snapshot.candidates.find(row => tokenIdentity(chain, row.address) === tokenIdentity(chain, mark.address));
-        return { chain, address: mark.address, decision: mark.decision, at: mark.at, reviewRevision: mark.reviewRevision, effectiveState: candidate ? effectiveStatus(candidate, mark, snapshot.at) : mark.decision === 'ignored' ? 'ignored' : 'unavailable' };
+        return { chain, address: mark.address, decision: mark.decision, at: mark.at, reviewRevision: mark.reviewRevision, effectiveState: candidate ? effectiveStatus(candidate, mark) : mark.decision === 'ignored' ? 'ignored' : 'unavailable' };
       }),
       events: snapshot.events.filter(row => row.chain === chain).map(row => ({ at: row.at, chain, address: row.address, type: row.type, message: safeTelegramText(row.message, 500) }))
     }]))

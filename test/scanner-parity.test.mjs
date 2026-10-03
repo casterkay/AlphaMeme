@@ -80,7 +80,7 @@ test('Worker parity queue keeps the existing record and recheck cadence', async 
     watched: true
   }]);
   assert.equal(nextAuditDelay('HARD_REJECT', { hardRejectRecheckMs: 1, chainPassRecheckMs: 2, dynamicRecheckMs: 3 }), 1);
-  assert.equal(nextAuditDelay('X_REVIEW', { hardRejectRecheckMs: 1, chainPassRecheckMs: 2, dynamicRecheckMs: 3 }), 2);
+  assert.equal(nextAuditDelay('LIVE_READY', { hardRejectRecheckMs: 1, chainPassRecheckMs: 2, dynamicRecheckMs: 3 }), 2);
   assert.equal(nextAuditDelay('WAIT_RECHECK', { hardRejectRecheckMs: 1, chainPassRecheckMs: 2, dynamicRecheckMs: 3 }), 3);
-  assert.equal(await reviewRevision({ status: 'X_REVIEW' }), '9ce7d23cdd4a8246f1930ab3');
+  assert.equal(await reviewRevision({ status: 'LIVE_READY' }), '1874b6b17a6bf4ee69371125');
 });

@@ -4,7 +4,7 @@ import { VoiceAlerts, voiceEligible, voiceKey, VOICE_TTL } from '../public/voice
 
 const now = 1_800_000_000_000;
 const row = (address = '0x' + 'a'.repeat(40), at = now) => ({ address, chain: 'bsc',
-  status: 'X_REVIEW', qualified: true, auditedAt: at, staleAt: at + 600000 });
+  status: 'LIVE_READY', qualified: true, auditedAt: at, staleAt: at + 600000 });
 const snapshot = rows => ({ chains: { bsc: rows } });
 
 test('quiet baseline, newly audited promotion, duplicate suppression and downgrade cancellation', () => {
