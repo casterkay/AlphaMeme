@@ -51,6 +51,24 @@ export function advancePoolState(previous, event, feePips) {
   return { ...previous, liquidity: liquidity.toString() };
 }
 
+/** Preserve transaction details through the largest supported entry delay, not the full holding history. */
+export function derivePoolStates(pool, logs, timestampFor) {
+  const states = [];
+  let previous, firstFundedBlock;
+  for (const log of logs) {
+    const event = decodeArcEvent(log, EVENT_ABIS[pool.protocol]);
+    previous = advancePoolState(previous, event, pool.feePips);
+    const blockNumber = Number(BigInt(log.blockNumber));
+    if (firstFundedBlock === undefined && BigInt(previous.liquidity) > 0n) firstFundedBlock = blockNumber;
+    const eventData = firstFundedBlock === undefined || blockNumber <= firstFundedBlock + 20
+      ? Object.fromEntries(Object.entries(event.args).map(([name, value]) => [name, typeof value === 'bigint' ? value.toString() : value])) : undefined;
+    states.push({ ...previous, blockNumber, timestamp: timestampFor(log), transactionHash: log.transactionHash,
+      transactionIndex: Number(BigInt(log.transactionIndex)), logIndex: Number(BigInt(log.logIndex)), event: event.eventName,
+      ...(eventData ? { eventData } : {}) });
+  }
+  return states;
+}
+
 async function mapConcurrent(items, operation, concurrency = 3) {
   const results = new Array(items.length);
   let next = 0;
@@ -64,12 +82,13 @@ async function mapConcurrent(items, operation, concurrency = 3) {
 }
 
 /** Collect the earliest quote-paired pool per token created inside the requested UTC-second window. */
-export async function collectArc({ rpcUrl = 'https://rpc.mainnet.arc.io', fromTimestamp, toTimestamp, cacheDirectory, onProgress = () => {} }) {
+export async function collectArc({ rpcUrl = 'https://rpc.mainnet.arc.io', fromTimestamp, toTimestamp, cacheDirectory, onProgress = () => {}, capturedManifest }) {
   if (!Number.isFinite(fromTimestamp) || !Number.isFinite(toTimestamp) || fromTimestamp >= toTimestamp || !cacheDirectory) throw new TypeError('A valid discovery window and cacheDirectory are required');
   await mkdir(cacheDirectory, { recursive: true });
   let requestCount = 0, cacheHits = 0;
   let nextRequestAt = 0;
   const rpc = async (method, params) => {
+    if (capturedManifest) throw new Error(`Missing cached Arc input for offline reconstruction: ${method}`);
     for (let attempt = 0; ; attempt++) {
       try {
         const waitMs = Math.max(0, nextRequestAt - Date.now());
@@ -97,7 +116,7 @@ export async function collectArc({ rpcUrl = 'https://rpc.mainnet.arc.io', fromTi
       }
     }
   };
-  const chainId = Number(BigInt(await rpc('eth_chainId', [])));
+  const chainId = capturedManifest?.chainId ?? Number(BigInt(await rpc('eth_chainId', [])));
   if (chainId !== 5042) throw new Error(`Expected Arc chain 5042, received ${chainId}`);
   const headers = new Map();
   const header = async number => {
@@ -108,10 +127,12 @@ export async function collectArc({ rpcUrl = 'https://rpc.mainnet.arc.io', fromTi
     }
     return headers.get(number);
   };
-  const headNumber = Number(BigInt(await rpc('eth_blockNumber', [])));
-  const head = await header(headNumber);
-  const sample = await header(Math.max(0, headNumber - 10_000));
-  const blockSeconds = (head.timestamp - sample.timestamp) / (headNumber - sample.number);
+  const headNumber = capturedManifest?.captureToBlock ?? Number(BigInt(await rpc('eth_blockNumber', [])));
+  const head = capturedManifest
+    ? { number: headNumber, timestamp: capturedManifest.captureToTimestamp, baseFeePerGas: capturedManifest.sampledBaseFeePerGas }
+    : await header(headNumber);
+  const sample = capturedManifest ? null : await header(Math.max(0, headNumber - 10_000));
+  const blockSeconds = capturedManifest?.blockSeconds ?? (head.timestamp - sample.timestamp) / (headNumber - sample.number);
   const boundary = async timestamp => {
     if (timestamp > head.timestamp) throw new Error('Requested discovery or follow-up window exceeds Arc head');
     let low = await header(0), high = head;
@@ -209,17 +230,12 @@ export async function collectArc({ rpcUrl = 'https://rpc.mainnet.arc.io', fromTi
   });
   for (const pool of pools) {
     const logs = eventsByPool.get(pool.id).sort(compareLogs);
-    let previous;
-    for (const log of logs) {
-      const event = decodeArcEvent(log, EVENT_ABIS[pool.protocol]);
-      previous = advancePoolState(previous, event, pool.feePips);
-      pool.states.push({ ...previous, blockNumber: Number(BigInt(log.blockNumber)), timestamp: timestampFor(log), transactionHash: log.transactionHash, transactionIndex: Number(BigInt(log.transactionIndex)), logIndex: Number(BigInt(log.logIndex)), event: event.eventName });
-    }
+    pool.states = derivePoolStates(pool, logs, timestampFor);
     delete pool.protocol;
   }
   const fundedPools = pools.filter(pool => pool.states.some(state => BigInt(state.liquidity) > 0n)).length;
   return { version: 1, manifest: { chainId, fromBlock, toBlock, captureToBlock, fromTimestamp, toTimestamp, captureToTimestamp: endHeader.timestamp,
     blockSeconds, followUpSeconds, fromBlockHash: startHeader.hash, captureToBlockHash: endHeader.hash, sampledBaseFeePerGas: head.baseFeePerGas,
-    timestampSource: 'RPC log blockTimestamp; interpolated only when absent', scope: 'Earliest native-USDC or ERC20-USDC paired pool per token created in window, across the two configured Arc Uniswap v3/v4 factories; not token deployment or pre-migration curves',
+    timestampSource: 'RPC log blockTimestamp; interpolated only when absent', eventDataThroughDelayBlocks: 20, scope: 'Earliest native-USDC or ERC20-USDC paired pool per token created in window, across the two configured Arc Uniswap v3/v4 factories; not token deployment or pre-migration curves',
     discoveryLogs: discoveryLogs.length, nonQuotePools, duplicateTokenPools, pools: pools.length, fundedPools, noFundedPools: pools.length - fundedPools, requestCount, cacheHits }, pools };
 }
