@@ -1107,6 +1107,90 @@
     },
     "timeStopComparison": [
       {
+        "timeStopMinutes": 5,
+        "delayBlocks": 4,
+        "policy": "40% at 2.5x",
+        "discovered": 6770,
+        "entered": 6200,
+        "unentered": 570,
+        "spentUsd": 12400,
+        "proceedsUsd": 18298.705986443398,
+        "gasUsd": 76.90500000000165,
+        "netUsd": 5821.800986443174,
+        "conservativeNetUsd": -4223.546812620432,
+        "evPerEntryUsd": 0.9390001591037378,
+        "winRate": 0.31548387096774194,
+        "failedExits": 296,
+        "securityUnknown": 2988,
+        "exitReasons": {
+          "time_stop": 4052,
+          "trailing_stop": 1653,
+          "honeypot": 16,
+          "stop_loss": 199,
+          "liquidity_disappeared": 280,
+          "never_funded": 570
+        },
+        "fixedScreen": {
+          "entries": 4626,
+          "netUsd": 6014.77839871447,
+          "conservativeNetUsd": -1976.7881437201952,
+          "failedExits": 267
+        },
+        "timeStopProfits": {
+          "positions": 4052,
+          "positive": 289,
+          "profitAtLeast1": 163,
+          "profitAtLeast2": 85,
+          "positiveNetUsd": 2012.6082989419322,
+          "netUsd": 1698.492065389285,
+          "maxNetUsd": 34.54832541986601
+        },
+        "lossOver5Pct": 630,
+        "heavyLoss": 481
+      },
+      {
+        "timeStopMinutes": 10,
+        "delayBlocks": 4,
+        "policy": "40% at 2.5x",
+        "discovered": 6770,
+        "entered": 6200,
+        "unentered": 570,
+        "spentUsd": 12400,
+        "proceedsUsd": 18568.984167545157,
+        "gasUsd": 77.19500000000153,
+        "netUsd": 6091.789167544963,
+        "conservativeNetUsd": -3954.1599175760266,
+        "evPerEntryUsd": 0.9825466399266068,
+        "winRate": 0.3108064516129032,
+        "failedExits": 296,
+        "securityUnknown": 2988,
+        "exitReasons": {
+          "time_stop": 3964,
+          "trailing_stop": 1712,
+          "honeypot": 16,
+          "stop_loss": 228,
+          "liquidity_disappeared": 280,
+          "never_funded": 570
+        },
+        "fixedScreen": {
+          "entries": 4626,
+          "netUsd": 6284.0593739488395,
+          "conservativeNetUsd": -1708.7423386892406,
+          "failedExits": 267
+        },
+        "timeStopProfits": {
+          "positions": 3964,
+          "positive": 201,
+          "profitAtLeast1": 148,
+          "profitAtLeast2": 93,
+          "positiveNetUsd": 2002.0794471550716,
+          "netUsd": 1680.9928545240523,
+          "maxNetUsd": 40.79230494059265
+        },
+        "lossOver5Pct": 671,
+        "heavyLoss": 510
+      },
+      {
         "timeStopMinutes": 15,
         "delayBlocks": 4,
         "policy": "40% at 2.5x",
@@ -1306,6 +1390,7 @@
         "fundingCohortFrozen": true
       }
     },
-    "bestObservedTimeStopMinutes": 15
+    "bestObservedTimeStopMinutes": 15,
+    "minimumRounded30MinuteHorizonSlackSeconds": 99.37499989509593
   }
 }
