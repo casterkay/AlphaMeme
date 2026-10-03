@@ -1,0 +1,21 @@
+scripts/arc-backtest/supplement.mjs
+  s_02320cd7492a13::t_3d855e23f1003f 19,36-45
+test/arc-backtest-security.test.mjs
+  s_02320cd7492a13::t_b6756c2507eab1 51-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a558b754a6f9811bf212af90bcd8b637842b664b",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
