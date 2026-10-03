@@ -215,6 +215,130 @@
         "conservativeNetUsd": -1650.4327597315223,
         "failedExits": 345
       }
+    },
+    {
+      "athPercent": 96,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 18570.68243839956,
+      "gasUsd": 77.54500000000154,
+      "netUsd": 6093.137438399392,
+      "conservativeNetUsd": -3897.1360356321175,
+      "evPerEntryUsd": 0.9827641029676438,
+      "winRate": 0.3025806451612903,
+      "failedExits": 332,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3832,
+        "trailing_stop": 1784,
+        "honeypot": 16,
+        "stop_loss": 252,
+        "liquidity_disappeared": 316,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 6288.623966766611,
+        "conservativeNetUsd": -1653.2339211324115,
+        "failedExits": 300
+      }
+    },
+    {
+      "athPercent": 97,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 18614.67011435574,
+      "gasUsd": 77.54500000000154,
+      "netUsd": 6137.125114355572,
+      "conservativeNetUsd": -3891.368959677315,
+      "evPerEntryUsd": 0.989858889412189,
+      "winRate": 0.30532258064516127,
+      "failedExits": 309,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3832,
+        "trailing_stop": 1807,
+        "honeypot": 16,
+        "stop_loss": 252,
+        "liquidity_disappeared": 293,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 6332.282442951698,
+        "conservativeNetUsd": -1647.7960449487011,
+        "failedExits": 277
+      }
+    },
+    {
+      "athPercent": 98,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 18625.578860045356,
+      "gasUsd": 77.54500000000154,
+      "netUsd": 6148.033860045193,
+      "conservativeNetUsd": -3893.991565904133,
+      "evPerEntryUsd": 0.9916183645234182,
+      "winRate": 0.3066129032258065,
+      "failedExits": 299,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3832,
+        "trailing_stop": 1817,
+        "honeypot": 16,
+        "stop_loss": 252,
+        "liquidity_disappeared": 283,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 6344.347546654659,
+        "conservativeNetUsd": -1649.2622931621681,
+        "failedExits": 267
+      }
+    },
+    {
+      "athPercent": 99,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 18618.523538580037,
+      "gasUsd": 77.54500000000154,
+      "netUsd": 6140.978538579881,
+      "conservativeNetUsd": -3894.583575018229,
+      "evPerEntryUsd": 0.990480409448368,
+      "winRate": 0.3066129032258065,
+      "failedExits": 298,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3831,
+        "trailing_stop": 1819,
+        "honeypot": 16,
+        "stop_loss": 252,
+        "liquidity_disappeared": 282,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 6337.292225189355,
+        "conservativeNetUsd": -1649.8543022762647,
+        "failedExits": 266
+      }
     }
   ]
 }
