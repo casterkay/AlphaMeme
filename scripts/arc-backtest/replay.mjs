@@ -85,7 +85,10 @@ export function replay(pool, security, delay, policy, blockSeconds, costs = DEFA
   result.fills.push({ side: 'buy', blockNumber: entryBlock, quantity, usd: costs.stakeUsd });
   if (!(quantity > 0)) return { ...result, exitReason: 'buy_tax_consumed_position', netUsd: -result.spentUsd - result.gasUsd };
   const entryPrice = costs.stakeUsd / quantity;
-  let remaining = quantity, high = entryPrice, takeProfitFilled = false, pending = null;
+  let remaining = quantity, high = entryPrice, takeProfitFilled = false;
+  // Taxes or a thin pool can put the received position below its stop immediately.
+  let pending = entryDepth.price <= entryPrice * 0.5
+    ? { reason: 'stop_loss', blockNumber: entryBlock + costs.exitDelayBlocks } : null;
   const deadlineBlock = entryBlock + Math.ceil(1200 / blockSeconds);
   let block = entryBlock, approved = false, deadlineProcessed = false;
   while (remaining > 0) {
