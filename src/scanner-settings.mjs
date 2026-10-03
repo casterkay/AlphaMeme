@@ -10,6 +10,8 @@ export const scannerSettings = Object.freeze({
   outcomeReadsPerCycle: 0,
   // A lead stays shown this long after the hot list last confirmed it.
   liveLeadRetentionMs: 30 * 60_000,
+  // A screened quote, and an AVE market cap's own clock, are trusted this long after their source time.
+  maxQuoteAgeMs: 60_000,
   minAgeSec: 5 * 60,
   maxAgeSec: 7 * 86400,
   discoveryMinMarketCap: 10_000,

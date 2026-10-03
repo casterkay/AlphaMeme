@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { renderPanel, selectPanelRows, PANEL_NAMES, HELP_COMMAND_NAMES, telegramCommandDescriptions, telegramCommandRegistrations } from '../src/bot/panels.mjs';
+import { renderPanel, selectPanelRows, screenReasonText, PANEL_NAMES, HELP_COMMAND_NAMES, telegramCommandDescriptions, telegramCommandRegistrations } from '../src/bot/panels.mjs';
 import { projectTelegramCandidate, projectTelegramFeedRow, createTelegramExport, safeTelegramUrl } from '../src/bot/snapshot.mjs';
 import { CHART_RISK_VERSION, applyRiskExclusion } from '../src/scoring/chart-risk.mjs';
 import { money, officialXUrl } from '../src/render/telegram.mjs';
 import { aveTokenUrl } from '../src/providers/ave.mjs';
+import { SCREEN_RULES } from '../src/scoring/screen.mjs';
 
 const now=1_800_000_000_000;
 function candidate(index=0,changes={}) { return projectTelegramCandidate({ chain:'robinhood',address:'a'.repeat(32)+index,symbol:'COIN'+index,name:'Research token',status:'LIVE_READY',marketCap:20000+index,liquidity:8000,holders:0,auditedAt:now-60_000,reviewRevision:'revision',deep:{chainPass:true,chartRisk:{version:CHART_RISK_VERSION,pass:true},checks:{openSource:true,ownerRenounced:false},failed:[],unknownFields:[],blockingUnknownFields:[]},...changes }); }
@@ -120,13 +121,26 @@ test('Leads lists every kept token whatever its age, the fresh cutoff is inclusi
 
 test('Leads finds alerted tokens and says when a kept lead is no longer live, and why in its detail',()=>{
   const snapshot=fixture();
-  snapshot.candidates=[candidate(0,{status:'LIVE_READY',alertedAt:now-86_400_000,staleAt:now-1,metadata:{screenFailedAt:now-1,screenReasons:['市值超出范围']}}),candidate(1,{status:'LIVE_READY',staleAt:now-1}),candidate(2,{status:'LIVE_READY',staleAt:now+1})];
+  snapshot.candidates=[candidate(0,{status:'LIVE_READY',alertedAt:now-86_400_000,staleAt:now-1,metadata:{screenFailedAt:now-1,screenReasons:['MARKET_CAP_OUT_OF_RANGE']}}),candidate(1,{status:'LIVE_READY',staleAt:now-1}),candidate(2,{status:'LIVE_READY',staleAt:now+1})];
   assert.deepEqual(selectPanelRows(snapshot,session('audits',{filter:'alerted'})).map(row=>row.symbol),['COIN0']);
   const text=renderPanel(snapshot,session('audits',{sort:'score_desc'}),'en').text;
   assert.match(text,/COIN0<\/b> · [^\n]+ · 🔔\n[^\n]*no longer passes the screen\n/);
   assert.match(text,/COIN1<\/b>[^\n]*\n[^\n]*off the hot list\n/);
   assert.doesNotMatch(text,/COIN2<\/b>[^\n]*\n[^\n]*(off the hot list|no longer)/);
-  assert.match(renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),'en').text,/no longer passes the screen: 市值超出范围/);
+  const detail=locale=>renderPanel(snapshot,session('detail',{selectedToken:snapshot.candidates[0]}),locale).text;
+  assert.match(detail('en'),/no longer passes the screen: Market cap out of range\n/);
+  assert.match(detail('zh'),/不再通过筛选：市值不在发现范围\n/);
+  // A lead stored when reasons were prose shows none until a screen rewrites it.
+  snapshot.candidates[0].screenReasons=['市值超出范围'];
+  assert.match(detail('en'),/no longer passes the screen\n/);
+});
+
+test('every screen rule has a reason label, in English without Chinese and in Chinese',()=>{
+  for(const {id} of SCREEN_RULES) {
+    assert.doesNotMatch(screenReasonText([id],'en') ?? '',/^$|[\u3400-\u9fff]/,id);
+    assert.match(screenReasonText([id],'zh') ?? '',/[\u3400-\u9fff]/,id);
+  }
+  assert.equal(screenReasonText(['上线不足5分钟'],'en'),null);
 });
 
 test('the hot list states its read status, staleness and whether the chain is scanned, in both locales',()=>{
@@ -341,11 +355,15 @@ test('a hot-list row shows its candidate safety badge, never ✅ for the market 
     projectTelegramFeedRow({address:vetoed.address,symbol:'RUG',pass:true,priorityBand:true,volume5m:3,reasons:[]},'robinhood'),
     projectTelegramFeedRow({address:fresh.address,symbol:'NEWLEAD',pass:true,volume5m:2,reasons:[]},'robinhood'),
     projectTelegramFeedRow({address:'s'.repeat(32),symbol:'SCREENED',pass:true,volume5m:1,reasons:[]},'robinhood'),
-    projectTelegramFeedRow({address:'r'.repeat(32),symbol:'LATE',pass:false,reasons:['上线不足5分钟']},'robinhood')]};
+    projectTelegramFeedRow({address:'r'.repeat(32),symbol:'LATE',pass:false,reasons:['AGE_TOO_YOUNG','MARKET_CAP_KNOWN']},'robinhood'),
+    // A feed written when reasons were prose shows them as unknown until the next screen.
+    projectTelegramFeedRow({address:'o'.repeat(32),symbol:'OLDFEED',pass:false,reasons:['上线不足5分钟']},'robinhood')]};
   for(const locale of ['en','zh']) assert.ok(!renderPanel(snapshot,session('feed'),locale).text.includes('✅'),locale);
   const text=renderPanel(snapshot,session('feed'),'en').text;
   assert.match(text,/<b>1\. RUG<\/b> · ⛔ Vetoed\n/);assert.match(text,/<b>2\. NEWLEAD<\/b> · ⏳ Checking\n/);
-  assert.match(text,/<b>3\. SCREENED<\/b> · passed screen\n/);assert.match(text,/<b>4\. LATE<\/b> · 上线不足5分钟\n/);
+  assert.match(text,/<b>3\. SCREENED<\/b> · passed screen\n/);assert.match(text,/<b>4\. LATE<\/b> · Launched too recently\n/);
+  assert.match(text,/<b>5\. OLDFEED<\/b> · Unknown\n/);assert.doesNotMatch(text,/[\u3400-\u9fff]/);
+  assert.match(renderPanel(snapshot,session('feed'),'zh').text,/<b>4\. LATE<\/b> · 上线时间过短\n/);
   assert.match(text,/\n\nUpdated [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2} UTC · hot list read 5m ago$/);
 });
 

@@ -189,9 +189,9 @@ test('a fresh AVE trending row that passes the screen becomes a lead with an eve
 });
 
 for (const [scenario, options, reason] of [
-  ['a quote older than 60 seconds', { quoteAgeMs: 61_000 }, 'AVE 行情已过期或原始时间未核验'],
-  ['a market cap above the discovery range', { marketCap: 150_001 }, '市值不在发现范围'],
-  ['a market cap below the discovery range', { marketCap: 9_999 }, '市值不在发现范围']
+  ['a quote older than 60 seconds', { quoteAgeMs: 61_000 }, 'QUOTE_FRESH'],
+  ['a market cap above the discovery range', { marketCap: 150_001 }, 'MARKET_CAP_OUT_OF_RANGE'],
+  ['a market cap below the discovery range', { marketCap: 9_999 }, 'MARKET_CAP_OUT_OF_RANGE']
 ]) {
   test(`${scenario} does not become a lead`, async () => {
     const radarFixture = radar();
@@ -358,9 +358,9 @@ test('a promoted pool is dated by its token\'s first pool, not its deepest, so a
   // $300 of 5-minute volume on $80k of liquidity clears a young token, but not the 1 h ($400) or 6 h ($800) turnover bar.
   for (const [scenario, firstPoolAge, reason] of [
     ['first pool 30 minutes old', 30 * MINUTE, null],
-    ['first pool 2 hours old', 2 * 60 * MINUTE, '当前成交活跃度不足'],
-    ['first pool 7 hours old', 7 * 60 * MINUTE, '老币当前成交活跃度不足'],
-    ['first pool 8 days old', 8 * 24 * 60 * MINUTE, '超过观察年龄上限']
+    ['first pool 2 hours old', 2 * 60 * MINUTE, 'LOW_ACTIVITY'],
+    ['first pool 7 hours old', 7 * 60 * MINUTE, 'LOW_ACTIVITY'],
+    ['first pool 8 days old', 8 * 24 * 60 * MINUTE, 'AGE_TOO_OLD']
   ]) {
     const radarFixture = radar({ chain: 'arc', onchain: true });
     radarFixture.chainLogs = { newPools: newPool(A) };
@@ -389,9 +389,9 @@ test('a checkpoint written while promotions read AVE screens its recorded promot
   const aveRow = token => ({ address: token, chain: 'arc', symbol: 'AVEROW', marketProvider: 'AVE', price: 0.001, market_cap: 50_000, liquidity: 20_000,
     volume_5m: 2_000, buys_5m: 20, sells_5m: 5, launch_at: Math.floor((NOW - 30 * MINUTE) / 1000), ageBasis: 'launch', capturedAt: NOW, sourceUpdatedAt: NOW });
   for (const [scenario, endpointIndex, responses, elapsed, reasons] of [
-    ['waiting on market:0', 3, {}, 0, ['上线时间未知']],
-    ['waiting on market:1 after market:0 was read', 4, { 'market:0': { collectedAt: NOW, value: { row: aveRow(A), capturedAt: NOW } } }, 0, ['上线时间未知']],
-    ['waiting through a deploy', 3, {}, 2 * MINUTE, ['DexScreener 行情已过期或读取时间未核验', '上线时间未知']]
+    ['waiting on market:0', 3, {}, 0, ['AGE_KNOWN']],
+    ['waiting on market:1 after market:0 was read', 4, { 'market:0': { collectedAt: NOW, value: { row: aveRow(A), capturedAt: NOW } } }, 0, ['AGE_KNOWN']],
+    ['waiting through a deploy', 3, {}, 2 * MINUTE, ['QUOTE_FRESH', 'AGE_KNOWN']]
   ]) {
     const radarFixture = radar({ chain: 'arc', onchain: true });
     radarFixture.chainLogs = { newPools: async (chain, options) => {
@@ -492,8 +492,8 @@ test('a promoted token that fails the screen is not promoted again for thirty mi
   const P = address('8');
   assert.ok(sampledForRejection('arc', P));
   for (const [scenario, market, reason] of [
-    ['no sells', busyMarket(P, { sells5m: 0 }), '近5分钟无卖出成交'],
-    ['no price', busyMarket(P, { priceUsd: null }), '价格数据未知']
+    ['no sells', busyMarket(P, { sells5m: 0 }), 'NO_SELLS_5M'],
+    ['no price', busyMarket(P, { priceUsd: null }), 'PRICE_KNOWN']
   ]) {
     const radarFixture = radar({ chain: 'arc', onchain: true });
     radarFixture.chainLogs = { newPools: newPool(P) };
@@ -703,7 +703,7 @@ test('hot-list tokens the screen rejects fill a stable one-in-five control cohor
   for (const row of baselines) {
     assert.deepEqual([row.initialDecision, row.latestDecision, row.baselineAt, row.baselinePrice, outcomeCohort(row)],
       [DISCOVERY_REJECT, null, NOW - 5_000, 0.001, 'rejected']);
-    assert.ok(row.latestFailed.includes('市值不在发现范围'), JSON.stringify(row.latestFailed));
+    assert.ok(row.latestFailed.includes('MARKET_CAP_OUT_OF_RANGE'), JSON.stringify(row.latestFailed));
   }
   assert.deepEqual(radarFixture.store.readCandidateAddresses('bsc'), []);
   assert.equal(radarFixture.secondaryCalls.length, 0);

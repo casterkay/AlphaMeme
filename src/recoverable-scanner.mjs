@@ -1,6 +1,6 @@
 import { tokenInfoPrice } from './providers/ave.mjs';
 import { aggregateSecondarySources } from './providers/secondary.mjs';
-import { discoveryScreen } from './scoring/index.mjs';
+import { discoveryScreen } from './scoring/screen.mjs';
 import { DISCOVERY_REJECT, REJECTED_SAMPLE_DAILY_CAP, dueOutcomeJobs, hasAveOutcomeBaseline, horizons, sampledForRejection } from './scoring/outcomes.mjs';
 import { safetyVerdict } from './scoring/safety.mjs';
 import { addressKey, buildQueue, nextAuditDelay, publicToken, selectAuditQueue, socialFrom } from './scanner-parity.mjs';

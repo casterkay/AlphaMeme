@@ -227,7 +227,6 @@ function marketRow(row, capturedAt, now) {
     price_change_percent5m: row.token_price_change_5m === null ? null : row.token_price_change_5m / 100,
     // AVE's own tax reading lets the screen drop high-tax tokens before any alert; GoPlus rechecks it later.
     buy_tax: row.buy_tax, sell_tax: row.sell_tax,
-    rug_ratio: null, bundler_rate: null, rat_trader_amount_rate: null, is_wash_trading: null, is_honeypot: null,
     capturedAt, sourceUpdatedAt: sampledAt, sampledAt, expiresAt,
     stale: sampledAt === null || sampledAt > capturedAt + 30000 || now >= expiresAt,
     identityBasis: row.identityBasis };

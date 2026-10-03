@@ -109,8 +109,8 @@ function liveState(row,snapshot,locale,{ reason = false } = {}) {
   if (row.status !== 'LIVE_READY' || !Number.isFinite(row.staleAt) || row.staleAt > snapshot.at) return '';
   const L = (zh,en) => localize(locale,zh,en);
   if (!Number.isFinite(row.screenFailedAt)) return L('已离开热榜','off the hot list');
-  const why = reason && row.screenReasons?.length ? `${L('：',': ')}${userText(row.screenReasons[0],80)}` : '';
-  return `${L('不再通过筛选','no longer passes the screen')}${why}`;
+  const why = reason ? screenReasonText(row.screenReasons,locale) : null;
+  return `${L('不再通过筛选','no longer passes the screen')}${why ? `${L('：',': ')}${why}` : ''}`;
 }
 
 function safetyLine(safety,snapshot,locale) {
@@ -158,7 +158,7 @@ function listPanel(snapshot,session,locale) {
     if (isLive) {
       // ✅ is reserved for the safety check; a market-screen pass alone earns no icon.
       const candidate = snapshot.candidates.find(item => id(item) === id(row));
-      blocks.push(`${title} · ${candidate ? safetyMark(tokenSafety(candidate),locale) : row.pass ? L('通过筛选','passed screen') : userText(row.reasons[0] || name('unknown',locale),60)}`);
+      blocks.push(`${title} · ${candidate ? safetyMark(tokenSafety(candidate),locale) : row.pass ? L('通过筛选','passed screen') : screenReasonText(row.reasons,locale) || name('unknown',locale)}`);
       blocks.push([present(row.marketCap) ? money(row.marketCap,locale) : '', row.createdAt > 0 ? L(`币龄${duration(snapshot.at-row.createdAt*1000,locale)}`,`${duration(snapshot.at-row.createdAt*1000,locale)} old`) : '',
         present(row.volume5m) ? L(`5分钟成交${money(row.volume5m,locale)}`,`5m vol ${money(row.volume5m,locale)}`) : '', present(row.priceChange5m) ? percent(row.priceChange5m,locale,true) : ''].filter(Boolean).join(' · '));
     } else {
@@ -187,6 +187,20 @@ Object.assign(fieldLabels, {
 });
 const reasonLabels = {
   AVE_RATE_LIMITED:['AVE限流，冷却中','AVE rate limited; cooling down'],AVE_QUOTA:['AVE额度用完','AVE credits exhausted'],AVE_AUTH:['AVE密钥不可用，请重新连接','AVE key unavailable; reconnect'],AVE_TIMEOUT:['AVE响应超时','AVE timed out'],AVE_NETWORK:['AVE连接失败','AVE connection failed'],AUDIT_FAILED:['深度审计失败，等待复查','Audit failed; awaiting recheck'],REQUEST_WAIT:['等待采集窗口','Waiting for a collection slot'],BLOCKED:['密钥被临时封锁，请检查Key或配额','Key temporarily blocked; check the key or quota'],REQUEST_FAILED:['采集请求失败','Feed request failed'],VERTICAL_PLATEAU:['急涨后窄幅平台','Vertical rise followed by a narrow plateau'],SUSTAINED_COLLAPSE:['持续大幅回撤','Sustained severe drawdown'],RATE_LIMITED:['请求额度受限','Rate limited'],AUTH_REQUIRED:['密钥不可用，请重新连接','Key unavailable; reconnect'],UNSUPPORTED:['来源不支持此链','Source does not support this chain'],NO_DATA:['来源暂无数据','No source data'],ERROR:['来源读取失败','Source read failed'],OK:['正常','OK'],WAIT_RECHECK:['等待复查','Waiting for recheck'],HARD_REJECT:['已排除','Rejected']
+};
+
+// The discovery screen's reasons are its rule ids. A feed or lead stored before they were ids holds prose; it shows no reason until the next screen rewrites it.
+const screenReasonLabels = {
+  IDENTITY_MISMATCH:['链或代币地址不匹配','Chain or token address mismatch'],QUOTE_FRESH:['行情已过期或时间未核验','Quote stale or unverified'],MARKET_CAP_FRESH:['市值原始时间待更新','Market cap time not yet current'],PRICE_KNOWN:['价格数据未知','Price unknown'],
+  AGE_KNOWN:['上线时间未知','Launch time unknown'],AGE_TOO_YOUNG:['上线时间过短','Launched too recently'],AGE_TOO_OLD:['超过观察年龄上限','Past the age limit'],MARKET_CAP_KNOWN:['市值数据未知','Market cap unknown'],
+  MARKET_CAP_OUT_OF_RANGE:['市值不在发现范围','Market cap out of range'],LIQUIDITY_KNOWN:['流动性数据未知','Liquidity unknown'],LIQUIDITY_TOO_LOW:['流动性不足','Liquidity too low'],TAX_TOO_HIGH:['交易税超过风险门槛','Tax above the limit'],
+  VOLUME_5M_POSITIVE:['近5分钟成交额不足或未知','No known 5m volume'],LOW_ACTIVITY:['当前成交活跃度不足','Too little current trading'],NO_BUY_VOLUME_5M:['近5分钟买入额不足或未核验','No verified 5m buy volume'],
+  NO_SELL_VOLUME_5M:['近5分钟卖出额不足或未核验','No verified 5m sell volume'],NO_BUYS_5M:['近5分钟无买入成交','No buys in 5m'],NO_SELLS_5M:['近5分钟无卖出成交','No sells in 5m']
+};
+/** The first screen reason that names a rule, localized; null when there is none. */
+export const screenReasonText = (reasons,locale) => {
+  const id = (reasons || []).find(value => Object.hasOwn(screenReasonLabels,value));
+  return id ? localize(locale,...screenReasonLabels[id]) : null;
 };
 export const reasonText = (value,locale) => fieldLabels[value] ? localize(locale,...fieldLabels[value]) : reasonLabels[value] ? localize(locale,...reasonLabels[value]) : `${localize(locale,'证据不完整，请查看来源','Incomplete evidence; check the source')}: ${safeTelegramText(value,500)}`;
 function evidenceLines(value,locale,prefix='') {

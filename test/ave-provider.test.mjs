@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AVE_CU, AveClient, AveError, normalizeAveApiKey, verifyAveApiKey } from '../src/providers/ave.mjs';
 import { scannerSettings } from '../src/scanner-settings.mjs';
-import { discoveryScreen } from '../src/scoring/index.mjs';
+import { discoveryScreen } from '../src/scoring/screen.mjs';
 
 const NOW = 1_800_000_000_000;
 const MINUTE = 60_000;
@@ -98,7 +98,7 @@ test('trending reads AVE percent taxes as rates so the screen drops only high-ta
   const { rows } = await ave.trending('bsc');
   for (const [index, { rates, rejected }] of cases.entries()) {
     assert.deepEqual([rows[index].buy_tax, rows[index].sell_tax], rates);
-    assert.equal(discoveryScreen(rows[index], scannerSettings, NOW / 1000).reasons.includes('交易税超过风险门槛'), rejected);
+    assert.equal(discoveryScreen(rows[index], scannerSettings, NOW / 1000).verdicts.TAX_TOO_HIGH === 'HIT', rejected);
   }
 });
 
