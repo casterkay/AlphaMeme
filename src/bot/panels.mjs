@@ -349,7 +349,7 @@ function eventsPanel(snapshot,session,locale) {
 // The registered command menu, in order of use. Rarer commands work but stay out of
 // the menu; Help lists both.
 const MENU_COMMANDS = [
-  ['radar','雷达：首页与最新线索','Radar: home and newest leads'],['leads','线索：雷达保留的代币与安全核验','Leads: tokens the radar keeps and their safety checks'],['hot','热榜：雷达读取的AVE热榜','Hot list: the AVE hot list the radar reads'],['watchlist','自选：收藏与备注','Watchlist: favorites and notes'],
+  ['radar','雷达：首页与最新线索','Radar: home and newest leads'],['leads','线索：雷达保留的代币与安全核验','Leads: tokens the radar keeps and their safety checks'],['hot','热榜：雷达筛选的AVE热榜与链上新池','Hot list: the AVE hot list and new on-chain pools the radar screens'],['watchlist','自选：收藏与备注','Watchlist: favorites and notes'],
   ['wallet','钱包：交易热钱包与余额','Wallet: your trading hot wallet and balances'],['performance','表现：通过筛选的代币之后的涨跌','Performance: how screened tokens moved afterwards'],['status','状态：扫描、来源、AVE额度与投递','Status: scanning, sources, AVE credits and delivery'],['settings','设置：扫描链、提醒、交易与语言','Settings: scan chain, alerts, trading and language'],['help','帮助：用法、命令与安全','Help: how it works, commands and safety']
 ];
 const MORE_COMMANDS = [
@@ -545,7 +545,7 @@ export function renderPanel(snapshot,session,locale='zh') {
     const pages=[
       [L('雷达读取扫描链上的AVE热榜，把通过行情筛选的新代币作为线索提醒你。','The radar reads the AVE hot list on your scan chain and alerts you to new tokens that pass its market screen: these are leads.'),L('随后GoPlus核验每条线索的安全性；未通过的线索被否决，不能买入，仍可卖出。','GoPlus then checks each lead\'s safety; a lead that fails is vetoed and cannot be bought, though it can still be sold.'),L('交易可选：使用独立的热钱包（/wallet），每笔交易都需你确认报价。','Trading is optional: it uses a separate hot wallet (/wallet), and every trade waits for you to confirm its quote.')],
       [`<b>${L('菜单命令','Menu commands')}</b>`,...commands(MENU_COMMANDS),'',`<b>${L('更多命令','More commands')}</b>`,...commands(MORE_COMMANDS)],
-      [keySafetyCopy(locale),L('热钱包只存放你愿意承担风险的小额资金；导出的私钥请离线保存。','Keep only small amounts you can afford to lose in the hot wallet, and store its exported key offline.'),L('线索只通过了AVE行情筛选；未核验不代表安全，交易前请自行核查。','Leads passed the AVE market screen only; unverified does not mean safe, so check before any trade.'),L('人工通过不会改变筛选结果，也不会执行交易。暂停扫描与关闭提醒互不影响。','Manual approval does not change screening results or execute trades. Pausing scanning and muting alerts are independent.'),L('非投资建议。','Not investment advice.')]
+      [keySafetyCopy(locale),L('热钱包只存放你愿意承担风险的小额资金；导出的私钥请离线保存。','Keep only small amounts you can afford to lose in the hot wallet, and store its exported key offline.'),L('线索只通过了行情筛选（AVE热榜，或链上新池的DexScreener行情）；未核验不代表安全，交易前请自行核查。','Leads passed a market screen only (the AVE hot list, or DexScreener for new on-chain pools); unverified does not mean safe, so check before any trade.'),L('人工通过不会改变筛选结果，也不会执行交易。暂停扫描与关闭提醒互不影响。','Manual approval does not change screening results or execute trades. Pausing scanning and muting alerts are independent.'),L('非投资建议。','Not investment advice.')]
     ];
     const paging=pagination(pages.length,query.page,1,locale);blocks=[...pages[paging.page],paging.label];keyboard=[paging.keyboard,control.configured ? [] : [open('onboard',locale)]];
   }

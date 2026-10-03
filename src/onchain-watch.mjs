@@ -33,8 +33,8 @@ function mergePools(pools, newPools, now) {
 const traded = market => (market.buys5m ?? 0) + (market.sells5m ?? 0) > 0 || market.volume5m > 0;
 
 /**
- * Tokens worth screening: listed on DexScreener with market cap, volume, liquidity, buys and pool age
- * inside the thresholds, not excluded (on this cycle's hot list, or vetoed), not promoted within REPROMOTE_MS and
+ * Tokens worth screening: listed on DexScreener with market cap, volume, liquidity, buys and age (from the
+ * token's first pool) inside the thresholds, not excluded (on this cycle's hot list, or vetoed), not promoted within REPROMOTE_MS and
  * not rejected within REJECTED_MS. At most two, busiest first.
  */
 export function promotions(state, markets, { now, settings, excluded }) {
@@ -45,7 +45,7 @@ export function promotions(state, markets, { now, settings, excluded }) {
       && market.marketCap >= settings.discoveryMinMarketCap && market.marketCap <= settings.discoveryMaxMarketCap
       && market.volume5m >= settings.onchainMinVolume5m && market.liquidity >= settings.minLiquidity && (market.buys5m ?? 0) >= settings.onchainMinBuys5m
       // The screen rejects a token younger than minAgeSec, so promoting one earlier would only start its rejection wait.
-      && now - market.pairCreatedAt >= settings.minAgeSec * 1000;
+      && now - market.firstPairCreatedAt >= settings.minAgeSec * 1000;
   }).sort((a, b) => b.volume5m - a.volume5m).slice(0, MAX_PROMOTIONS_PER_CYCLE).map(market => market.address);
 }
 

@@ -279,7 +279,8 @@ const newPool = (token, { head = 1_000 } = {}) => async (_chain, { cursor }) => 
   pools: [{ token, pool: `0x${'9'.repeat(64)}`, venue: 'Uniswap v4', block: head - 5 }] });
 // A token's DexScreener market as the watch's batch read returns it.
 const busyMarket = (address, overrides = {}) => ({ address, symbol: 'POOL', name: 'Pool token', marketCap: 50_000, liquidity: 20_000,
-  volume5m: 2_000, buys5m: 20, sells5m: 5, swaps5m: 25, pairCreatedAt: NOW - 30 * MINUTE, pairAddress: `0x${'9'.repeat(40)}`, priceUsd: 0.001, ...overrides });
+  volume5m: 2_000, buys5m: 20, sells5m: 5, swaps5m: 25, pairCreatedAt: NOW - 30 * MINUTE, firstPairCreatedAt: NOW - 30 * MINUTE,
+  pairAddress: `0x${'9'.repeat(40)}`, priceUsd: 0.001, ...overrides });
 const promotedAt = (radarFixture, token) => radarFixture.state('discovery.pools:arc').pools.find(pool => pool.token === token)?.promotedAt ?? null;
 const trendingReads = radarFixture => radarFixture.aveRequests.filter(url => url.startsWith('https://prod.ave-api.com/v2/tokens/trending?')).length;
 
@@ -328,20 +329,80 @@ test('a promoted pool keeps its taxes and holder count unknown in the screened r
   assert.deepEqual([screen.pass, screen.marketProvider, screen.ageBasis], [true, 'DEXSCREENER', 'pool']);
 });
 
-test('a checkpoint written while promotions read AVE screens its promotions from the watch without an AVE read', async () => {
+test('a promoted pool is dated by its token\'s first pool, not its deepest, so an older token meets the age and turnover gates', async () => {
+  // $300 of 5-minute volume on $80k of liquidity clears a young token, but not the 1 h ($400) or 6 h ($800) turnover bar.
+  for (const [scenario, firstPoolAge, reason] of [
+    ['first pool 30 minutes old', 30 * MINUTE, null],
+    ['first pool 2 hours old', 2 * 60 * MINUTE, '当前成交活跃度不足'],
+    ['first pool 7 hours old', 7 * 60 * MINUTE, '老币当前成交活跃度不足'],
+    ['first pool 8 days old', 8 * 24 * 60 * MINUTE, '超过观察年龄上限']
+  ]) {
+    const radarFixture = radar({ chain: 'arc', onchain: true });
+    radarFixture.chainLogs = { newPools: newPool(A) };
+    const market = busyMarket(A, { liquidity: 80_000, volume5m: 300, pairCreatedAt: NOW - 30 * MINUTE, firstPairCreatedAt: NOW - firstPoolAge });
+    radarFixture.dexMarkets = async () => ({ capturedAt: radarFixture.clock.now, markets: [market] });
+    await radarFixture.runCycle(`cycle-first-pool-${firstPoolAge}`);
+    const row = radarFixture.state('feed.snapshot:arc').rows.find(item => item.address === A);
+    assert.equal(row.createdAt, Math.floor((NOW - firstPoolAge) / 1000), scenario);
+    assert.equal(row.pass, reason === null, `${scenario}: ${row.reasons.join(' | ')}`);
+    if (reason) assert.ok(row.reasons.includes(reason), scenario);
+  }
+});
+
+// Rewrites a cycle that has just read its watch into the checkpoint the previous release wrote there: on DISCOVER
+// at `endpointIndex`, waiting on a `market:<n>` AVE read, with watch markets lacking the fields that release did not keep.
+function legacyCheckpoint(radarFixture, cycleId, endpointIndex, responses = {}) {
+  const partial = structuredClone(radarFixture.store.read(cycleId).partial);
+  const watch = partial.discovery.responses.watch.value;
+  watch.markets = watch.markets.map(({ symbol: _symbol, name: _name, firstPairCreatedAt: _first, ...market }) => market);
+  Object.assign(partial.discovery.responses, responses);
+  radarFixture.storage.sql.exec('UPDATE cycle_checkpoint SET phase = ?, endpoint_index = ?, partial_json = ? WHERE tenant_id = ? AND cycle_id = ?',
+    'DISCOVER', endpointIndex, JSON.stringify(partial), TENANT, cycleId);
+}
+
+test('a checkpoint written while promotions read AVE screens its recorded promotions once, without an AVE read', async () => {
+  const aveRow = token => ({ address: token, chain: 'arc', symbol: 'AVEROW', marketProvider: 'AVE', price: 0.001, market_cap: 50_000, liquidity: 20_000,
+    volume_5m: 2_000, buys_5m: 20, sells_5m: 5, launch_at: Math.floor((NOW - 30 * MINUTE) / 1000), ageBasis: 'launch', capturedAt: NOW, sourceUpdatedAt: NOW });
+  for (const [scenario, endpointIndex, responses, elapsed, reasons] of [
+    ['waiting on market:0', 3, {}, 0, ['上线时间未知']],
+    ['waiting on market:1 after market:0 was read', 4, { 'market:0': { collectedAt: NOW, value: { row: aveRow(A), capturedAt: NOW } } }, 0, ['上线时间未知']],
+    ['waiting through a deploy', 3, {}, 2 * MINUTE, ['DexScreener 行情已过期或读取时间未核验', '上线时间未知']]
+  ]) {
+    const radarFixture = radar({ chain: 'arc', onchain: true });
+    radarFixture.chainLogs = { newPools: async (chain, options) => {
+      const [first, second] = await Promise.all([newPool(A)(chain, options), newPool(B)(chain, options)]);
+      return { ...first, pools: [...first.pools, ...second.pools] };
+    } };
+    radarFixture.dexMarkets = async () => ({ capturedAt: radarFixture.clock.now, markets: [busyMarket(A), busyMarket(B)] });
+    const cycleId = `cycle-upgrade-${endpointIndex}-${elapsed}`;
+    radarFixture.begin(cycleId);
+    for (let step = 0; step < 3; step++) await radarFixture.step(cycleId);
+    legacyCheckpoint(radarFixture, cycleId, endpointIndex, responses);
+    radarFixture.clock.now = NOW + elapsed;
+    assert.equal(radarFixture.scanner.nextRequest(cycleId), null, scenario);
+    await radarFixture.step(cycleId);
+    assert.equal(radarFixture.store.read(cycleId).phase, 'SCREEN', scenario);
+    await radarFixture.step(cycleId);
+    assert.equal(radarFixture.store.read(cycleId).phase, 'BUILD_QUEUE', scenario);
+    // The old watch kept no first-pool time, so neither promotion can be dated; both wait out the rejection.
+    for (const token of [A, B]) {
+      assert.equal(radarFixture.candidate(token), null, `${scenario}: ${token}`);
+      assert.deepEqual(radarFixture.state('feed.snapshot:arc').rows.find(row => row.address === token).reasons, reasons, `${scenario}: ${token}`);
+      assert.equal(radarFixture.state('discovery.pools:arc').pools.find(pool => pool.token === token).rejectedAt, NOW + elapsed, `${scenario}: ${token}`);
+    }
+    assert.equal(radarFixture.aveRequests.length, 1, scenario);
+  }
+});
+
+test('a discovery cursor past its requests that the previous release could not have written fails loudly', async () => {
   const radarFixture = radar({ chain: 'arc', onchain: true });
   radarFixture.chainLogs = { newPools: newPool(A) };
-  radarFixture.dexMarkets = async (_chain, addresses) => ({ capturedAt: radarFixture.clock.now, markets: addresses.includes(A) ? [busyMarket(A)] : [] });
-  radarFixture.begin('cycle-upgrade');
-  for (let step = 0; step < 3; step++) await radarFixture.step('cycle-upgrade');
-  // The old code stood here, on DISCOVER with a `market:0` read of A still to make.
-  radarFixture.storage.sql.exec('UPDATE cycle_checkpoint SET phase = ?, endpoint_index = ? WHERE tenant_id = ? AND cycle_id = ?', 'DISCOVER', 3, TENANT, 'cycle-upgrade');
-  assert.equal(radarFixture.scanner.nextRequest('cycle-upgrade'), null);
-  await radarFixture.step('cycle-upgrade');
-  assert.equal(radarFixture.store.read('cycle-upgrade').phase, 'SCREEN');
-  await radarFixture.step('cycle-upgrade');
-  assert.equal(radarFixture.candidate(A).status, 'LIVE_READY');
-  assert.equal(radarFixture.aveRequests.length, 1);
+  radarFixture.dexMarkets = async () => ({ capturedAt: radarFixture.clock.now, markets: [busyMarket(A)] });
+  radarFixture.begin('cycle-impossible');
+  for (let step = 0; step < 3; step++) await radarFixture.step('cycle-impossible');
+  legacyCheckpoint(radarFixture, 'cycle-impossible', 4);
+  await assert.rejects(radarFixture.step('cycle-impossible'), { code: 'CYCLE_CHECKPOINT_PHASE_CONFLICT' });
+  assert.equal(radarFixture.store.read('cycle-impossible').phase, 'DISCOVER');
 });
 
 test('a new pool too quiet, too young or already on the hot list is not promoted and stays watched', async () => {
@@ -350,7 +411,7 @@ test('a new pool too quiet, too young or already on the hot list is not promoted
     ['few buys', busyMarket(A, { buys5m: 2 }), []],
     ['thin liquidity', busyMarket(A, { liquidity: 1_000 }), []],
     ['too large', busyMarket(A, { marketCap: 500_000 }), []],
-    ['too young', busyMarket(A, { pairCreatedAt: NOW - MINUTE }), []],
+    ['too young', busyMarket(A, { pairCreatedAt: NOW - MINUTE, firstPairCreatedAt: NOW - MINUTE }), []],
     ['on the hot list', busyMarket(A), [A]]
   ]) {
     const radarFixture = radar({ chain: 'arc', onchain: true });
