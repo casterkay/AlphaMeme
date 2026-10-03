@@ -10,7 +10,7 @@
 //
 // A fatal GoPlus finding is a safety fact, not disposable state: the record keeps
 // it as `veto` across reruns, and pruning never drops a vetoed record. Only a later
-// run that reaches DONE with a complete GoPlus check free of fatal flags clears it.
+// run that reaches DONE with a complete check free of fatal flags clears it.
 import { normalizeTokenAddress } from './address.mjs';
 import { isScanChain } from './chains.mjs';
 import { ConnectionError } from './auth/connection.mjs';
@@ -134,20 +134,20 @@ export function lookupVerified(record, now) {
 }
 
 // A finished run's effect on the veto: a fatal finding records one; only a
-// complete GoPlus check free of fatal flags clears it; anything else keeps it.
+// complete check free of fatal flags clears it; anything else keeps it.
 function nextVeto(previous, secondary) {
   const { security } = secondary;
   if (security.verdict === 'FATAL') return { checkedAt: secondary.checkedAt, fatal: security.fatal.map(({ field, reason }) => ({ field, reason })) };
   return secondary.sources.goPlus?.status === 'OK' && security.complete && security.verdict === 'NO_FATAL_FLAGS' ? null : previous;
 }
 
-// The market facts a detail shows, from AVE's token row.
+// The market facts a detail shows, and the sellers its check may stand in with, from AVE's token row.
 function marketFacts({ token, capturedAt }) {
   return {
     symbol: token.symbol, name: token.name, price: token.current_price_usd, marketCap: token.market_cap,
     liquidity: token.main_pair_tvl ?? token.tvl, holders: token.holders, createdAt: token.launch_at ?? token.created_at,
     priceChange5m: token.token_price_change_5m === null ? null : token.token_price_change_5m / 100,
-    volume5m: token.token_tx_volume_usd_5m, website: token.website, capturedAt
+    volume5m: token.token_tx_volume_usd_5m, distinctSellers24h: token.token_sellers_24h, website: token.website, capturedAt
   };
 }
 
@@ -224,7 +224,7 @@ export class TokenLookups {
       response = { error: { code: 'TIMEOUT' }, collectedAt: this.now() };
     }
     const sources = { ...record.sources, goPlus: response };
-    const checked = aggregateSecondarySources({ chain: record.chain, tokenAddress: record.address, sources });
+    const checked = aggregateSecondarySources({ chain: record.chain, tokenAddress: record.address, sources, distinctSellers24h: record.market.distinctSellers24h });
     return this.#commit(record, { state: 'DONE', sources, secondary: checked, veto: nextVeto(record.veto, checked) });
   }
 

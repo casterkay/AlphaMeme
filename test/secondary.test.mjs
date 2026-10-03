@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DexBatchMarketOverlay, SecondaryValidator, aggregateSecondarySources, dexScreenerTokenUrl, secondaryChainSupport } from '../src/providers/secondary.mjs';
+import { safetyVerdict } from '../src/scoring/safety.mjs';
 
 const evmAddress = '0x1111111111111111111111111111111111111111';
 const otherEvmAddress = '0x2222222222222222222222222222222222222222';
@@ -231,6 +232,30 @@ test('a complete GoPlus record makes the check COMPLETE, whatever else an older 
   assert.deepEqual(Object.keys(result.sources), ['goPlus']);
   assert.equal(result.checkedAt, 7);
 });
+
+// GoPlus omits cannot_sell_all on Arc; AVE's distinct sellers stand in for that field there only.
+for (const [name, chain, overrides, distinctSellers24h, expected, standIn] of [
+  ['an Arc record missing only cannot_sell_all, with sellers', 'arc', { cannot_sell_all: undefined }, 410, 'PASSED', 410],
+  ['an Arc record missing only cannot_sell_all, with one seller', 'arc', { cannot_sell_all: undefined }, 1, 'PASSED', 1],
+  ['an Arc record missing only cannot_sell_all, without sellers', 'arc', { cannot_sell_all: undefined }, null, 'INCOMPLETE', null],
+  ['an Arc record missing only cannot_sell_all, with zero sellers', 'arc', { cannot_sell_all: undefined }, 0, 'INCOMPLETE', null],
+  ['a BSC record missing cannot_sell_all, with sellers', 'bsc', { cannot_sell_all: undefined }, 410, 'INCOMPLETE', null],
+  ['an Arc record missing cannot_sell_all and is_honeypot, with sellers', 'arc', { cannot_sell_all: undefined, is_honeypot: undefined }, 410, 'INCOMPLETE', 410],
+  ['an Arc record where GoPlus answers cannot_sell_all, with sellers', 'arc', {}, 410, 'PASSED', null],
+  ['an Arc honeypot missing cannot_sell_all, with sellers', 'arc', { cannot_sell_all: undefined, is_honeypot: '1' }, 410, 'VETOED', 410]
+]) {
+  test(`${name} is ${expected}${standIn === null ? '' : ' and records the seller stand-in'}`, async () => {
+    const value = await validatorWith(goPlusStub(securityOf(safeEvmSecurity(overrides)))).fetchSource({ chain, tokenAddress: evmAddress });
+    const goPlusSecurity = structuredClone(value.security);
+    const secondary = aggregateSecondarySources({ chain, tokenAddress: evmAddress, sources: { goPlus: { value, collectedAt: 5 } }, distinctSellers24h });
+    assert.equal(safetyVerdict({ status: 'LIVE_READY', secondary }), expected);
+    assert.deepEqual(secondary.security.standIns, standIn === null ? undefined : { cannotSellAll: { distinctSellers24h: standIn } });
+    assert.equal(secondary.security.unknownFields.includes('cannotSellAll'), Object.hasOwn(overrides, 'cannot_sell_all') && standIn === null);
+    // GoPlus's own answer is kept as given: the stand-in never fills its field.
+    assert.equal(secondary.security.fields.cannotSellAll, Object.hasOwn(overrides, 'cannot_sell_all') ? null : false);
+    assert.deepEqual(value.security, goPlusSecurity);
+  });
+}
 
 test('unsupported chains and invalid addresses never make external requests', async () => {
   for (const [chain, tokenAddress, expected] of [

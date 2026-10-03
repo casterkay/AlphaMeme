@@ -437,19 +437,46 @@ function sourceResult(response) {
   return { source: value.source, security: value.security && typeof value.security === 'object' ? value.security : unknownSecurity() };
 }
 
-/** The token's secondary safety check from its recorded GoPlus response. */
-export function aggregateSecondarySources({ chain, tokenAddress, sources = {} }) {
+// GoPlus answers every other rule on Arc but never cannot_sell_all (6 of 6
+// tokens, 2026-10-02). There, AVE's distinct sellers stand in for that one
+// field. It is weaker evidence: wallets selling some amount does not rule out
+// maximum-sell or partial-balance rules, so the check records the stand-in.
+const CANNOT_SELL_ALL_STAND_IN_CHAINS = Object.freeze(['arc']);
+
+// A new security view with the stand-in applied; GoPlus's own fields, including
+// its missing cannotSellAll, are kept as it answered.
+function withSellerStandIn(security, chain, distinctSellers24h) {
+  if (!CANNOT_SELL_ALL_STAND_IN_CHAINS.includes(chain) || !security.unknownFields?.includes('cannotSellAll')
+    || !Number.isSafeInteger(distinctSellers24h) || distinctSellers24h < 1) return security;
+  const unknownFields = security.unknownFields.filter(field => field !== 'cannotSellAll');
+  const complete = unknownFields.length === 0;
+  return {
+    ...security, complete, unknownFields,
+    verdict: security.verdict === 'FATAL' ? 'FATAL' : complete ? 'NO_FATAL_FLAGS' : 'UNKNOWN',
+    standIns: { cannotSellAll: { distinctSellers24h } }
+  };
+}
+
+/**
+ * The token's secondary safety check from its recorded GoPlus response. On a
+ * chain where GoPlus omits cannot_sell_all, at least one distinct seller in
+ * AVE's 24-hour window (`distinctSellers24h`) stands in for it, recorded as
+ * `security.standIns.cannotSellAll`; without one the field stays unknown.
+ */
+export function aggregateSecondarySources({ chain, tokenAddress, sources = {}, distinctSellers24h = null }) {
+  const normalizedChain = cleanString(chain, 24).toLowerCase();
   const goPlus = sourceResult(sources.goPlus);
-  const complete = goPlus.source.status === 'OK' && goPlus.security.complete === true;
+  const security = withSellerStandIn(goPlus.security, normalizedChain, distinctSellers24h);
+  const complete = goPlus.source.status === 'OK' && security.complete === true;
   const collectedAt = sources.goPlus?.collectedAt;
   return {
     status: complete ? 'COMPLETE' : 'DEGRADED',
     complete,
     checkedAt: Number.isSafeInteger(collectedAt) && collectedAt >= 0 ? collectedAt : 0,
-    chain: cleanString(chain, 24).toLowerCase(),
+    chain: normalizedChain,
     tokenAddress: cleanString(tokenAddress, 128),
     sources: { goPlus: goPlus.source },
-    security: goPlus.security
+    security
   };
 }
 

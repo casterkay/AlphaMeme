@@ -116,7 +116,7 @@ function tokenRow(row, chain, ca, required = false) {
     'token_buy_volume_u_5m', 'token_sell_volume_u_5m']) {
     if (row[field] != null && numeric(row[field]) === null) throw fail('SCHEMA');
   }
-  for (const field of ['holders', 'token_tx_count_5m', 'token_buy_tx_count_5m', 'token_sell_tx_count_5m']) {
+  for (const field of ['holders', 'token_tx_count_5m', 'token_buy_tx_count_5m', 'token_sell_tx_count_5m', 'token_sellers_24h']) {
     if (row[field] != null && !Number.isSafeInteger(numeric(row[field]))) throw fail('SCHEMA');
   }
   for (const field of ['updated_at', 'launch_at', 'created_at']) {
@@ -132,7 +132,8 @@ function tokenRow(row, chain, ca, required = false) {
     main_pair_tvl: numeric(row.main_pair_tvl), token_tx_volume_usd_5m: numeric(row.token_tx_volume_usd_5m),
     token_buy_volume_u_5m: numeric(row.token_buy_volume_u_5m), token_sell_volume_u_5m: numeric(row.token_sell_volume_u_5m),
     token_tx_count_5m: numeric(row.token_tx_count_5m), token_buy_tx_count_5m: numeric(row.token_buy_tx_count_5m),
-    token_sell_tx_count_5m: numeric(row.token_sell_tx_count_5m), token_price_change_5m: signedNumeric(row.token_price_change_5m),
+    token_sell_tx_count_5m: numeric(row.token_sell_tx_count_5m), token_sellers_24h: numeric(row.token_sellers_24h),
+    token_price_change_5m: signedNumeric(row.token_price_change_5m),
     buy_tax: taxRate(row.buy_tax), sell_tax: taxRate(row.sell_tax),
     launch_at: seconds(row.launch_at), created_at: seconds(row.created_at), website: webUrl(row.website),
     updated_at: row.updated_at ?? null, sourceUpdatedAt: upstreamTime(row.updated_at),
@@ -219,6 +220,8 @@ function marketRow(row, capturedAt, now) {
     volume_5m: row.token_tx_volume_usd_5m, buy_volume_5m: row.token_buy_volume_u_5m,
     sell_volume_5m: row.token_sell_volume_u_5m, swaps_5m: row.token_tx_count_5m,
     buys_5m: row.token_buy_tx_count_5m, sells_5m: row.token_sell_tx_count_5m,
+    // Distinct wallets that sold in the last 24 hours; on Arc they stand in for GoPlus's cannot_sell_all.
+    sellers_24h: row.token_sellers_24h,
     price_change_percent5m: row.token_price_change_5m === null ? null : row.token_price_change_5m / 100,
     // AVE's own tax reading lets the screen drop high-tax tokens before any alert; GoPlus rechecks it later.
     buy_tax: row.buy_tax, sell_tax: row.sell_tax,
