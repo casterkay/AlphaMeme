@@ -62,9 +62,9 @@ test('tokens never screened take the promotion slots ahead of busier ones that f
 
 test('the watchlist adds new pools, records what a check found, and drops unlisted, idle and old pools', () => {
   const state = { cursor: 100, pools: [
-    pool(1, { firstSeenAt: NOW - 20 * MINUTE, listedAt: NOW - 11 * MINUTE, tradedAt: NOW - MINUTE }),
-    pool(2, { firstSeenAt: NOW - 11 * MINUTE }),
-    pool(3, { firstSeenAt: NOW - 20 * MINUTE, listedAt: NOW - MINUTE, tradedAt: NOW - 16 * MINUTE }),
+    pool(1, { firstSeenAt: NOW - 20 * MINUTE, checkedAt: NOW - 15_000, listedAt: NOW - 11 * MINUTE, tradedAt: NOW - MINUTE }),
+    pool(2, { firstSeenAt: NOW - 11 * MINUTE, checkedAt: NOW - 15_000 }),
+    pool(3, { firstSeenAt: NOW - 20 * MINUTE, checkedAt: NOW - 15_000, listedAt: NOW - MINUTE, tradedAt: NOW - 16 * MINUTE }),
     pool(4, { firstSeenAt: NOW - 6 * 60 * MINUTE - 1, listedAt: NOW, tradedAt: NOW }),
     pool(5, { firstSeenAt: NOW - 20 * MINUTE, listedAt: NOW - 20 * MINUTE, tradedAt: NOW - 20 * MINUTE }),
     pool(6, { firstSeenAt: NOW - 5 * MINUTE })
@@ -76,6 +76,19 @@ test('the watchlist adds new pools, records what a check found, and drops unlist
   assert.deepEqual(next.pools[0], { token: token(7), pool: 'p', venue: 'Uniswap v3', firstSeenAt: NOW });
   assert.deepEqual(next.pools[1], { ...pool(6, { firstSeenAt: NOW - 5 * MINUTE }), checkedAt: NOW, listedAt: NOW }, 'listed but not traded; its first pool is kept');
   assert.deepEqual(next.pools[2], { ...state.pools[4], checkedAt: NOW, listedAt: NOW, tradedAt: NOW, promotedAt: NOW, passed: false });
+});
+
+test('a pool left unread while young pools fill every batch is not dropped as unlisted or idle', () => {
+  const { youngPoolAgeMs, maxWatchRequestsPerCycle, scanIntervalMs } = scannerSettings;
+  const young = Array.from({ length: maxWatchRequestsPerCycle * WATCH_BATCH }, (_, index) => pool(index + 1, { firstSeenAt: NOW }));
+  const older = pool(1_000, { firstSeenAt: NOW - youngPoolAgeMs, checkedAt: NOW, listedAt: NOW, tradedAt: NOW });
+  let state = { cursor: 1, pools: [...young, older] };
+  for (let now = NOW + scanIntervalMs; now <= NOW + 16 * MINUTE; now += scanIntervalMs) {
+    const checked = watchTargets(state, [], now, scannerSettings);
+    assert.ok(!checked.includes(older.token), 'young pools take every slot');
+    state = nextWatchState(state, { checked, markets: checked.map(address => market(Number.parseInt(address, 16))), now });
+  }
+  assert.deepEqual(state.pools.find(item => item.token === older.token), older, 'kept, unread, until it is read again');
 });
 
 test('a failed log read keeps the cursor, and the watchlist is capped at its newest 500 pools', () => {

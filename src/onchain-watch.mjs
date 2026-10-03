@@ -57,7 +57,8 @@ export function promotions(state, markets, { now, settings, excluded }) {
 
 /**
  * The watchlist after one cycle: new pools added, checked ones updated, promoted ones stamped with
- * whether they `passed` the screen, and expired ones dropped.
+ * whether they `passed` the screen, and expired ones dropped: older than WATCH_MS, or at their last read
+ * unlisted for UNLISTED_MS or untraded for IDLE_MS.
  */
 export function nextWatchState(state, { newPools = null, checked = [], markets = [], promoted = [], passed = [], now }) {
   const found = new Map(markets.map(market => [market.address, market]));
@@ -66,8 +67,12 @@ export function nextWatchState(state, { newPools = null, checked = [], markets =
     const market = found.get(pool.token);
     return { ...pool, checkedAt: now, ...(market ? { listedAt: now } : {}), ...(market && traded(market) ? { tradedAt: now } : {}),
       ...(promoted.includes(pool.token) ? { promotedAt: now, passed: passed.includes(pool.token) } : {}) };
-  }).filter(pool => now - pool.firstSeenAt <= WATCH_MS && now - (pool.listedAt ?? pool.firstSeenAt) <= UNLISTED_MS
-    && now - (pool.tradedAt ?? pool.firstSeenAt) <= IDLE_MS)
+  }).filter(pool => {
+    // Unlisted and idle are judged at the pool's last read: a pool left unread has given no evidence of either.
+    const readAt = pool.checkedAt ?? pool.firstSeenAt;
+    return now - pool.firstSeenAt <= WATCH_MS && readAt - (pool.listedAt ?? pool.firstSeenAt) <= UNLISTED_MS
+      && readAt - (pool.tradedAt ?? pool.firstSeenAt) <= IDLE_MS;
+  })
     .sort((a, b) => b.firstSeenAt - a.firstSeenAt).slice(0, MAX_WATCHED);
   return { cursor: newPools ? newPools.toBlock : state.cursor, pools };
 }
