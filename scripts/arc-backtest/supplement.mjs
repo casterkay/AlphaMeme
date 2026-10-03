@@ -16,7 +16,7 @@ export function mergeSecurity(gmgn, goplus, ave) {
 }
 
 /** Supplement unresolved GMGN inputs using current contract reports, never entry screening. */
-export async function supplementSecurity(snapshots, { cacheDirectory, aveApiKey, onProgress = () => {}, fetchImpl = fetch, goPlusIntervalMs = 2100, aveIntervalMs = 15000 }) {
+export async function supplementSecurity(snapshots, { cacheDirectory, aveApiKey, onProgress = () => {}, fetchImpl = fetch, goPlusIntervalMs = 2100, aveIntervalMs = 1000 }) {
   await mkdir(cacheDirectory, { recursive: true });
   const results = {};
   let nextGoPlus = 0, nextAve = 0, complete = 0;
@@ -33,8 +33,16 @@ export async function supplementSecurity(snapshots, { cacheDirectory, aveApiKey,
     const url = provider === 'goplus'
       ? `https://api.gopluslabs.io/api/v1/token_security/5042?contract_addresses=${token}`
       : `https://prod.ave-api.com/v2/contracts/${token}-arc`;
-    const response = await fetchImpl(url, { headers: provider === 'ave' ? { 'X-API-KEY': aveApiKey } : {}, signal: AbortSignal.timeout(15000) });
-    const body = await response.json();
+    let response, body;
+    try {
+      response = await fetchImpl(url, { headers: provider === 'ave' ? { 'X-API-KEY': aveApiKey } : {}, signal: AbortSignal.timeout(15000) });
+      body = await response.json();
+    } catch (error) {
+      if (!(error instanceof TypeError || error instanceof SyntaxError || ['TimeoutError', 'AbortError'].includes(error.name))) throw error;
+      stopped.add(provider);
+      onProgress({ phase: 'supplement_unavailable', provider, code: 'network_or_invalid_response' });
+      return null;
+    }
     const ok = response.ok && Number(provider === 'goplus' ? body.code : body.status) === 1;
     if (response.status === 429 || response.status === 401 || response.status === 403 || (!ok && /too many|limit|quota|credit|auth/i.test(String(body.message ?? body.msg)))) {
       stopped.add(provider);

@@ -48,3 +48,17 @@ test('a timed-out CLI child leaves an unavailable snapshot and continues the tok
     assert.equal(calls, 2);
   } finally { await rm(cacheDirectory, { recursive: true }); }
 });
+
+test('supplemental quota errors stop that provider without blocking the matrix cohort', async () => {
+  const cacheDirectory = await mkdtemp(join(tmpdir(), 'arc-security-quota-'));
+  let calls = 0;
+  try {
+    const snapshots = { first: { data: { honeypot: -1 } }, second: { data: { honeypot: -1 } } };
+    const result = await supplementSecurity(snapshots, { cacheDirectory, goPlusIntervalMs: 0,
+      fetchImpl: async () => { calls++; return { ok: true, status: 200, json: async () => ({ code: 4029, message: 'too many requests' }) }; } });
+    assert.equal(calls, 1);
+    assert.deepEqual(Object.keys(result), ['first', 'second']);
+    assert.equal(result.first.data.is_honeypot, null);
+    assert.equal(result.second.data.is_honeypot, null);
+  } finally { await rm(cacheDirectory, { recursive: true }); }
+});
