@@ -8,16 +8,16 @@ import { discoveryScreen as oracleScreen } from './fixtures/discovery-screen-ora
 // The rule table must pass and fail exactly what the screen it replaced did. The
 // oracle hardcoded a 60 s quote age, so the parity runs pin that setting to it.
 const settingsFor = chain => ({ ...scannerSettings, maxQuoteAgeMs: 60_000, chain });
-// The rule table reads only settings the scanner validates complete at its snapshot: any other key fails the test.
-const strictSettingsFor = chain => new Proxy(settingsFor(chain), {
-  get: (target, key) => Object.hasOwn(target, key) ? target[key] : assert.fail(`the screen read an unknown setting ${String(key)}`)
-});
+// Each rule sees only the settings it declares, since only those enter the ruleset version: an undeclared read fails the test.
+const strictRules = SCREEN_RULES.map(rule => ({ ...rule, evaluate: (market, settings) => rule.evaluate(market, new Proxy(settings, {
+  get: (target, key) => rule.settings.includes(key) ? target[key] : assert.fail(`${rule.id} read the undeclared setting ${String(key)}`)
+})) }));
 
 // Both screens on one row: the same pass/fail and the same derived facts, or the same TypeError.
 function assertParity(row, chain, nowSec, label) {
   let expected, actual;
   try { expected = oracleScreen(row, settingsFor(chain), nowSec); } catch (error) { expected = error; }
-  try { actual = discoveryScreen(row, strictSettingsFor(chain), nowSec); } catch (error) { actual = error; }
+  try { actual = discoveryScreen(row, settingsFor(chain), nowSec, strictRules); } catch (error) { actual = error; }
   if (actual instanceof assert.AssertionError) throw actual;
   if (expected instanceof Error) {
     assert.ok(actual instanceof TypeError && expected instanceof TypeError, `${label}: both reject the row`);

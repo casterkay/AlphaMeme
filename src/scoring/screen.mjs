@@ -12,8 +12,9 @@ import { taxBreaches } from './tax.mjs';
  * A SHADOW rule's verdict is recorded but never decides. A rule's id names the
  * reason a blocked token shows, so each rule has a single blocking meaning:
  * thresholds are DROP rules, and the data a pass requires are ADMIT rules.
- * Thresholds come only from the scanner settings, which are checked complete
- * (completeScannerSettings) where each cycle snapshots them.
+ * A rule declares the settings it reads; thresholds come only from the scanner
+ * settings, which are checked complete (completeScannerSettings) where each
+ * cycle snapshots them.
  */
 export const HIT = 'HIT', CLEAR = 'CLEAR', UNKNOWN = 'UNKNOWN';
 export const ADMIT = 'ADMIT', DROP = 'DROP', UNDECIDED = 'UNDECIDED';
@@ -26,54 +27,66 @@ const ageVerdict = (market, hit) => market.ageSec === null ? UNKNOWN : hit(marke
 const sideVolume = value => value == null ? UNKNOWN : optionalNonNegativeNumber(value) > 0 ? CLEAR : HIT;
 
 export const SCREEN_RULES = Object.freeze([
-  { id: 'IDENTITY_MISMATCH', version: 1, role: DROP, mode: ENFORCE,
+  { id: 'IDENTITY_MISMATCH', version: 1, role: DROP, mode: ENFORCE, settings: [],
     evaluate: market => market.identityMatches ? CLEAR : HIT },
-  { id: 'QUOTE_FRESH', version: 1, role: ADMIT, mode: ENFORCE,
+  { id: 'QUOTE_FRESH', version: 1, role: ADMIT, mode: ENFORCE, settings: ['maxQuoteAgeMs'],
     evaluate: (market, settings) => quoteFreshness(market, settings) },
-  { id: 'MARKET_CAP_FRESH', version: 1, role: ADMIT, mode: ENFORCE,
+  { id: 'MARKET_CAP_FRESH', version: 1, role: ADMIT, mode: ENFORCE, settings: ['maxQuoteAgeMs'],
     evaluate: (market, settings) => marketCapFreshness(market, settings) },
-  { id: 'PRICE_KNOWN', version: 1, role: ADMIT, mode: ENFORCE,
+  { id: 'PRICE_KNOWN', version: 1, role: ADMIT, mode: ENFORCE, settings: [],
     evaluate: market => required(market.price > 0) },
-  { id: 'AGE_KNOWN', version: 1, role: ADMIT, mode: ENFORCE,
+  { id: 'AGE_KNOWN', version: 1, role: ADMIT, mode: ENFORCE, settings: [],
     evaluate: market => required(market.ageSec !== null) },
-  { id: 'AGE_TOO_YOUNG', version: 1, role: DROP, mode: ENFORCE,
+  { id: 'AGE_TOO_YOUNG', version: 1, role: DROP, mode: ENFORCE, settings: ['minAgeSec'],
     evaluate: (market, settings) => ageVerdict(market, ageSec => ageSec < settings.minAgeSec) },
-  { id: 'AGE_TOO_OLD', version: 1, role: DROP, mode: ENFORCE,
+  { id: 'AGE_TOO_OLD', version: 1, role: DROP, mode: ENFORCE, settings: ['maxAgeSec'],
     evaluate: (market, settings) => ageVerdict(market, ageSec => ageSec > settings.maxAgeSec) },
-  { id: 'MARKET_CAP_KNOWN', version: 1, role: ADMIT, mode: ENFORCE,
+  { id: 'MARKET_CAP_KNOWN', version: 1, role: ADMIT, mode: ENFORCE, settings: [],
     evaluate: market => required(market.marketCap !== null) },
-  { id: 'MARKET_CAP_OUT_OF_RANGE', version: 1, role: DROP, mode: ENFORCE,
+  { id: 'MARKET_CAP_OUT_OF_RANGE', version: 1, role: DROP, mode: ENFORCE, settings: ['discoveryMinMarketCap', 'discoveryMaxMarketCap'],
     evaluate: (market, settings) => known(market.marketCap,
       !(market.marketCap >= settings.discoveryMinMarketCap && market.marketCap <= settings.discoveryMaxMarketCap)) },
-  { id: 'LIQUIDITY_KNOWN', version: 1, role: ADMIT, mode: ENFORCE,
+  { id: 'LIQUIDITY_KNOWN', version: 1, role: ADMIT, mode: ENFORCE, settings: [],
     evaluate: market => required(market.liquidity !== null) },
-  { id: 'LIQUIDITY_TOO_LOW', version: 1, role: DROP, mode: ENFORCE,
+  { id: 'LIQUIDITY_TOO_LOW', version: 1, role: DROP, mode: ENFORCE, settings: ['minLiquidity'],
     evaluate: (market, settings) => known(market.liquidity, market.liquidity < settings.minLiquidity) },
-  { id: 'TAX_TOO_HIGH', version: 1, role: DROP, mode: ENFORCE,
+  { id: 'TAX_TOO_HIGH', version: 1, role: DROP, mode: ENFORCE, settings: ['maxBuyTax', 'maxSellTax'],
     evaluate: (market, settings) => taxBreaches(market.buyTax, market.sellTax, settings).length ? HIT
       : market.buyTax === null || market.sellTax === null ? UNKNOWN : CLEAR },
-  { id: 'VOLUME_5M_POSITIVE', version: 1, role: ADMIT, mode: ENFORCE,
+  { id: 'VOLUME_5M_POSITIVE', version: 1, role: ADMIT, mode: ENFORCE, settings: [],
     evaluate: market => known(market.volume5m, market.volume5m === 0) },
   { id: 'LOW_ACTIVITY', version: 1, role: DROP, mode: ENFORCE,
+    settings: ['matureMarketAgeSec', 'oldMarketAgeSec', 'minMatureVolume5mUsd', 'minOldVolume5mUsd', 'minMatureTurnover5m', 'minOldTurnover5m'],
     evaluate: (market, settings) => activity(market, settings) },
-  { id: 'NO_BUY_VOLUME_5M', version: 1, role: DROP, mode: ENFORCE,
+  { id: 'NO_BUY_VOLUME_5M', version: 1, role: DROP, mode: ENFORCE, settings: [],
     evaluate: market => sideVolume(market.row.buy_volume_5m) },
-  { id: 'NO_SELL_VOLUME_5M', version: 1, role: DROP, mode: ENFORCE,
+  { id: 'NO_SELL_VOLUME_5M', version: 1, role: DROP, mode: ENFORCE, settings: [],
     evaluate: market => sideVolume(market.row.sell_volume_5m) },
-  { id: 'NO_BUYS_5M', version: 1, role: DROP, mode: ENFORCE,
+  { id: 'NO_BUYS_5M', version: 1, role: DROP, mode: ENFORCE, settings: [],
     evaluate: market => known(market.buys5m, market.buys5m === 0) },
-  { id: 'NO_SELLS_5M', version: 1, role: DROP, mode: ENFORCE,
+  { id: 'NO_SELLS_5M', version: 1, role: DROP, mode: ENFORCE, settings: [],
     evaluate: market => known(market.sells5m, market.sells5m === 0) }
-].map(Object.freeze));
+].map(rule => Object.freeze({ ...rule, settings: Object.freeze(rule.settings) })));
 
-/** The ruleset's identity: a hash of every rule's id, version, role and mode, so any change to the table changes it. */
-export function rulesetVersion(rules) {
+/**
+ * The ruleset's identity: a hash of every rule's id, version, role and mode and
+ * the values of the settings it declares, so a changed rule or threshold changes
+ * it and an unrelated setting does not. Outcomes compare screens by it.
+ */
+export function rulesetVersion(rules, settings) {
   let hash = 0x811c9dc5;
-  const identity = rules.map(rule => `${rule.id}@${rule.version}:${rule.role}:${rule.mode}`).sort().join(',');
+  const identity = rules.map(rule => `${rule.id}@${rule.version}:${rule.role}:${rule.mode}`
+    + JSON.stringify(rule.settings.map(key => [key, settings[key]]))).sort().join(',');
   for (const character of identity) hash = Math.imul(hash ^ character.charCodeAt(0), 0x01000193);
   return 'rs-' + (hash >>> 0).toString(16).padStart(8, '0');
 }
-export const RULESET_VERSION = rulesetVersion(SCREEN_RULES);
+
+// A cycle screens every row with one settings object, so its ruleset is hashed once per cycle.
+const rulesets = new WeakMap();
+function screenRuleset(settings) {
+  if (!rulesets.has(settings)) rulesets.set(settings, rulesetVersion(SCREEN_RULES, settings));
+  return rulesets.get(settings);
+}
 
 // AVE rows carry their source clock; DexScreener keeps none, so our read time stands in and its row is fresh for maxQuoteAgeMs after the read.
 function quoteFreshness({ row, now }, { maxQuoteAgeMs }) {
@@ -143,16 +156,16 @@ export function evaluateRules(market, settings, rules = SCREEN_RULES) {
  * never decides it. Only an admitted token passes; an undecided one is not
  * alerted either. The score orders the audit queue and is not a rule.
  */
-export function discoveryScreen(row, settings, nowSec = Date.now() / 1000) {
+export function discoveryScreen(row, settings, nowSec = Date.now() / 1000, rules = SCREEN_RULES) {
   if (row?.marketProvider !== 'AVE' && row?.marketProvider !== 'DEXSCREENER') {
     throw new TypeError(`discovery row from an unsupported market provider: ${String(row?.marketProvider)}`);
   }
   const market = marketView(row, settings.chain, nowSec);
-  const { decision, verdicts, reasons } = evaluateRules(market, settings);
+  const { decision, verdicts, reasons } = evaluateRules(market, settings, rules);
   const mc = market.marketCap ?? 0, liquidity = market.liquidity ?? 0;
   const priorityBand = mc >= settings.priorityMinMarketCap && mc <= settings.priorityMaxMarketCap;
   const score = (priorityBand ? 35 : 10) + Math.min(25, liquidity / 1000) + Math.min(20, (market.volume5m || 0) / 1000) + Math.min(20, num(row.holder_count) / 10);
-  return { pass: decision === ADMIT, decision, reasons, ruleset: RULESET_VERSION, verdicts, priorityBand, score, mc, liquidity,
+  return { pass: decision === ADMIT, decision, reasons, ruleset: rules === SCREEN_RULES ? screenRuleset(settings) : rulesetVersion(rules, settings), verdicts, priorityBand, score, mc, liquidity,
     ageSec: market.createdAt !== null && market.createdAt > 0 ? nowSec - market.createdAt : 0, ageBasis: market.ageBasis,
     marketProvider: row.marketProvider, createdAt: market.createdAt };
 }
