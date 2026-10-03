@@ -1,0 +1,25 @@
+docs/reports/2026-10-03-arc-baseline-468-backtest.json
+  s_02320cd7492a13::t_6d7c9d34a8b616 1109-1192,1393-1394
+docs/reports/2026-10-03-arc-baseline-468-backtest.md
+  s_02320cd7492a13::t_f3160c20302f9c 14,290,294,298-299,305,307,326,331,335
+docs/reports/2026-10-03-arc-time-stop-comparison.json
+  s_02320cd7492a13::t_e9f5d42bcbbbc4 69-152,322-323
+docs/reports/2026-10-03-arc-time-stop-comparison.md
+  s_02320cd7492a13::t_f287a2f45d4e23 7-8,14,18-19,25-26,29,31,35-36,44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "72d9bb9588cbdb78ef5c769ea85b6529f2349471",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
