@@ -92,7 +92,8 @@ export function derivePoolEntryFeature(pool, delayBlocks, { transfers = [], supp
       if (transfer.from !== ZERO) holders.set(transfer.from, (holders.get(transfer.from) ?? 0n) - value);
       if (transfer.to !== ZERO) holders.set(transfer.to, (holders.get(transfer.to) ?? 0n) + value);
     }
-    if ([...holders.values()].some(value => value < 0n)) base.holderHistoryStatus = 'unavailable_nonstandard_transfer_accounting';
+    const ledgerSupply = [...holders.values()].reduce((sum, value) => sum + value, 0n);
+    if ([...holders.values()].some(value => value < 0n) || (supply !== null && ledgerSupply !== supply)) base.holderHistoryStatus = 'unavailable_nonstandard_transfer_accounting';
     else {
       // Custody balances are retained in the ledger, but concentration describes outside wallets.
       const balances = [...holders.entries()].filter(([owner, value]) => owner !== custody && value > 0n).map(([, value]) => value).sort((a, b) => a > b ? -1 : a < b ? 1 : 0);
@@ -110,7 +111,7 @@ export function derivePoolEntryFeature(pool, delayBlocks, { transfers = [], supp
     estimatedTradableDepthUsd: finite(depth?.quote), stakeToDepthRatio: depth?.quote > 0 ? finite(2 / depth.quote) : null,
     poolQuotePrincipalUsd: finite(inventory.quote), poolTokenPrincipalRaw: finite(inventory.token),
     poolSizeUsd: depth ? finite(inventory.quote + inventory.token * depth.price) : null,
-    poolSizeMethod: 'concentrated_liquidity_position_principal_excluding_fees', activePositionCount: inventory.count,
+    poolSizeMethod: 'concentrated_liquidity_position_principal_excluding_fees', liquidityPositionCount: inventory.count,
     priceUsdPerRawToken: finite(depth?.price), priceUsdPerToken: decimals !== null && depth ? finite(depth.price * 10 ** decimals) : null,
     marketCapUsd: supply !== null && depth ? finite(Number(supply) * depth.price) : null, marketCapMethod: 'total_supply_times_spot_price',
     observedPoolFeePips: state.feePips < 1_000_000 ? state.feePips : null, dynamicFee: pool.feePips >= 1_000_000,
