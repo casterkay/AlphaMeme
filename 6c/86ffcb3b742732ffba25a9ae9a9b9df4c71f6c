@@ -1,0 +1,25 @@
+src/scoring/rules.mjs
+  s_e9d978d309853c::t_acb01fdd9e41af 1-40
+src/scoring/screen.mjs
+  s_e9d978d309853c::t_3031245b3f63ca 3,7-12
+test/radar-agent.test.mjs
+  s_e9d978d309853c::t_8e4e1c2d9df42c 12-13
+test/screen-rules.test.mjs
+  s_e9d978d309853c::t_4d8d1b12e69803 4-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6c86ffcb3b742732ffba25a9ae9a9b9df4c71f6c",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
