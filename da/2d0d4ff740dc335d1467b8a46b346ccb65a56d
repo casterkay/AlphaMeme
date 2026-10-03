@@ -1,0 +1,31 @@
+scripts/arc-backtest/train_screening.py
+  s_02320cd7492a13::t_7094f71824babc 58,227,229
+docs/reports/2026-10-03-arc-chain-screening-lightgbm.json
+  s_4e60d472293c45::t_6174abe027cb0c 67,78,104,115,141,152,178,189,215,226,394,405,431,442,468,479,505,516,542,553,782,793,828,839,874,885,925,936
+docs/reports/2026-10-03-arc-chain-screening-lightgbm.md
+  s_4e60d472293c45::t_84555d0b355f5f 9-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "da2d0d4ff740dc335d1467b8a46b346ccb65a56d",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    },
+    "s_4e60d472293c45": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a101e9-dba1-7f01-9438-f348169cc2ba",
+        "model": "unknown"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
