@@ -57,6 +57,15 @@ test('a stop-loss gap fills at the following block rather than the trigger price
   assert.ok(result.proceedsUsd < 0.41);
 });
 
+test('an entry already below its stop exits next block without waiting for another swap', () => {
+  for (const [liquidity, buyTax] of [[1, 0], [1e9, 0.6]]) {
+    const result = replay(pool([point(0, 1, liquidity)]), { ...clean, buyTax }, 1, POLICIES[0], 1, costs);
+    assert.equal(result.exitReason, 'stop_loss');
+    assert.equal(result.fills[1].blockNumber, 2);
+    assert.ok(result.netUsd < 0);
+  }
+});
+
 test('liquidity removed between trigger and execution leaves zero proceeds and charges failed gas', () => {
   const result = replay(pool([point(0, 1), point(2, 4), point(3, 4, 0)]), clean, 1, POLICIES[0], 1,
     { slippageBps: 0, gasPriceUsdPerUnit: 1e-8 });

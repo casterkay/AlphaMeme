@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mergeSecurity, supplementSecurity } from '../scripts/arc-backtest/supplement.mjs';
+import { collectSecurity } from '../scripts/arc-backtest/security.mjs';
 
 test('supplemental honeypot findings override a clear flag and preserve GMGN tax priority', () => {
   assert.deepEqual(mergeSecurity({ is_honeypot: false, buy_tax: '0.01', sell_tax: '0.02' }, { is_honeypot: '1', buy_tax: '0', sell_tax: '0' }), { is_honeypot: true, buy_tax: 0.01, sell_tax: 0.02 });
@@ -28,5 +29,22 @@ test('supplement requests only unresolved tokens and reuses captured evidence', 
     assert.deepEqual(second['0xb'].providers.goplus, first['0xb'].providers.goplus);
     assert.equal(calls, 1);
     assert.equal(snapshots['0xb'].data.honeypot, -1);
+  } finally { await rm(cacheDirectory, { recursive: true }); }
+});
+
+test('a timed-out CLI child leaves an unavailable snapshot and continues the token cohort', async () => {
+  const cacheDirectory = await mkdtemp(join(tmpdir(), 'arc-security-timeout-'));
+  let calls = 0;
+  const executeImpl = async () => {
+    if (++calls === 1) throw Object.assign(new Error('child timed out'), { code: null, killed: true, signal: 'SIGTERM', stderr: '' });
+    return { stdout: JSON.stringify({ is_honeypot: false, buy_tax: '0', sell_tax: '0' }) };
+  };
+  try {
+    const snapshots = await collectSecurity(['first', 'second'], { apiKey: 'test-key', cacheDirectory, cliPath: '/test/cli.mjs', executeImpl, requestIntervalMs: 0 });
+    assert.equal(snapshots.first.status, 'unavailable');
+    assert.equal(snapshots.first.error, 'timeout');
+    assert.equal(snapshots.first.data, null);
+    assert.equal(snapshots.second.status, 'ok');
+    assert.equal(calls, 2);
   } finally { await rm(cacheDirectory, { recursive: true }); }
 });

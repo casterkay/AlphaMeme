@@ -22,9 +22,9 @@ async function cliEntry() {
   throw new Error('Install gmgn-cli before collecting security snapshots.');
 }
 
-export async function collectSecurity(tokens, { apiKey, cacheDirectory, onProgress = () => {}, requestIntervalMs = 1000, concurrency = 1 }) {
+export async function collectSecurity(tokens, { apiKey, cacheDirectory, onProgress = () => {}, requestIntervalMs = 1000, concurrency = 1, cliPath, executeImpl = execute }) {
   if (!apiKey) throw new Error('GMGN_API_KEY is required for security collection.');
-  const entry = await cliEntry(), worker = fileURLToPath(new URL('./gmgn-worker.mjs', import.meta.url));
+  const entry = cliPath ?? await cliEntry(), worker = fileURLToPath(new URL('./gmgn-worker.mjs', import.meta.url));
   await mkdir(cacheDirectory, { recursive: true });
   const snapshots = {};
   let cursor = 0, complete = 0, nextRequestAt = 0, halted = false;
@@ -38,14 +38,14 @@ export async function collectSecurity(tokens, { apiKey, cacheDirectory, onProgre
       nextRequestAt = Date.now() + wait + requestIntervalMs;
       await sleep(wait);
       try {
-        const { stdout } = await execute(process.execPath, [worker, entry, token], {
+        const { stdout } = await executeImpl(process.execPath, [worker, entry, token], {
           timeout: 25_000, maxBuffer: 1_000_000,
           env: { ...process.env, ARC_BACKTEST_GMGN_KEY: apiKey, GMGN_DEBUG: '' }
         });
         const data = JSON.parse(stdout);
         snapshot = { capturedAt: new Date().toISOString(), status: 'ok', data };
       } catch (error) {
-        if (!['number', 'string'].includes(typeof error.code) && !(error instanceof SyntaxError)) throw error;
+        if (!error.killed && !['number', 'string'].includes(typeof error.code) && !(error instanceof SyntaxError)) throw error;
         const detail = String(error.stderr ?? '').split(apiKey).join('<redacted>');
         if (/429|RATE_LIMIT|AUTH_KEY|401|403/.test(detail)) {
           halted = true;
