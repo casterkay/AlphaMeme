@@ -1,0 +1,33 @@
+docs/reports/2026-10-03-arc-baseline-468-backtest.json
+  s_02320cd7492a13::t_adefa219dd03d7 1-1311
+docs/reports/2026-10-03-arc-baseline-468-backtest.md
+  s_02320cd7492a13::t_473fe1c5fb83b6 1,3,5,7-23,27-28,40-41,46-48,59-61,72-86,141-329,331,333,335
+docs/reports/2026-10-03-arc-time-stop-comparison.json
+  s_02320cd7492a13::t_11765269793fab 1-239
+docs/reports/2026-10-03-arc-time-stop-comparison.md
+  s_02320cd7492a13::t_994b046a904386 1-36
+scripts/arc-backtest/README.md
+  s_02320cd7492a13::t_c9eb3448aec3f9 22-25
+scripts/arc-backtest/replay.mjs
+  s_02320cd7492a13::t_d770ff62a53fd7 78,92
+scripts/arc-backtest/run.mjs
+  s_02320cd7492a13::t_36d586cfef8229 20,35-36,108,116,123
+test/arc-backtest-replay.test.mjs
+  s_02320cd7492a13::t_00699f95bceae3 153-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "dd43ce5f619bf21a655819a894a020b39aedbcec",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
