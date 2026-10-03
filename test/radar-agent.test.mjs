@@ -419,6 +419,30 @@ test('a checkpoint written while promotions read AVE screens its recorded promot
   }
 });
 
+test('a scanner refuses settings missing any key, so no cycle can snapshot an incomplete set', () => {
+  const { store } = radar();
+  for (const key of Object.keys(scannerSettings)) {
+    const { [key]: _omitted, ...settings } = scannerSettings;
+    assert.throws(() => new RecoverableScanner({ store, settings }), { code: 'RECOVERABLE_SCANNER_SETTINGS_INVALID' }, key);
+  }
+});
+
+test('a cycle begun before a setting existed screens on the current settings, never against an undefined threshold', async () => {
+  const radarFixture = radar();
+  radarFixture.hotList = [radarFixture.quote(A, { liquidity: 1_000 })];
+  radarFixture.begin('cycle-outdated');
+  await radarFixture.step('cycle-outdated');
+  // The snapshot an earlier release wrote, before minLiquidity existed.
+  const partial = radarFixture.store.read('cycle-outdated').partial;
+  const { minLiquidity: _added, ...older } = partial.settings;
+  radarFixture.storage.sql.exec('UPDATE cycle_checkpoint SET partial_json = ? WHERE tenant_id = ? AND cycle_id = ?',
+    JSON.stringify({ ...partial, settings: older }), TENANT, 'cycle-outdated');
+  await radarFixture.step('cycle-outdated');
+  assert.equal(radarFixture.store.read('cycle-outdated').phase, 'BUILD_QUEUE');
+  assert.equal(radarFixture.candidate(A), null, 'too thin for the current minLiquidity');
+  assert.equal(radarFixture.state('feed.snapshot:bsc').rows[0].pass, false);
+});
+
 test('a discovery cursor past its requests that the previous release could not have written fails loudly', async () => {
   const radarFixture = radar({ chain: 'arc', onchain: true });
   radarFixture.chainLogs = { newPools: newPool(A) };

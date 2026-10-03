@@ -220,6 +220,33 @@ describe('recoverable Radar scanner', () => {
     expect(await radar.nextRecoverableScanRequest({ tenantId, cycleId })).toBeNull();
   });
 
+  it('begins each successor cycle on the code\'s current settings, not on those its predecessor began with', async () => {
+    const tenantId = '19005';
+    const cycleId = 'cycle-successor-settings';
+    const radar = await configuredRadar(tenantId);
+    await seedAveCredential(radar, tenantId);
+    await beginCycle(radar, tenantId, cycleId);
+    await radar.recordRecoverableScanRequest({ tenantId, cycleId, response: { rows: [], capturedAt: Date.now() }, collectedAt: Date.now() });
+    for (let step = 0; step < 5 && !(await radar.getRecoverableCycle({ tenantId, cycleId })).partial.summary?.finalized; step++) {
+      await radar.advanceRecoverableScan({ tenantId, cycleId });
+    }
+    const finalized = await radar.getRecoverableCycle({ tenantId, cycleId });
+    expect(finalized.partial.summary.finalized).toBe(true);
+    expect(finalized.partial.settings).toEqual(settings);
+    await runInDurableObject(radar, async (_instance, state) => {
+      const taskState = JSON.parse(state.storage.sql
+        .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', tenantId, 'scheduler.tasks.v1').one().value_json);
+      taskState.tasks.find(task => task.id === `scan:${cycleId}`).dueAt = Date.now() - 1;
+      state.storage.sql.exec('UPDATE scheduler_state SET value_json = ? WHERE tenant_id = ? AND key = ?', JSON.stringify(taskState), tenantId, 'scheduler.tasks.v1');
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+
+    expect(await runDurableObjectAlarm(radar)).toBe(true);
+    const successor = await radar.getRecoverableCycle({ tenantId, cycleId: finalized.partial.summary.nextCycleId });
+    expect(successor.phase).toBe('DISCOVER');
+    expect(successor.partial.settings).toEqual(scannerSettings);
+  });
+
   it('rebuilds the scan task AVE cost from the persisted checkpoint after local transitions and eviction', async () => {
     const tenantId = '19004';
     const cycleId = 'cycle-reconcile-admission';

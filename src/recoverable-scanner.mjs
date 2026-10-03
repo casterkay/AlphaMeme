@@ -5,6 +5,7 @@ import { DISCOVERY_REJECT, REJECTED_SAMPLE_DAILY_CAP, dueOutcomeJobs, hasAveOutc
 import { safetyVerdict } from './scoring/safety.mjs';
 import { addressKey, buildQueue, nextAuditDelay, publicToken, selectAuditQueue, socialFrom } from './scanner-parity.mjs';
 import { RecoverableScannerError } from './storage/recoverable-scanner.mjs';
+import { completeScannerSettings } from './scanner-settings.mjs';
 import { POOL_SOURCES } from './providers/chain-logs.mjs';
 import { nextWatchState, promotions, watchTargets } from './onchain-watch.mjs';
 
@@ -232,7 +233,7 @@ function settingsError() {
 function validSettings(settings) {
   const positive = ['maxSecondaryChecksPerCycle', 'auditCycleBudgetMs', 'queueRetentionMs', 'scanIntervalMs',
     'candidateRetentionMs', 'outcomeRetentionMs', 'liveLeadRetentionMs', 'staleCandidateMs'];
-  if (!settings || typeof settings !== 'object' || positive.some(key => !Number.isSafeInteger(settings[key]) || settings[key] <= 0)
+  if (!completeScannerSettings(settings) || positive.some(key => !Number.isSafeInteger(settings[key]) || settings[key] <= 0)
     || !Number.isSafeInteger(settings.outcomeReadsPerCycle) || settings.outcomeReadsPerCycle < 0) throw settingsError();
   return settings;
 }
@@ -247,6 +248,15 @@ export class RecoverableScanner {
     this.now = now;
   }
 
+  // A cycle runs on the settings it began with. One begun by an earlier release, whose settings lack
+  // a key this release reads, runs on this release's settings instead, never on an undefined threshold.
+  #cycleSettings(checkpoint) {
+    if (completeScannerSettings(checkpoint.partial.settings)) return checkpoint.partial.settings;
+    console.log(JSON.stringify({ event: 'scan_settings_outdated', cycleId: checkpoint.cycleId }));
+    return this.settings;
+  }
+
+  // Each cycle snapshots the scanner's settings, which callers take from the code (scannerSettings), never from an earlier cycle.
   // `onchainOffReason` is null when the on-chain source is configured, else the code source health shows.
   begin({ cycleId, chain, keyEpoch, controlEpoch, deadlineAt, partial = {}, onchainOffReason = 'ONCHAIN_NOT_CONFIGURED', afterBegin }) {
     const startedAt = this.now();
@@ -323,7 +333,7 @@ export class RecoverableScanner {
         const excluded = new Set([...discoveryRows(partial.discovery).map(row => addressKey(row.address)),
           ...markets.map(market => market.address).filter(address => this.store.readCandidate(current.chain, address)?.status === 'HARD_REJECT')]);
         partial.discovery.promoted = promotions(this.store.readWatchState(current.chain), markets,
-          { now: collectedAt, settings: partial.settings || this.settings, excluded });
+          { now: collectedAt, settings: this.#cycleSettings(current), excluded });
       }
       endpointIndex += 1;
       if (endpointIndex === discoveryEndpoints(current.chain, partial).length) {
@@ -350,7 +360,7 @@ export class RecoverableScanner {
     if (!current) throw new RecoverableScannerError('CYCLE_CHECKPOINT_MISSING', 'cycle checkpoint does not exist');
     const now = this.now();
     const partial = clone(current.partial);
-    const settings = partial.settings || this.settings;
+    const settings = this.#cycleSettings(current);
     const expected = { phase: current.phase, keyEpoch: current.keyEpoch, controlEpoch: current.controlEpoch };
     let nextPhase;
     let tokenIndex = current.tokenIndex;
@@ -533,7 +543,7 @@ export class RecoverableScanner {
     const item = current.partial.queue?.selected?.[current.tokenIndex];
     if (!item?.row || !item?.screen) throw phaseError('classification token cursor is exhausted');
     const now = this.now();
-    const settings = current.partial.settings || this.settings;
+    const settings = this.#cycleSettings(current);
     const stored = this.store.readCandidate(current.chain, item.row.address);
     const token = stored || leadCandidate(item.row, item.screen, current.chain, null, now, settings);
     // Seller evidence comes only from this cycle's row: a stored token off the hot list has none.
@@ -608,7 +618,7 @@ export class RecoverableScanner {
     const partial = clone(current.partial);
     partial.outcomeReads = num(partial.outcomeReads) + 1;
     const nextJob = collectedAt < outcomeSampleDeadline(current, collectedAt)
-      && partial.outcomeReads < outcomeReadLimit(partial.settings || this.settings)
+      && partial.outcomeReads < outcomeReadLimit(this.#cycleSettings(current))
       ? dueOutcomeJobs(nextOutcomes, collectedAt)[0] : null;
     if (nextJob) partial.outcomes = { job: { chain: nextJob.row.chain || current.chain, address: nextJob.row.address, key: nextJob.key, targetAt: nextJob.targetAt } };
     else delete partial.outcomes;

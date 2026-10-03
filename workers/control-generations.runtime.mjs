@@ -340,7 +340,7 @@ describe('Radar control generations', () => {
     expect(scanTasks(await radar.getSchedulerSnapshot(tenantId))).toEqual([expect.objectContaining({ id: 'scan:active-arc', enabled: true })]);
   });
 
-  it('credential replacement restarts every scheduled scan from persisted settings under the new key epoch', async () => {
+  it('credential replacement restarts every scheduled scan under the new key epoch on the code\'s current settings', async () => {
     const tenantId = '19110';
     const radar = await configuredRadar(tenantId);
     await beginCycle(radar, tenantId, 'arc-history', { partial: { rootCycleId: 'arc-rotation' } });
@@ -352,7 +352,12 @@ describe('Radar control generations', () => {
       .map(task => task.id === 'scan:arc-paused' ? { ...task, enabled: false } : task) });
 
     await runInDurableObject(radar, async (_instance, state) => {
-      const restarted = restartRecoverableScanInTransaction(state.storage, tenantId, { keyEpoch: 1, controlEpoch: 5, now: Date.now() });
+      const { onchainMinBuys5m: _omitted, ...outdated } = scannerSettings;
+      expect(() => restartRecoverableScanInTransaction(state.storage, tenantId, { keyEpoch: 1, controlEpoch: 5, now: Date.now(), settings: outdated }))
+        .toThrow(expect.objectContaining({ code: 'RECOVERABLE_SCANNER_SETTINGS_INVALID' }));
+      const restarted = restartRecoverableScanInTransaction(state.storage, tenantId, { keyEpoch: 1, controlEpoch: 5, now: Date.now(), settings: scannerSettings });
+      // The cycles began on test settings; the restart takes the code's, not theirs.
+      for (const checkpoint of restarted) expect(checkpoint.partial.settings).toEqual(scannerSettings);
       expect(restarted.map(checkpoint => [checkpoint.cycleId, checkpoint.keyEpoch, checkpoint.controlEpoch, checkpoint.partial.scanCount])).toEqual(expect.arrayContaining([
         ['arc-rotation:rotation:1', 1, 5, 3], ['arc-paused:rotation:1', 1, 5, 0]
       ]));

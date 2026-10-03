@@ -2,6 +2,7 @@ import { AVE_CU } from '../providers/ave.mjs';
 import { VOICE_TTL } from '../../public/voice-alerts.mjs';
 import { emptyWatchState } from '../onchain-watch.mjs';
 import { DISCOVERY_REJECT } from '../scoring/outcomes.mjs';
+import { completeScannerSettings } from '../scanner-settings.mjs';
 import { assertCheckpointGeneration, SqliteControlStateStore } from './control-state.mjs';
 import {
   readSchedulerStateInTransaction,
@@ -213,11 +214,15 @@ function restartCycleId(rootCycleId, keyEpoch) {
   return `${String(rootCycleId).slice(0, 127 - suffix.length)}${suffix}`;
 }
 
-export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch, controlEpoch, now } = {}) {
+// A restarted scan runs on the given settings, the code's current ones, not on those its interrupted cycle began with.
+export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch, controlEpoch, now, settings } = {}) {
   const tenantId = normalizeTenantId(tenant);
   nonnegativeInteger(keyEpoch, 'key epoch');
   nonnegativeInteger(controlEpoch, 'control epoch');
   timestamp(now, 'restart time');
+  if (!completeScannerSettings(settings)) {
+    throw new RecoverableScannerError('RECOVERABLE_SCANNER_SETTINGS_INVALID', 'restart requires complete scanner settings');
+  }
   const checkpoints = storage.sql.exec(
     'SELECT tenant_id, cycle_id, chain, key_epoch, control_epoch, deadline_at, phase, token_index, endpoint_index, partial_json, updated_at FROM cycle_checkpoint WHERE tenant_id = ? ORDER BY updated_at DESC, cycle_id',
     tenantId
@@ -235,11 +240,6 @@ export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch,
   }
   writeSchedulerStateInTransaction(storage, tenantId, { ...scheduler, tasks });
   return activeCheckpoints.map(selected => {
-    const settings = selected.partial.settings;
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)
-      || !Number.isSafeInteger(settings.auditCycleBudgetMs) || settings.auditCycleBudgetMs <= 0) {
-      throw new RecoverableScannerError('RECOVERABLE_SCANNER_SETTINGS_INVALID', 'restart requires persisted scanner settings');
-    }
     const checkpoint = checkpointInput({
       cycleId: restartCycleId(selected.partial.rootCycleId || selected.cycleId, keyEpoch),
       chain: selected.chain,
@@ -249,7 +249,7 @@ export function restartRecoverableScanInTransaction(storage, tenant, { keyEpoch,
       phase: 'DISCOVER',
       tokenIndex: 0,
       endpointIndex: 0,
-      partial: { rootCycleId: selected.partial.rootCycleId || selected.cycleId, scanCount: selected.partial.scanCount || 0, startedAt: now, settings },
+      partial: { rootCycleId: selected.partial.rootCycleId || selected.cycleId, scanCount: selected.partial.scanCount || 0, startedAt: now, settings: structuredClone(settings) },
       updatedAt: now
     });
     storage.sql.exec(
