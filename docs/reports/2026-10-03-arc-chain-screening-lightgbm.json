@@ -1,0 +1,931 @@
+{
+  "versions": {
+    "lightgbm": "4.7.0",
+    "sklearn": "1.9.1",
+    "pandas": "3.0.6",
+    "numpy": "2.5.3"
+  },
+  "split": {
+    "validationStart": 1790889167.03,
+    "testStart": 1790948250.0,
+    "purgeSeconds": 1201,
+    "rows": {
+      "train": 3698,
+      "test": 1240,
+      "validation": 1210,
+      "purged": 52
+    },
+    "tokens": {
+      "train": 3698,
+      "validation": 1210,
+      "test": 1240,
+      "purged": 52
+    }
+  },
+  "features": [
+    "poolAgeBlocks",
+    "activeVirtualQuoteReserveUsd",
+    "poolQuotePrincipalUsd",
+    "poolSizeUsd",
+    "liquidityPositionCount",
+    "marketCapUsd",
+    "observedPoolFeePips",
+    "dynamicFee",
+    "hasHooks",
+    "holderCount",
+    "top1HolderShare",
+    "top10HolderShare",
+    "initialMintRecipientShare",
+    "priorSwapCount",
+    "priorBuyCount",
+    "priorSellCount",
+    "priorBuyVolumeUsd",
+    "priorSellVolumeUsd",
+    "priorSuccessfulSellers",
+    "attributedSellTransactions",
+    "priorSellRouterCount",
+    "sellerAttributionCoverage",
+    "priceChangeSinceFirstLiquidity",
+    "isV4",
+    "quotePrincipalToPoolSize",
+    "poolSizeToMarketCap"
+  ],
+  "rows": 6200,
+  "models": {
+    "positive_pnl": {
+      "iterations": 279,
+      "trainPrevalence": 0.21903731746890212,
+      "validationPrevalence": 0.2694214876033058,
+      "testPrevalence": 0.29193548387096774,
+      "rocAuc": 0.9287195283101978,
+      "averagePrecision": 0.8528319452572851,
+      "operatingPoints": {
+        "default": {
+          "validation": {
+            "threshold": 0.5,
+            "selected": 243,
+            "precision": 0.7818930041152263,
+            "recall": 0.5828220858895705,
+            "f1": 0.6678383128295254,
+            "truePositive": 190,
+            "falsePositive": 53,
+            "falseNegative": 136
+          },
+          "test": {
+            "threshold": 0.5,
+            "selected": 285,
+            "precision": 0.8421052631578947,
+            "recall": 0.6629834254143646,
+            "f1": 0.7418856259659969,
+            "truePositive": 240,
+            "falsePositive": 45,
+            "falseNegative": 122
+          },
+          "screening": {
+            "entriesKept": 285,
+            "entriesRejected": 955,
+            "netUsdKept": 656.5090191437109,
+            "netUsdBaseline": 792.520919550286,
+            "conservativeNetUsdKept": -488.91506168358455,
+            "winRateKept": 0.8421052631578947,
+            "severeLossRecall": 0.8397435897435898,
+            "failedExitRecall": 0.8165137614678899,
+            "heavyLossRecall": 0.8308823529411765,
+            "lossDollarRecall": 0.8522530001871829,
+            "positivePositionsRejected": 0.3370165745856354
+          }
+        },
+        "max_f1": {
+          "validation": {
+            "threshold": 0.3721930391888099,
+            "selected": 504,
+            "precision": 0.6011904761904762,
+            "recall": 0.9294478527607362,
+            "f1": 0.7301204819277108,
+            "truePositive": 303,
+            "falsePositive": 201,
+            "falseNegative": 23
+          },
+          "test": {
+            "threshold": 0.3721930391888099,
+            "selected": 489,
+            "precision": 0.6441717791411042,
+            "recall": 0.8701657458563536,
+            "f1": 0.7403055229142186,
+            "truePositive": 315,
+            "falsePositive": 174,
+            "falseNegative": 47
+          },
+          "screening": {
+            "entriesKept": 489,
+            "entriesRejected": 751,
+            "netUsdKept": 833.0194524557983,
+            "netUsdBaseline": 792.520919550286,
+            "conservativeNetUsdKept": -548.0497717186927,
+            "winRateKept": 0.6441717791411042,
+            "severeLossRecall": 0.47435897435897434,
+            "failedExitRecall": 0.3256880733944954,
+            "heavyLossRecall": 0.41911764705882354,
+            "lossDollarRecall": 0.5269397163886795,
+            "positivePositionsRejected": 0.1298342541436464
+          }
+        },
+        "precision_80": {
+          "validation": {
+            "threshold": 0.5183259825543706,
+            "selected": 227,
+            "precision": 0.8061674008810573,
+            "recall": 0.5613496932515337,
+            "f1": 0.6618444846292948,
+            "truePositive": 183,
+            "falsePositive": 44,
+            "falseNegative": 143
+          },
+          "test": {
+            "threshold": 0.5183259825543706,
+            "selected": 263,
+            "precision": 0.9049429657794676,
+            "recall": 0.6574585635359116,
+            "f1": 0.7616,
+            "truePositive": 238,
+            "falsePositive": 25,
+            "falseNegative": 124
+          },
+          "screening": {
+            "entriesKept": 263,
+            "entriesRejected": 977,
+            "netUsdKept": 659.6819084207635,
+            "netUsdBaseline": 792.520919550286,
+            "conservativeNetUsdKept": -446.6820971045027,
+            "winRateKept": 0.9049429657794676,
+            "severeLossRecall": 0.8653846153846154,
+            "failedExitRecall": 0.908256880733945,
+            "heavyLossRecall": 0.8529411764705882,
+            "lossDollarRecall": 0.8762593570840165,
+            "positivePositionsRejected": 0.3425414364640884
+          }
+        },
+        "precision_90": {
+          "validation": {
+            "threshold": 0.7248647196962827,
+            "selected": 182,
+            "precision": 0.9120879120879121,
+            "recall": 0.50920245398773,
+            "f1": 0.6535433070866141,
+            "truePositive": 166,
+            "falsePositive": 16,
+            "falseNegative": 160
+          },
+          "test": {
+            "threshold": 0.7248647196962827,
+            "selected": 236,
+            "precision": 0.940677966101695,
+            "recall": 0.6132596685082873,
+            "f1": 0.7424749163879598,
+            "truePositive": 222,
+            "falsePositive": 14,
+            "falseNegative": 140
+          },
+          "screening": {
+            "entriesKept": 236,
+            "entriesRejected": 1004,
+            "netUsdKept": 621.7584856282538,
+            "netUsdBaseline": 792.520919550286,
+            "conservativeNetUsdKept": -472.69235613162243,
+            "winRateKept": 0.940677966101695,
+            "severeLossRecall": 0.9230769230769231,
+            "failedExitRecall": 0.908256880733945,
+            "heavyLossRecall": 0.9191176470588235,
+            "lossDollarRecall": 0.9199104879090261,
+            "positivePositionsRejected": 0.3867403314917127
+          }
+        },
+        "recall_90": {
+          "validation": {
+            "threshold": 0.3721930391888099,
+            "selected": 504,
+            "precision": 0.6011904761904762,
+            "recall": 0.9294478527607362,
+            "f1": 0.7301204819277108,
+            "truePositive": 303,
+            "falsePositive": 201,
+            "falseNegative": 23
+          },
+          "test": {
+            "threshold": 0.3721930391888099,
+            "selected": 489,
+            "precision": 0.6441717791411042,
+            "recall": 0.8701657458563536,
+            "f1": 0.7403055229142186,
+            "truePositive": 315,
+            "falsePositive": 174,
+            "falseNegative": 47
+          },
+          "screening": {
+            "entriesKept": 489,
+            "entriesRejected": 751,
+            "netUsdKept": 833.0194524557983,
+            "netUsdBaseline": 792.520919550286,
+            "conservativeNetUsdKept": -548.0497717186927,
+            "winRateKept": 0.6441717791411042,
+            "severeLossRecall": 0.47435897435897434,
+            "failedExitRecall": 0.3256880733944954,
+            "heavyLossRecall": 0.41911764705882354,
+            "lossDollarRecall": 0.5269397163886795,
+            "positivePositionsRejected": 0.1298342541436464
+          }
+        }
+      },
+      "importance": [
+        {
+          "feature": "poolQuotePrincipalUsd",
+          "gain": 23271.259857395664,
+          "gainShare": 0.5317584173958839
+        },
+        {
+          "feature": "quotePrincipalToPoolSize",
+          "gain": 9117.88481285423,
+          "gainShare": 0.20834763686163135
+        },
+        {
+          "feature": "top1HolderShare",
+          "gain": 1912.4325713468716,
+          "gainShare": 0.04369991671046393
+        },
+        {
+          "feature": "activeVirtualQuoteReserveUsd",
+          "gain": 1637.1146706193686,
+          "gainShare": 0.037408782836803586
+        },
+        {
+          "feature": "observedPoolFeePips",
+          "gain": 1470.7622524425387,
+          "gainShare": 0.03360755767057879
+        },
+        {
+          "feature": "poolSizeToMarketCap",
+          "gain": 947.2852991074324,
+          "gainShare": 0.021645881424665073
+        },
+        {
+          "feature": "top10HolderShare",
+          "gain": 924.970057696104,
+          "gainShare": 0.021135968444903303
+        },
+        {
+          "feature": "marketCapUsd",
+          "gain": 882.3698876723647,
+          "gainShare": 0.020162536016601833
+        },
+        {
+          "feature": "priorBuyVolumeUsd",
+          "gain": 825.7678978070617,
+          "gainShare": 0.018869155910124013
+        },
+        {
+          "feature": "priceChangeSinceFirstLiquidity",
+          "gain": 699.782608114183,
+          "gainShare": 0.01599033720100473
+        },
+        {
+          "feature": "holderCount",
+          "gain": 518.441118337214,
+          "gainShare": 0.011846605224183236
+        },
+        {
+          "feature": "initialMintRecipientShare",
+          "gain": 398.55696499347687,
+          "gainShare": 0.009107200136381279
+        },
+        {
+          "feature": "poolAgeBlocks",
+          "gain": 391.4727939069271,
+          "gainShare": 0.008945323743412885
+        },
+        {
+          "feature": "poolSizeUsd",
+          "gain": 385.2275570705533,
+          "gainShare": 0.008802617363237375
+        },
+        {
+          "feature": "hasHooks",
+          "gain": 283.39903968572617,
+          "gainShare": 0.006475791416462666
+        },
+        {
+          "feature": "dynamicFee",
+          "gain": 44.64936399459839,
+          "gainShare": 0.0010202574025211153
+        },
+        {
+          "feature": "priorSwapCount",
+          "gain": 29.829297333955765,
+          "gainShare": 0.0006816124283574016
+        },
+        {
+          "feature": "priorBuyCount",
+          "gain": 21.636428654193878,
+          "gainShare": 0.0004944018127835335
+        },
+        {
+          "feature": "liquidityPositionCount",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "priorSellCount",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "priorSellVolumeUsd",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "priorSuccessfulSellers",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "attributedSellTransactions",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "priorSellRouterCount",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "sellerAttributionCoverage",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "isV4",
+          "gain": 0.0,
+          "gainShare": 0.0
+        }
+      ]
+    },
+    "loss_over_5pct": {
+      "iterations": 255,
+      "trainPrevalence": 0.09626825310978908,
+      "validationPrevalence": 0.16611570247933885,
+      "testPrevalence": 0.12580645161290321,
+      "rocAuc": 0.9107324486706405,
+      "averagePrecision": 0.6212599053250656,
+      "operatingPoints": {
+        "default": {
+          "validation": {
+            "threshold": 0.5,
+            "selected": 176,
+            "precision": 0.6647727272727273,
+            "recall": 0.582089552238806,
+            "f1": 0.6206896551724138,
+            "truePositive": 117,
+            "falsePositive": 59,
+            "falseNegative": 84
+          },
+          "test": {
+            "threshold": 0.5,
+            "selected": 162,
+            "precision": 0.6111111111111112,
+            "recall": 0.6346153846153846,
+            "f1": 0.6226415094339622,
+            "truePositive": 99,
+            "falsePositive": 63,
+            "falseNegative": 57
+          },
+          "screening": {
+            "entriesKept": 1078,
+            "entriesRejected": 162,
+            "netUsdKept": 752.9550036767474,
+            "netUsdBaseline": 792.520919550286,
+            "conservativeNetUsdKept": -1262.48237034235,
+            "winRateKept": 0.2847866419294991,
+            "severeLossRecall": 0.6346153846153846,
+            "failedExitRecall": 0.009174311926605505,
+            "heavyLossRecall": 0.6397058823529411,
+            "lossDollarRecall": 0.48562384992069246,
+            "positivePositionsRejected": 0.15193370165745856
+          }
+        },
+        "max_f1": {
+          "validation": {
+            "threshold": 0.30755909754639943,
+            "selected": 224,
+            "precision": 0.625,
+            "recall": 0.6965174129353234,
+            "f1": 0.6588235294117647,
+            "truePositive": 140,
+            "falsePositive": 84,
+            "falseNegative": 61
+          },
+          "test": {
+            "threshold": 0.30755909754639943,
+            "selected": 221,
+            "precision": 0.5113122171945701,
+            "recall": 0.7243589743589743,
+            "f1": 0.5994694960212201,
+            "truePositive": 113,
+            "falsePositive": 108,
+            "falseNegative": 43
+          },
+          "screening": {
+            "entriesKept": 1019,
+            "entriesRejected": 221,
+            "netUsdKept": 620.7751667733755,
+            "netUsdBaseline": 792.520919550286,
+            "conservativeNetUsdKept": -1314.3356008112205,
+            "winRateKept": 0.2757605495583906,
+            "severeLossRecall": 0.7243589743589743,
+            "failedExitRecall": 0.1651376146788991,
+            "heavyLossRecall": 0.7279411764705882,
+            "lossDollarRecall": 0.5633634054686649,
+            "positivePositionsRejected": 0.22375690607734808
+          }
+        },
+        "precision_80": {
+          "validation": {
+            "threshold": 0.7832638224691407,
+            "selected": 56,
+            "precision": 0.8035714285714286,
+            "recall": 0.22388059701492538,
+            "f1": 0.35019455252918286,
+            "truePositive": 45,
+            "falsePositive": 11,
+            "falseNegative": 156
+          },
+          "test": {
+            "threshold": 0.7832638224691407,
+            "selected": 32,
+            "precision": 0.84375,
+            "recall": 0.17307692307692307,
+            "f1": 0.2872340425531915,
+            "truePositive": 27,
+            "falsePositive": 5,
+            "falseNegative": 129
+          },
+          "screening": {
+            "entriesKept": 1208,
+            "entriesRejected": 32,
+            "netUsdKept": 812.937261313848,
+            "netUsdBaseline": 792.520919550286,
+            "conservativeNetUsdKept": -1210.3978538744473,
+            "winRateKept": 0.29635761589403975,
+            "severeLossRecall": 0.17307692307692307,
+            "failedExitRecall": 0.0,
+            "heavyLossRecall": 0.1323529411764706,
+            "lossDollarRecall": 0.12728869136450224,
+            "positivePositionsRejected": 0.011049723756906077
+          }
+        },
+        "precision_90": {
+          "validation": {
+            "threshold": 0.8320380387438956,
+            "selected": 31,
+            "precision": 0.9354838709677419,
+            "recall": 0.14427860696517414,
+            "f1": 0.25,
+            "truePositive": 29,
+            "falsePositive": 2,
+            "falseNegative": 172
+          },
+          "test": {
+            "threshold": 0.8320380387438956,
+            "selected": 17,
+            "precision": 1.0,
+            "recall": 0.10897435897435898,
+            "f1": 0.19653179190751446,
+            "truePositive": 17,
+            "falsePositive": 0,
+            "falseNegative": 139
+          },
+          "screening": {
+            "entriesKept": 1223,
+            "entriesRejected": 17,
+            "netUsdKept": 814.0031194353517,
+            "netUsdBaseline": 792.520919550286,
+            "conservativeNetUsdKept": -1209.3319957529438,
+            "winRateKept": 0.29599345870809485,
+            "severeLossRecall": 0.10897435897435898,
+            "failedExitRecall": 0.0,
+            "heavyLossRecall": 0.0661764705882353,
+            "lossDollarRecall": 0.07737476704241719,
+            "positivePositionsRejected": 0.0
+          }
+        },
+        "recall_90": {
+          "validation": {
+            "threshold": 0.16781478424748655,
+            "selected": 433,
+            "precision": 0.418013856812933,
+            "recall": 0.900497512437811,
+            "f1": 0.5709779179810726,
+            "truePositive": 181,
+            "falsePositive": 252,
+            "falseNegative": 20
+          },
+          "test": {
+            "threshold": 0.16781478424748655,
+            "selected": 426,
+            "precision": 0.3286384976525822,
+            "recall": 0.8974358974358975,
+            "f1": 0.48109965635738833,
+            "truePositive": 140,
+            "falsePositive": 286,
+            "falseNegative": 16
+          },
+          "screening": {
+            "entriesKept": 814,
+            "entriesRejected": 426,
+            "netUsdKept": 564.6656368430313,
+            "netUsdBaseline": 792.520919550286,
+            "conservativeNetUsdKept": -909.9274952068662,
+            "winRateKept": 0.2641277641277641,
+            "severeLossRecall": 0.8974358974358975,
+            "failedExitRecall": 0.8715596330275229,
+            "heavyLossRecall": 0.9044117647058824,
+            "lossDollarRecall": 0.7489420495765856,
+            "positivePositionsRejected": 0.40607734806629836
+          }
+        }
+      },
+      "importance": [
+        {
+          "feature": "quotePrincipalToPoolSize",
+          "gain": 7781.1886449456215,
+          "gainShare": 0.33670784238515516
+        },
+        {
+          "feature": "poolSizeToMarketCap",
+          "gain": 4177.900820720941,
+          "gainShare": 0.180786257117398
+        },
+        {
+          "feature": "top1HolderShare",
+          "gain": 2803.2826962025138,
+          "gainShare": 0.12130373793817528
+        },
+        {
+          "feature": "observedPoolFeePips",
+          "gain": 2494.107463285327,
+          "gainShare": 0.10792509743161277
+        },
+        {
+          "feature": "poolQuotePrincipalUsd",
+          "gain": 2183.7069058716297,
+          "gainShare": 0.0944934346444878
+        },
+        {
+          "feature": "marketCapUsd",
+          "gain": 734.1860208865255,
+          "gainShare": 0.03176972083341286
+        },
+        {
+          "feature": "activeVirtualQuoteReserveUsd",
+          "gain": 726.1595275325235,
+          "gainShare": 0.0314223981578599
+        },
+        {
+          "feature": "top10HolderShare",
+          "gain": 640.2947219144553,
+          "gainShare": 0.02770685355976559
+        },
+        {
+          "feature": "poolAgeBlocks",
+          "gain": 482.89401982724667,
+          "gainShare": 0.02089580537574319
+        },
+        {
+          "feature": "poolSizeUsd",
+          "gain": 410.3661324940622,
+          "gainShare": 0.017757376329613717
+        },
+        {
+          "feature": "priceChangeSinceFirstLiquidity",
+          "gain": 323.45178334228694,
+          "gainShare": 0.013996415850366936
+        },
+        {
+          "feature": "priorBuyVolumeUsd",
+          "gain": 192.58531337976456,
+          "gainShare": 0.008333557802289043
+        },
+        {
+          "feature": "initialMintRecipientShare",
+          "gain": 51.32282534241676,
+          "gainShare": 0.002220842929618509
+        },
+        {
+          "feature": "holderCount",
+          "gain": 40.6362369209528,
+          "gainShare": 0.001758412535749751
+        },
+        {
+          "feature": "priorSwapCount",
+          "gain": 35.15439426898956,
+          "gainShare": 0.0015212020662623662
+        },
+        {
+          "feature": "dynamicFee",
+          "gain": 32.3776116957888,
+          "gainShare": 0.0014010450424890835
+        },
+        {
+          "feature": "liquidityPositionCount",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "hasHooks",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "priorBuyCount",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "priorSellCount",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "priorSellVolumeUsd",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "priorSuccessfulSellers",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "attributedSellTransactions",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "priorSellRouterCount",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "sellerAttributionCoverage",
+          "gain": 0.0,
+          "gainShare": 0.0
+        },
+        {
+          "feature": "isV4",
+          "gain": 0.0,
+          "gainShare": 0.0
+        }
+      ]
+    }
+  },
+  "combinedFilters": [
+    {
+      "positiveTarget": "precision_80",
+      "lossTarget": "precision_80",
+      "screening": {
+        "entriesKept": 263,
+        "entriesRejected": 977,
+        "netUsdKept": 659.6819084207635,
+        "netUsdBaseline": 792.520919550286,
+        "conservativeNetUsdKept": -446.6820971045027,
+        "winRateKept": 0.9049429657794676,
+        "severeLossRecall": 0.8653846153846154,
+        "failedExitRecall": 0.908256880733945,
+        "heavyLossRecall": 0.8529411764705882,
+        "lossDollarRecall": 0.8762593570840165,
+        "positivePositionsRejected": 0.3425414364640884
+      }
+    },
+    {
+      "positiveTarget": "precision_80",
+      "lossTarget": "recall_90",
+      "screening": {
+        "entriesKept": 215,
+        "entriesRejected": 1025,
+        "netUsdKept": 559.2873474285327,
+        "netUsdBaseline": 792.520919550286,
+        "conservativeNetUsdKept": -428.5205378694426,
+        "winRateKept": 0.9348837209302325,
+        "severeLossRecall": 0.9294871794871795,
+        "failedExitRecall": 0.9128440366972477,
+        "heavyLossRecall": 0.9264705882352942,
+        "lossDollarRecall": 0.926900943342421,
+        "positivePositionsRejected": 0.4447513812154696
+      }
+    },
+    {
+      "positiveTarget": "max_f1",
+      "lossTarget": "precision_80",
+      "screening": {
+        "entriesKept": 486,
+        "entriesRejected": 754,
+        "netUsdKept": 833.7404032816587,
+        "netUsdBaseline": 792.520919550286,
+        "conservativeNetUsdKept": -547.3288208928323,
+        "winRateKept": 0.6460905349794238,
+        "severeLossRecall": 0.48717948717948717,
+        "failedExitRecall": 0.3256880733944954,
+        "heavyLossRecall": 0.4338235294117647,
+        "lossDollarRecall": 0.5389800621898414,
+        "positivePositionsRejected": 0.13259668508287292
+      }
+    }
+  ],
+  "rules": [
+    {
+      "modelLabel": "positive_pnl",
+      "target": "max_f1",
+      "conditions": [
+        {
+          "feature": "poolQuotePrincipalUsd",
+          "operator": ">=",
+          "threshold": 204.00728099446263
+        },
+        {
+          "feature": "quotePrincipalToPoolSize",
+          "operator": ">=",
+          "threshold": 0.2192270834943518
+        }
+      ],
+      "validation": {
+        "threshold": 0.5,
+        "selected": 554,
+        "precision": 0.5685920577617328,
+        "recall": 0.9662576687116564,
+        "f1": 0.7159090909090909,
+        "truePositive": 315,
+        "falsePositive": 239,
+        "falseNegative": 11
+      },
+      "test": {
+        "threshold": 0.5,
+        "selected": 590,
+        "precision": 0.576271186440678,
+        "recall": 0.9392265193370166,
+        "f1": 0.7142857142857143,
+        "truePositive": 340,
+        "falsePositive": 250,
+        "falseNegative": 22
+      },
+      "screening": {
+        "entriesKept": 590,
+        "entriesRejected": 650,
+        "netUsdKept": 689.0577369168855,
+        "netUsdBaseline": 792.520919550286,
+        "conservativeNetUsdKept": -823.8379584855228,
+        "winRateKept": 0.576271186440678,
+        "severeLossRecall": 0.1858974358974359,
+        "failedExitRecall": 0.022935779816513763,
+        "heavyLossRecall": 0.08823529411764706,
+        "lossDollarRecall": 0.26709675886678497,
+        "positivePositionsRejected": 0.06077348066298342
+      }
+    },
+    {
+      "modelLabel": "positive_pnl",
+      "target": "precision_80",
+      "conditions": [
+        {
+          "feature": "poolSizeToMarketCap",
+          "operator": ">=",
+          "threshold": 2.0
+        }
+      ],
+      "validation": {
+        "threshold": 0.5,
+        "selected": 31,
+        "precision": 1.0,
+        "recall": 0.0950920245398773,
+        "f1": 0.17366946778711484,
+        "truePositive": 31,
+        "falsePositive": 0,
+        "falseNegative": 295
+      },
+      "test": {
+        "threshold": 0.5,
+        "selected": 36,
+        "precision": 1.0,
+        "recall": 0.09944751381215469,
+        "f1": 0.18090452261306533,
+        "truePositive": 36,
+        "falsePositive": 0,
+        "falseNegative": 326
+      },
+      "screening": {
+        "entriesKept": 36,
+        "entriesRejected": 1204,
+        "netUsdKept": 92.76606605725465,
+        "netUsdBaseline": 792.520919550286,
+        "conservativeNetUsdKept": -72.39599999999999,
+        "winRateKept": 1.0,
+        "severeLossRecall": 1.0,
+        "failedExitRecall": 1.0,
+        "heavyLossRecall": 1.0,
+        "lossDollarRecall": 1.0,
+        "positivePositionsRejected": 0.9005524861878453
+      }
+    },
+    {
+      "modelLabel": "positive_pnl",
+      "target": "precision_90",
+      "conditions": [
+        {
+          "feature": "poolSizeToMarketCap",
+          "operator": ">=",
+          "threshold": 2.0
+        }
+      ],
+      "validation": {
+        "threshold": 0.5,
+        "selected": 31,
+        "precision": 1.0,
+        "recall": 0.0950920245398773,
+        "f1": 0.17366946778711484,
+        "truePositive": 31,
+        "falsePositive": 0,
+        "falseNegative": 295
+      },
+      "test": {
+        "threshold": 0.5,
+        "selected": 36,
+        "precision": 1.0,
+        "recall": 0.09944751381215469,
+        "f1": 0.18090452261306533,
+        "truePositive": 36,
+        "falsePositive": 0,
+        "falseNegative": 326
+      },
+      "screening": {
+        "entriesKept": 36,
+        "entriesRejected": 1204,
+        "netUsdKept": 92.76606605725465,
+        "netUsdBaseline": 792.520919550286,
+        "conservativeNetUsdKept": -72.39599999999999,
+        "winRateKept": 1.0,
+        "severeLossRecall": 1.0,
+        "failedExitRecall": 1.0,
+        "heavyLossRecall": 1.0,
+        "lossDollarRecall": 1.0,
+        "positivePositionsRejected": 0.9005524861878453
+      }
+    },
+    {
+      "modelLabel": "loss_over_5pct",
+      "target": "max_f1",
+      "conditions": [
+        {
+          "feature": "poolSizeToMarketCap",
+          "operator": "<=",
+          "threshold": 0.9983823265570877
+        },
+        {
+          "feature": "quotePrincipalToPoolSize",
+          "operator": ">=",
+          "threshold": 0.006128418374920458
+        }
+      ],
+      "validation": {
+        "threshold": 0.5,
+        "selected": 204,
+        "precision": 0.6372549019607843,
+        "recall": 0.6467661691542289,
+        "f1": 0.6419753086419753,
+        "truePositive": 130,
+        "falsePositive": 74,
+        "falseNegative": 71
+      },
+      "test": {
+        "threshold": 0.5,
+        "selected": 161,
+        "precision": 0.6086956521739131,
+        "recall": 0.6282051282051282,
+        "f1": 0.6182965299684543,
+        "truePositive": 98,
+        "falsePositive": 63,
+        "falseNegative": 58
+      },
+      "screening": {
+        "entriesKept": 1079,
+        "entriesRejected": 161,
+        "netUsdKept": 735.5900431502473,
+        "netUsdBaseline": 792.520919550286,
+        "conservativeNetUsdKept": -1287.745072038048,
+        "winRateKept": 0.2789620018535681,
+        "severeLossRecall": 0.6282051282051282,
+        "failedExitRecall": 0.0,
+        "heavyLossRecall": 0.6617647058823529,
+        "lossDollarRecall": 0.49195217294963944,
+        "positivePositionsRejected": 0.1685082872928177
+      }
+    }
+  ]
+}
