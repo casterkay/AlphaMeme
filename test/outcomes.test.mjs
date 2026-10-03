@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectOutcomeSamples, dueOutcomeJobs, horizons, outcomeCoverage, sampleRejected, selectOutcomeJobs } from '../src/scoring/outcomes.mjs';
+import { DISCOVERY_REJECT, collectOutcomeSamples, dueOutcomeJobs, horizons, outcomeCohort, outcomeCoverage, sampledForRejection, selectOutcomeJobs, summarizeOutcomes } from '../src/scoring/outcomes.mjs';
 import { sha256Bytes, sha256Hex } from '../src/util/crypto.mjs';
 
 const address = '0x' + '1'.repeat(40);
 
 test('historical samples survive delisting; missing prices stay missing and retries back off', async () => {
   const now = 1800000000000;
-  const rows = [{ address, chain: 'bsc', baselineAt: now-1900000, baselinePrice: 2, cohortMetadata: { baselineProvider: 'AVE' }, initialDecision:'LIVE_READY', samples: {} }];
+  const rows = [{ address, chain: 'bsc', baselineAt: now-1900000, baselinePrice: 2, cohortMetadata: { baselineProvider: 'AVE' }, initialDecision:'LIVE_READY', latestDecision:'PASSED', samples: {} }];
   const calls = [];
   const gmgn = { priceAt: async (a, at, chain) => { calls.push([a,at,chain]); return { at, price: 3, source: 'GMGN_1M_CLOSE' }; } };
   await collectOutcomeSamples(rows, gmgn, 'bsc', { now: () => now, limit: 3 });
@@ -26,7 +26,7 @@ test('AVE sampling leaves legacy and unknown baselines readable without adding c
   const now = 1_800_000_000_000;
   const rows = ['AVE', 'GMGN', 'LEGACY_UNKNOWN', undefined].map((baselineProvider, index) => ({
     address: `${address.slice(0, -1)}${index}`, chain: 'bsc', baselineAt: now - 600_000,
-    baselinePrice: 2, cohortMetadata: baselineProvider ? { baselineProvider } : {}, initialDecision: 'LIVE_READY', samples: {}
+    baselinePrice: 2, cohortMetadata: baselineProvider ? { baselineProvider } : {}, initialDecision: 'LIVE_READY', latestDecision: 'PASSED', samples: {}
   }));
   const calls = [];
   const provider = { priceAt: async token => { calls.push(token); return { at: now - 300_000, price: 3, source: 'AVE' }; } };
@@ -46,27 +46,43 @@ test('WebCrypto SHA-256 helpers preserve the legacy byte and hex vectors', async
   assert.deepEqual(Object.keys(horizons), ['m5', 'm15', 'm30', 'h1', 'h2', 'h6', 'h24']);
 });
 
-test('rejection cohort is deterministic and separated from passed outcomes', async () => {
-  const rows = [];
-  for (let i=1;i<100;i++) await sampleRejected(rows, { chain:'bsc', address:'0x'+i.toString(16).padStart(40,'0'), price: 1, status:'HARD_REJECT' }, 10);
-  assert.ok(rows.length > 5 && rows.length < 40);
-  assert.equal(rows.length, 33);
-  assert.deepEqual(rows.slice(0, 4).map(row => row.address), [
-    '0x0000000000000000000000000000000000000001',
-    '0x0000000000000000000000000000000000000002',
-    '0x0000000000000000000000000000000000000005',
-    '0x0000000000000000000000000000000000000006'
-  ]);
-  const count = rows.length;
-  for (const row of [...rows]) await sampleRejected(rows, { ...row, price:1, status:'HARD_REJECT' }, 20);
-  assert.equal(rows.length, count);
-  assert.equal(outcomeCoverage(rows, 1900000).passed.m30.eligible, 0);
-  assert.equal(outcomeCoverage(rows, 1900000).rejected.m30.eligible, count);
+test('a lead counts in the cohort of its latest verdict; a discovery rejection in the control cohort', () => {
+  for (const [initialDecision, latestDecision, cohort] of [
+    ['LIVE_READY', 'PASSED', 'passed'],
+    ['LIVE_READY', 'VETOED', 'vetoed'],
+    ['LIVE_READY', 'PENDING', 'unverified'],
+    ['LIVE_READY', 'INCOMPLETE', 'unverified'],
+    // Rows recorded before verdicts were kept hold the candidate status.
+    ['LIVE_READY', 'HARD_REJECT', 'vetoed'],
+    ['LIVE_READY', 'LIVE_READY', 'unverified'],
+    [DISCOVERY_REJECT, null, 'rejected'],
+    // A rejection that became a lead without an AVE baseline counts nowhere.
+    [DISCOVERY_REJECT, 'PENDING', null],
+    ['HARD_REJECT', 'HARD_REJECT', null]
+  ]) assert.equal(outcomeCohort({ initialDecision, latestDecision }), cohort, `${initialDecision} → ${latestDecision}`);
 });
 
-test('rejection sampling uses the legacy SHA-256 first byte modulo five rule', async () => {
-  const candidate = { chain: 'bsc', address: '0x0000000000000000000000000000000000000001', price: 1, status: 'HARD_REJECT' };
-  const rows = await sampleRejected([], candidate, 10);
-  assert.deepEqual(rows.map(row => row.address), [candidate.address]);
-  assert.equal(rows[0].cohortMetadata.baselineProvider, 'LEGACY_UNKNOWN');
+test('coverage reports each cohort\'s missing rate beside its median and average, and only passed leads reach the gate', () => {
+  const row = (initialDecision, latestDecision, value) => ({ initialDecision, latestDecision, baselineAt: 0, samples: value === null ? {} : { m30: { return: value } } });
+  const rows = [row('LIVE_READY', 'PASSED', 0.5), row('LIVE_READY', 'PASSED', -0.25), row('LIVE_READY', 'PASSED', 0.5), row('LIVE_READY', 'PASSED', null),
+    row('LIVE_READY', 'VETOED', -0.9), row('LIVE_READY', 'VETOED', null), row(DISCOVERY_REJECT, null, null)];
+  const summary = summarizeOutcomes(rows, horizons.m30);
+  assert.deepEqual(summary.coverage.passed.m30, { eligible: 4, completed: 3, missing: 1, missingRate: 0.25, median: 0.5, average: 0.25, positiveRate: 2 / 3 });
+  assert.deepEqual(summary.coverage.vetoed.m30, { eligible: 2, completed: 1, missing: 1, missingRate: 0.5, median: -0.9, average: -0.9, positiveRate: 0 });
+  assert.deepEqual(summary.coverage.rejected.m30, { eligible: 1, completed: 0, missing: 1, missingRate: 1, median: null, average: null, positiveRate: null });
+  assert.deepEqual(summary.coverage.unverified.m30, { eligible: 0, completed: 0, missing: 0, missingRate: null, median: null, average: null, positiveRate: null });
+  assert.deepEqual([summary.tracked, summary.completed30m], [6, 3]);
+  const vetoedOnly = Array.from({ length: 50 }, () => ({ initialDecision: 'LIVE_READY', latestDecision: 'VETOED', baselineAt: 0,
+    samples: { m30: { return: 0 }, h2: { return: 0 }, h24: { return: 0 } } }));
+  assert.equal(summarizeOutcomes(vetoedOnly, horizons.h24).calibrationReady, false);
+  assert.equal(summarizeOutcomes(vetoedOnly.map(item => ({ ...item, latestDecision: 'PASSED' })), horizons.h24).calibrationReady, true);
+});
+
+test('rejection sampling keeps about one token in five, stably and whatever the address suffix', () => {
+  const tokens = Array.from({ length: 5000 }, (_, index) => `0x${index.toString(16).padStart(36, '0')}4444`);
+  const rate = tokens.filter(token => sampledForRejection('arc', token)).length / tokens.length;
+  assert.ok(rate > 0.17 && rate < 0.23, String(rate));
+  for (const token of tokens.slice(0, 50)) {
+    assert.equal(sampledForRejection('arc', token), sampledForRejection('arc', token.toUpperCase().replace('0X', '0x')));
+  }
 });

@@ -34,14 +34,14 @@ export function readTelegramStatistics(storage, tenant, now = Date.now()) {
   if (!Number.isSafeInteger(now) || now < 0) throw new StatisticsError('STATISTICS_CLOCK_INVALID');
   const tenantId = normalizeTenantId(tenant);
   const rows = storage.sql.exec(
-    'SELECT chain, initial_decision, baseline_at, samples_json FROM outcomes WHERE tenant_id = ?', tenantId
+    'SELECT chain, initial_decision, latest_decision, baseline_at, samples_json FROM outcomes WHERE tenant_id = ?', tenantId
   ).toArray();
   const byChain = Object.fromEntries(STATISTICS_CHAINS.map(chain => [chain, []]));
   for (const row of rows) {
     if (!Object.hasOwn(byChain, row.chain) || !Number.isSafeInteger(row.baseline_at) || row.baseline_at < 0) {
       throw new StatisticsError('STATISTICS_OUTCOME_CORRUPT');
     }
-    byChain[row.chain].push({ initialDecision: row.initial_decision, baselineAt: row.baseline_at, samples: samplesFromRow(row) });
+    byChain[row.chain].push({ initialDecision: row.initial_decision, latestDecision: row.latest_decision, baselineAt: row.baseline_at, samples: samplesFromRow(row) });
   }
   return Object.fromEntries(STATISTICS_CHAINS.map(chain => {
     const summary = summarizeOutcomes(byChain[chain], now);

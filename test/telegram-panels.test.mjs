@@ -248,10 +248,21 @@ test('export is all-chain and whitelist-only with original manual revision and s
 
 test('statistics distinguish unavailable from empty and require all three windows for overall readiness',()=>{
   const snapshot=fixture();assert.match(renderPanel(snapshot,session('stats'),'en').text,/unavailable/);
-  snapshot.stats={robinhood:{tracked:60,completed30m:50,completed1h:1,completed2h:49,completed24h:0,calibrationReady:false,coverage:{passed:{h6:{eligible:0,completed:0,missing:0,median:null,positiveRate:null}}}}};
+  snapshot.stats={robinhood:{tracked:60,completed30m:50,completed1h:1,completed2h:49,completed24h:0,calibrationReady:false,coverage:{passed:{h6:{eligible:0,completed:0,missing:0,missingRate:null,median:null,average:null,positiveRate:null}}}}};
   const summary=renderPanel(snapshot,session('stats'),'en');assert.doesNotMatch(summary.text,/gate/);
   const coverage=renderPanel(snapshot,session('stats',{coverage:true}),'en');assert.match(coverage.text,/30 min Ready · 2 h Not ready · 24 h Not ready/);assert.match(coverage.text,/Overall calibration gate: Not ready/);
-  const detail=renderPanel(snapshot,session('stats',{horizon:'h6'}),'en');assert.match(detail.text,/Due 0 · measured 0 · missing 0/);assert.match(detail.text,/No samples/);
+  const detail=renderPanel(snapshot,session('stats',{horizon:'h6'}),'en');assert.match(detail.text,/Due 0 · measured 0 · missing 0\n/);assert.match(detail.text,/No samples/);
+});
+
+test('statistics show every cohort\'s missing rate beside its median and average, in both languages',()=>{
+  const snapshot=fixture(),cell=(eligible,completed,median,average)=>({eligible,completed,missing:eligible-completed,missingRate:(eligible-completed)/eligible,median,average,positiveRate:.5});
+  snapshot.stats={robinhood:{tracked:9,calibrationReady:false,coverage:{passed:{m30:cell(4,3,.1,.25)},vetoed:{m30:cell(2,1,-.9,-.9)},unverified:{m30:cell(2,2,0,0)},rejected:{m30:cell(10,4,-.5,-.4)}}}};
+  const en=renderPanel(snapshot,session('stats',{cohort:'compare'}),'en').text;
+  for(const pattern of [/<b>Leads, check passed · 30 min<\/b>\nDue 4 · measured 3 · missing 1 \(25%\)\nMedian: \+10% · average: \+25%/,/<b>Leads, vetoed · 30 min<\/b>\nDue 2 · measured 1 · missing 1 \(50%\)/,/<b>Leads, check pending or incomplete · 30 min<\/b>\nDue 2 · measured 2 · missing 0 \(0%\)/,/<b>Rejected by the screen · 30 min<\/b>\nDue 10 · measured 4 · missing 6 \(60%\)\nMedian: -50% · average: -40%/]) assert.match(en,pattern);
+  const zh=renderPanel(snapshot,session('stats',{cohort:'rejected'}),'zh').text;
+  assert.match(zh,/<b>初筛淘汰 · 30分钟<\/b>\n到期 10 · 已测 4 · 缺失 6 \(60%\)\n中位数: -50% · 平均: -40%/);
+  assert.doesNotMatch(zh,/线索·核验通过 ·/);
+  assert.match(renderPanel(snapshot,session('stats'),'zh').text,/核验通过的线索，30分钟后: 中位数 \+10%（3个，缺失25%）/);
 });
 
 test('evidence pages keep the exact audit time while the detail summary shows it relatively',()=>{
@@ -393,7 +404,7 @@ test('selectors lay out two choices per row, time windows three, and only the ch
   const snapshot=fixture(),choices=result=>result.keyboard.slice(0,-1).map(row=>row.length);
   assert.deepEqual(choices(renderPanel(snapshot,session('view_chain',{returnTo:{panel:'saved'}}),'en')),[2,2,2]);
   assert.deepEqual(choices(renderPanel(snapshot,session('horizon'),'en')),[3,3,1]);
-  assert.deepEqual(renderPanel(snapshot,session('cohort'),'en').keyboard[0].map(item=>item.text),['✓ Passed the screen','Vetoed control']);
+  assert.deepEqual(renderPanel(snapshot,session('cohort'),'en').keyboard[0].map(item=>item.text),['✓ Leads, check passed','Leads, vetoed']);
   assert.match(renderPanel(snapshot,session('view_chain'),'en').text,/^<b>[^<]+<\/b>\nViewing a chain does not change what is scanned\.\n\nUpdated/);
   for(const panel of ['filter','sort','language','horizon','cohort']) assert.match(renderPanel(snapshot,session(panel),'en').text,/^<b>[^<]+<\/b>\n\nUpdated/,panel);
 });
@@ -408,10 +419,11 @@ test('activity rows name the token and what happened in plain words',()=>{
 });
 
 test('performance leads with the median return of screen passes in plain words',()=>{
-  const snapshot=fixture(),cell=(median,completed)=>({eligible:completed+3,completed,missing:3,median,positiveRate:null});
+  const snapshot=fixture(),cell=(median,completed)=>({eligible:completed+3,completed,missing:3,missingRate:3/(completed+3),median,positiveRate:null});
   snapshot.stats={robinhood:{tracked:40,calibrationReady:false,coverage:{passed:{m30:cell(.042,37),h1:cell(-.5,1),h2:cell(null,0),h24:cell(null,0)}}}};
   const text=renderPanel(snapshot,session('stats'),'en').text;
-  assert.match(text,/Tokens that passed the screen, 30 min later: median \+4\.2% \(37 tokens\)\n1 h later: median -50% \(1 token\)\n2 h later: no samples yet/);
+  assert.match(text,/Leads that passed the check, 30 min later: median \+4\.2% \(37 tokens, 7\.5% missing\)\n1 h later: median -50% \(1 token, 75% missing\)\n2 h later: no samples yet/);
+  assert.match(text,/Tracking 40 leads\nMissing: tokens due but never priced, mostly ones that left the hot list\./);
   assert.match(text,/Shadow observations; not executable returns\./);
 });
 

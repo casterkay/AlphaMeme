@@ -1,26 +1,54 @@
-import { sha256Bytes } from '../util/crypto.mjs';
-
+/**
+ * An outcome row tracks one token per chain from its baseline:
+ * - initialDecision: why it is tracked, fixed at the baseline: LIVE_READY (a lead) or
+ *   DISCOVERY_REJECT (a sampled screen rejection). The only change allowed is a rejection
+ *   giving way to the lead it became, re-baselined at the alert.
+ * - latestDecision: a lead's latest safetyVerdict (PENDING | INCOMPLETE | PASSED | VETOED),
+ *   reconciled from its candidate every screen; null for a rejection that never became a lead.
+ * - latestFailed: the screen reasons of a rejection; empty for a lead.
+ * - sampling / strategyVersion: how the row was admitted (ALL_LEADS / ave-leads-v1,
+ *   FNV1A_MOD5 / ave-rejected-v1).
+ * - cohortMetadata: baselineProvider ('AVE' is the only one sampled) and, for a lead that
+ *   was first a sampled rejection, rejectedAt (that rejection's baseline time).
+ * - samples / sampleRetries: per-horizon price samples and backoff state.
+ */
 // A market lead (LIVE_READY) is the only screen pass.
 const PASSED_DECISIONS = Object.freeze(['LIVE_READY']);
+// A hot-list token the discovery screen rejected, tracked as the control cohort.
+export const DISCOVERY_REJECT = 'DISCOVERY_REJECT';
+export const OUTCOME_COHORTS = Object.freeze(['passed', 'vetoed', 'unverified', 'rejected']);
+export const REJECTED_SAMPLE_DAILY_CAP = 100;
 export const horizons = Object.freeze({ m5: 300_000, m15: 900_000, m30: 1800_000, h1: 3600_000, h2: 7200_000, h6: 21600_000, h24: 86400_000 });
 const MAX_SAMPLE_ATTEMPTS = 3;
 const MAX_SAMPLE_LATENESS_MS = 24 * 3600_000;
 const PAUSE_CODES = new Set(['AVE_RATE_LIMITED', 'AVE_BUDGET', 'AVE_HOURLY_BUDGET', 'AVE_TOTAL_BUDGET', 'AVE_QUOTA', 'AVE_DISCOVERY_RESERVE', 'AVE_ABORTED', 'AVE_CHANGED', 'AVE_DISABLED']);
 
 export const hasAveOutcomeBaseline = row => row?.cohortMetadata?.baselineProvider === 'AVE';
+export const isLeadOutcome = row => PASSED_DECISIONS.includes(row?.initialDecision);
 
-export async function sampleRejected(outcomes, candidate, now) {
-  if (candidate.status !== 'HARD_REJECT' || !(candidate.price > 0)) return outcomes;
-  if (outcomes.some(row => row.address === candidate.address)) return outcomes;
-  // Stable 1-in-5 sampling, independent of subsequent returns or popularity.
-  const hash = await sha256Bytes(`${candidate.chain}:${candidate.address}`);
-  if (hash[0] % 5 || outcomes.filter(row => row.initialDecision === 'HARD_REJECT').length >= 200) return outcomes;
-  outcomes.push({ chain: candidate.chain, address: candidate.address, symbol: candidate.symbol,
-    baselineAt: now, baselinePrice: candidate.price, initialDecision: 'HARD_REJECT',
-    latestDecision: candidate.status, latestFailed: candidate.deep?.failed || [], samples: {},
-    sampling: 'SHA256_MOD5', strategyVersion: 'radar-v3',
-    cohortMetadata: { baselineProvider: candidate.marketProvider || 'LEGACY_UNKNOWN' } });
-  return outcomes;
+/**
+ * The cohort a tracked token counts in. A lead's follows its latest safety verdict, which its
+ * outcome records as latestDecision. Rows recorded before that hold the candidate status instead:
+ * HARD_REJECT was a veto, and LIVE_READY does not say whether the check passed. A rejection that
+ * later became a lead without an AVE baseline (promoted from DexScreener) has a verdict too, and
+ * counts nowhere until the hot list quotes it as a lead.
+ */
+export function outcomeCohort(row) {
+  if (row?.initialDecision === DISCOVERY_REJECT) return row.latestDecision == null ? 'rejected' : null;
+  if (!isLeadOutcome(row)) return null;
+  if (row.latestDecision === 'VETOED' || row.latestDecision === 'HARD_REJECT') return 'vetoed';
+  return row.latestDecision === 'PASSED' ? 'passed' : 'unverified';
+}
+
+/**
+ * A stable 1-in-5 sample of rejected tokens, independent of later returns or popularity. FNV-1a
+ * keeps it synchronous inside the screen's commit, and it mixes every character, so a vanity
+ * address suffix cannot decide membership.
+ */
+export function sampledForRejection(chain, address) {
+  let hash = 0x811c9dc5;
+  for (const character of `${chain}:${String(address).toLowerCase()}`) hash = Math.imul(hash ^ character.charCodeAt(0), 0x01000193);
+  return (hash >>> 0) % 5 === 0;
 }
 
 export function dueOutcomeJobs(outcomes, now) {
@@ -77,28 +105,32 @@ export async function collectOutcomeSamples(outcomes, provider, chain, { limit =
   return outcomes;
 }
 
+function horizonCoverage(rows, now) {
+  return Object.fromEntries(Object.entries(horizons).map(([key, duration]) => {
+    const eligible = rows.filter(row => now >= row.baselineAt + duration);
+    const values = eligible.map(row => row.samples?.[key]?.return).filter(Number.isFinite).sort((a, b) => a - b);
+    const n = values.length;
+    return [key, { eligible: eligible.length, completed: n, missing: eligible.length - n,
+      missingRate: eligible.length ? (eligible.length - n) / eligible.length : null,
+      median: n ? (values[Math.floor((n - 1) / 2)] + values[Math.floor(n / 2)]) / 2 : null,
+      average: n ? values.reduce((sum, value) => sum + value, 0) / n : null,
+      positiveRate: n ? values.filter(x => x > 0).length / n : null }];
+  }));
+}
+
 export function outcomeCoverage(outcomes, now = Date.now()) {
-  const cohort = decision => {
-    const rows = outcomes.filter(row => decision.includes(row.initialDecision));
-    return Object.fromEntries(Object.entries(horizons).map(([key, duration]) => {
-      const eligible = rows.filter(row => now >= row.baselineAt + duration);
-      const values = eligible.map(row => row.samples?.[key]?.return).filter(Number.isFinite).sort((a, b) => a - b);
-      const n = values.length;
-      return [key, { eligible: eligible.length, completed: n, missing: eligible.length - n,
-        median: n ? (values[Math.floor((n - 1) / 2)] + values[Math.floor(n / 2)]) / 2 : null,
-        positiveRate: n ? values.filter(x => x > 0).length / n : null }];
-    }));
-  };
-  return { passed: cohort(PASSED_DECISIONS), rejected: cohort(['HARD_REJECT']) };
+  return Object.fromEntries(OUTCOME_COHORTS.map(cohort => [cohort, horizonCoverage(outcomes.filter(row => outcomeCohort(row) === cohort), now)]));
 }
 
 export const REQUIRED_CALIBRATION_WINDOWS = Object.freeze(['m30', 'h2', 'h24']);
 
 export function summarizeOutcomes(outcomes, now = Date.now()) {
-  const rows = (Array.isArray(outcomes) ? outcomes : []).filter(item => PASSED_DECISIONS.includes(item?.initialDecision));
-  const completed = Object.fromEntries(Object.keys(horizons).map(key => [key, rows.filter(item => item.samples?.[key]).length]));
+  const rows = Array.isArray(outcomes) ? outcomes : [];
+  // Only leads whose check passed count toward calibration: a vetoed or unverified lead is no pass.
+  const passed = rows.filter(row => outcomeCohort(row) === 'passed');
+  const completed = Object.fromEntries(Object.keys(horizons).map(key => [key, passed.filter(item => item.samples?.[key]).length]));
   return {
-    tracked: rows.length,
+    tracked: rows.filter(isLeadOutcome).length,
     minimumSample: 50,
     calibrationReady: REQUIRED_CALIBRATION_WINDOWS.every(key => completed[key] >= 50),
     completed5m: completed.m5,
@@ -109,6 +141,6 @@ export function summarizeOutcomes(outcomes, now = Date.now()) {
     completed6h: completed.h6,
     completed24h: completed.h24,
     note: '影子验证，仅衡量筛选结果，不代表可成交收益'
-    ,coverage: outcomeCoverage(outcomes || [], now)
+    ,coverage: outcomeCoverage(rows, now)
   };
 }
