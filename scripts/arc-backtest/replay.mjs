@@ -75,7 +75,7 @@ export function replay(pool, security, delay, policy, blockSeconds, costs = DEFA
   const honeypot = security.honeypot ?? unknown === 'conservative';
   const quantity = buyFill(entryDepth, costs.stakeUsd, buyTax, costs.slippageBps);
   const entryTimestamp = state.timestamp + (entryBlock - state.blockNumber) * blockSeconds;
-  if (costs.captureToTimestamp !== undefined && entryTimestamp + 1200 + costs.exitDelayBlocks * blockSeconds > costs.captureToTimestamp) {
+  if (costs.captureToTimestamp !== undefined && entryTimestamp + (policy.timeStopSeconds ?? 1200) + costs.exitDelayBlocks * blockSeconds > costs.captureToTimestamp) {
     return { ...result, gasUsd: 0, exitReason: 'incomplete_horizon' };
   }
   result.entered = true;
@@ -89,7 +89,7 @@ export function replay(pool, security, delay, policy, blockSeconds, costs = DEFA
   // Taxes or a thin pool can put the received position below its stop immediately.
   let pending = entryDepth.price <= entryPrice * 0.5
     ? { reason: 'stop_loss', blockNumber: entryBlock + costs.exitDelayBlocks } : null;
-  const deadlineBlock = entryBlock + Math.ceil(1200 / blockSeconds);
+  const deadlineBlock = entryBlock + Math.ceil((policy.timeStopSeconds ?? 1200) / blockSeconds);
   let block = entryBlock, approved = false, deadlineProcessed = false;
   while (remaining > 0) {
     const nextEventBlock = pool.states[cursor + 1]?.blockNumber ?? Infinity;

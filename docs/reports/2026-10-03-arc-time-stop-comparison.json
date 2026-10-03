@@ -1,0 +1,239 @@
+{
+  "configuration": {
+    "delayBlocks": 4,
+    "takeProfitFraction": 0.4,
+    "takeProfitMultiple": 2.5,
+    "trailingAthFraction": 0.98,
+    "stakeUsd": 2,
+    "fixedScreenRule": {
+      "usdcMin": 0.0,
+      "usdcShareMin": 1.1e-05,
+      "usdcShareMax": 0.5,
+      "holderMax": 0.49942,
+      "feeMaxPips": 10000.0,
+      "marketCapMin": 300.0,
+      "marketCapMax": 9941.18,
+      "allowMissingHolder": true,
+      "allowMissingFee": false
+    }
+  },
+  "manifest": {
+    "chainId": 5042,
+    "fromBlock": 23507072,
+    "toBlock": 24017877,
+    "captureToBlock": 24021504,
+    "fromTimestamp": 1790755125,
+    "toTimestamp": 1791014325,
+    "captureToTimestamp": 1791016165,
+    "blockSeconds": 0.5075,
+    "followUpSeconds": 1840,
+    "fromBlockHash": "0xc6522a790ebba247bcd4b18f3301f7853da9a859b9d93b8e6208f0668f410277",
+    "captureToBlockHash": "0xfcf7f585a18752ced0c2fa194a9d5f13fe877f2644819dd51d593919e5462f7e",
+    "sampledBaseFeePerGas": "0x4a817c800",
+    "timestampSource": "RPC log blockTimestamp; interpolated only when absent",
+    "eventDataThroughDelayBlocks": 20,
+    "scope": "Earliest native-USDC or ERC20-USDC paired pool per token created in window, across the two configured Arc Uniswap v3/v4 factories; not token deployment or pre-migration curves",
+    "discoveryLogs": 7488,
+    "nonQuotePools": 66,
+    "duplicateTokenPools": 652,
+    "pools": 6770,
+    "fundedPools": 6200,
+    "noFundedPools": 570,
+    "requestCount": 0,
+    "cacheHits": 309,
+    "extension": {
+      "originalCaptureToBlock": 24020322,
+      "originalCaptureToTimestamp": 1791015565,
+      "addedStates": 51,
+      "fundingCohortFrozen": true
+    }
+  },
+  "costs": {
+    "stakeUsd": 2,
+    "slippageBps": 50,
+    "gasPriceUsdPerUnit": 2e-08,
+    "swapGasUnits": 250000,
+    "approvalGasUnits": 50000,
+    "exitDelayBlocks": 1,
+    "dynamicFeePips": 3000
+  },
+  "securitySummary": {
+    "queried": 6200,
+    "unavailableResponses": 0,
+    "honeypots": 16,
+    "incomplete": 2988,
+    "missingBuyTax": 0,
+    "missingSellTax": 0
+  },
+  "rows": [
+    {
+      "timeStopMinutes": 15,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 18702.00900758082,
+      "gasUsd": 77.46000000000156,
+      "netUsd": 6224.549007580656,
+      "conservativeNetUsd": -3820.3794657564217,
+      "evPerEntryUsd": 1.0039595173517186,
+      "winRate": 0.3090322580645161,
+      "failedExits": 296,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3886,
+        "trailing_stop": 1779,
+        "honeypot": 16,
+        "stop_loss": 239,
+        "liquidity_disappeared": 280,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 6416.980645467403,
+        "conservativeNetUsd": -1576.5081883174144,
+        "failedExits": 267
+      },
+      "timeStopProfits": {
+        "positions": 3886,
+        "positive": 123,
+        "profitAtLeast1": 84,
+        "profitAtLeast2": 68,
+        "positiveNetUsd": 1772.7755034421739,
+        "netUsd": 1441.761570164311,
+        "maxNetUsd": 47.569012981247646
+      },
+      "lossOver5Pct": 689,
+      "heavyLoss": 521
+    },
+    {
+      "timeStopMinutes": 20,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 18625.578860045356,
+      "gasUsd": 77.54500000000154,
+      "netUsd": 6148.033860045193,
+      "conservativeNetUsd": -3893.991565904133,
+      "evPerEntryUsd": 0.9916183645234182,
+      "winRate": 0.3066129032258065,
+      "failedExits": 299,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3832,
+        "trailing_stop": 1817,
+        "honeypot": 16,
+        "stop_loss": 252,
+        "liquidity_disappeared": 283,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 6344.347546654659,
+        "conservativeNetUsd": -1649.2622931621681,
+        "failedExits": 267
+      },
+      "timeStopProfits": {
+        "positions": 3832,
+        "positive": 70,
+        "profitAtLeast1": 42,
+        "profitAtLeast2": 36,
+        "positiveNetUsd": 1034.5483664732035,
+        "netUsd": 705.4001527553394,
+        "maxNetUsd": 49.285117742115375
+      },
+      "lossOver5Pct": 705,
+      "heavyLoss": 537
+    },
+    {
+      "timeStopMinutes": 25,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 18596.40019330464,
+      "gasUsd": 77.54500000000154,
+      "netUsd": 6118.855193304477,
+      "conservativeNetUsd": -3922.3376627957005,
+      "evPerEntryUsd": 0.9869121279523351,
+      "winRate": 0.3059677419354839,
+      "failedExits": 300,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3809,
+        "trailing_stop": 1837,
+        "honeypot": 16,
+        "stop_loss": 254,
+        "liquidity_disappeared": 284,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 6316.803675211027,
+        "conservativeNetUsd": -1677.5582790204228,
+        "failedExits": 267
+      },
+      "timeStopProfits": {
+        "positions": 3809,
+        "positive": 46,
+        "profitAtLeast1": 20,
+        "profitAtLeast2": 15,
+        "positiveNetUsd": 379.61340286083805,
+        "netUsd": 49.743233059726165,
+        "maxNetUsd": 47.010227977566345
+      },
+      "lossOver5Pct": 710,
+      "heavyLoss": 540
+    },
+    {
+      "timeStopMinutes": 30,
+      "delayBlocks": 4,
+      "policy": "40% at 2.5x",
+      "discovered": 6770,
+      "entered": 6200,
+      "unentered": 570,
+      "spentUsd": 12400,
+      "proceedsUsd": 18553.36412051449,
+      "gasUsd": 77.54500000000154,
+      "netUsd": 6075.81912051433,
+      "conservativeNetUsd": -3966.3878456915772,
+      "evPerEntryUsd": 0.9799708258894081,
+      "winRate": 0.3056451612903226,
+      "failedExits": 299,
+      "securityUnknown": 2988,
+      "exitReasons": {
+        "time_stop": 3802,
+        "trailing_stop": 1845,
+        "honeypot": 16,
+        "stop_loss": 254,
+        "liquidity_disappeared": 283,
+        "never_funded": 570
+      },
+      "fixedScreen": {
+        "entries": 4626,
+        "netUsd": 6273.077152596532,
+        "conservativeNetUsd": -1723.5282846826199,
+        "failedExits": 267
+      },
+      "timeStopProfits": {
+        "positions": 3802,
+        "positive": 36,
+        "profitAtLeast1": 11,
+        "profitAtLeast2": 11,
+        "positiveNetUsd": 127.23703705223089,
+        "netUsd": -203.2372230325859,
+        "maxNetUsd": 45.181372467553246
+      },
+      "lossOver5Pct": 709,
+      "heavyLoss": 539
+    }
+  ],
+  "baseline20MinuteLedgerExact": true
+}
