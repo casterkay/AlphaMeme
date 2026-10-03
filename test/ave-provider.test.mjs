@@ -102,12 +102,11 @@ test('trending reads AVE percent taxes as rates so the screen drops only high-ta
   }
 });
 
-test('trending reads distinct 24-hour sellers as a count, absent as unknown, and drops a row whose count is malformed', async () => {
-  const [counted, absent, malformed] = ['1', '2', '3'].map(digit => `0x${digit.repeat(40)}`);
-  const { ave } = client(() => envelope([tokenRow(counted, 'bsc', { token_sellers_24h: 410 }), tokenRow(absent, 'bsc', { token_sellers_24h: null }),
-    tokenRow(malformed, 'bsc', { token_sellers_24h: 2.5 })]));
+test('trending reads distinct 24-hour sellers as a count, and an absent or malformed one as unknown without dropping the row', async () => {
+  const cases = [[410, 410], ['410', 410], [null, null], [2.5, null], [-1, null], ['many', null]].map(([value, expected], index) => ({ address: `0x${String(index + 1).repeat(40)}`, value, expected }));
+  const { ave } = client(() => envelope(cases.map(({ address, value }) => tokenRow(address, 'bsc', { token_sellers_24h: value }))));
   const { rows } = await ave.trending('bsc');
-  assert.deepEqual(rows.map(row => [row.address, row.sellers_24h]), [[counted, 410], [absent, null]]);
+  assert.deepEqual(rows.map(row => [row.address, row.sellers_24h]), cases.map(({ address, expected }) => [address, expected]));
 });
 
 test('trending drops a row whose tax is not a percentage', async () => {
@@ -276,6 +275,12 @@ test('details reads one token on its chain and returns its row', async () => {
   const { token, capturedAt } = await ave.details('bsc', BSC_TOKEN);
   assert.equal(calls[0].url, `https://prod.ave-api.com/v2/tokens/${BSC_TOKEN}-bsc`);
   assert.deepEqual([token.symbol, token.market_cap, token.main_pair_tvl, token.holders, capturedAt], ['TEST', 50_000, 20_000, 150, NOW]);
+});
+
+test('details reads a malformed distinct-seller count as unknown instead of refusing the token', async () => {
+  const { ave } = client(() => Response.json({ status: 1, data: { token: tokenRow(BSC_TOKEN, 'bsc', { token_sellers_24h: -1 }), pairs: [] } }));
+  const { token } = await ave.details('bsc', BSC_TOKEN);
+  assert.deepEqual([token.symbol, token.token_sellers_24h], ['TEST', null]);
 });
 
 test('details keeps the website AVE lists only as an http(s) URL', async () => {

@@ -46,6 +46,8 @@ const text = (value, limit) => typeof value === 'string' ? value.replace(/[\u000
 const webUrl = value => URL.canParse(text(value, 2048)) && ['http:', 'https:'].includes(new URL(text(value, 2048)).protocol) ? new URL(text(value, 2048)).href : '';
 const numeric = value => (typeof value === 'number' || typeof value === 'string' && /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
 const signedNumeric = value => (typeof value === 'number' || typeof value === 'string' && /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) && Number.isFinite(Number(value)) ? Number(value) : null;
+// Optional evidence that never decides the screen: a malformed count is unknown, not a bad row.
+const count = value => Number.isSafeInteger(numeric(value)) ? numeric(value) : null;
 const taxRate = value => value == null || value === '' ? null : numeric(value) / 100;
 const seconds = value => Number.isSafeInteger(value) && value > 0 && value < 100000000000 ? value : null;
 const upstreamTime = value => seconds(value) === null ? null : value * 1000;
@@ -116,7 +118,7 @@ function tokenRow(row, chain, ca, required = false) {
     'token_buy_volume_u_5m', 'token_sell_volume_u_5m']) {
     if (row[field] != null && numeric(row[field]) === null) throw fail('SCHEMA');
   }
-  for (const field of ['holders', 'token_tx_count_5m', 'token_buy_tx_count_5m', 'token_sell_tx_count_5m', 'token_sellers_24h']) {
+  for (const field of ['holders', 'token_tx_count_5m', 'token_buy_tx_count_5m', 'token_sell_tx_count_5m']) {
     if (row[field] != null && !Number.isSafeInteger(numeric(row[field]))) throw fail('SCHEMA');
   }
   for (const field of ['updated_at', 'launch_at', 'created_at']) {
@@ -132,7 +134,7 @@ function tokenRow(row, chain, ca, required = false) {
     main_pair_tvl: numeric(row.main_pair_tvl), token_tx_volume_usd_5m: numeric(row.token_tx_volume_usd_5m),
     token_buy_volume_u_5m: numeric(row.token_buy_volume_u_5m), token_sell_volume_u_5m: numeric(row.token_sell_volume_u_5m),
     token_tx_count_5m: numeric(row.token_tx_count_5m), token_buy_tx_count_5m: numeric(row.token_buy_tx_count_5m),
-    token_sell_tx_count_5m: numeric(row.token_sell_tx_count_5m), token_sellers_24h: numeric(row.token_sellers_24h),
+    token_sell_tx_count_5m: numeric(row.token_sell_tx_count_5m), token_sellers_24h: count(row.token_sellers_24h),
     token_price_change_5m: signedNumeric(row.token_price_change_5m),
     buy_tax: taxRate(row.buy_tax), sell_tax: taxRate(row.sell_tax),
     launch_at: seconds(row.launch_at), created_at: seconds(row.created_at), website: webUrl(row.website),
