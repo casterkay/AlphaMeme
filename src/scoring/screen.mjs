@@ -1,24 +1,19 @@
 import { validTokenAddress } from '../address.mjs';
 import { num, optionalCount, optionalNonNegativeNumber, optionalNumber, optionalRate } from './parse.mjs';
+import { ADMIT, CLEAR, DROP, ENFORCE, HIT, SHADOW, UNKNOWN, evaluateRules, rulesetVersion } from './rules.mjs';
 import { taxBreaches } from './tax.mjs';
 
 /**
- * The discovery screen as a rule table. Each rule answers HIT, CLEAR or UNKNOWN
- * for one row:
- * - a DROP rule rejects the token on HIT; UNKNOWN does not block it;
- * - an ADMIT rule must be CLEAR for the token to be admitted; UNKNOWN blocks it.
- * Any enforced DROP hit drops the token; otherwise it is admitted when every
- * enforced ADMIT rule is clear, and undecided (not alerted) when one is not.
- * A SHADOW rule's verdict is recorded but never decides. A rule's id names the
- * reason a blocked token shows, so each rule has a single blocking meaning:
- * thresholds are DROP rules, and the data a pass requires are ADMIT rules.
+ * The discovery screen as a rule table (./rules.mjs), one verdict per rule for
+ * each row. Any enforced DROP hit drops the token; otherwise it is admitted when
+ * every enforced ADMIT rule is clear, and undecided (not alerted) when one is
+ * not. A rule's id names the reason a blocked token shows, so each rule has a
+ * single blocking meaning: thresholds are DROP rules, and the data a pass
+ * requires are ADMIT rules.
  * A rule declares the settings it reads; thresholds come only from the scanner
  * settings, which are checked complete (completeScannerSettings) where each
  * cycle snapshots them.
  */
-export const HIT = 'HIT', CLEAR = 'CLEAR', UNKNOWN = 'UNKNOWN';
-export const ADMIT = 'ADMIT', DROP = 'DROP', UNDECIDED = 'UNDECIDED';
-export const ENFORCE = 'ENFORCE', SHADOW = 'SHADOW';
 
 const known = (value, hit) => value === null ? UNKNOWN : hit ? HIT : CLEAR;
 const required = present => present ? CLEAR : UNKNOWN;
@@ -82,19 +77,6 @@ export const SCREEN_RULES = Object.freeze([
     evaluate: nameBlocklisted }
 ].map(rule => Object.freeze({ ...rule, settings: Object.freeze(rule.settings) })));
 
-/**
- * The ruleset's identity: a hash of every rule's id, version, role and mode and
- * the values of the settings it declares, so a changed rule or threshold changes
- * it and an unrelated setting does not. Outcomes compare screens by it.
- */
-export function rulesetVersion(rules, settings) {
-  let hash = 0x811c9dc5;
-  const identity = rules.map(rule => `${rule.id}@${rule.version}:${rule.role}:${rule.mode}`
-    + JSON.stringify(rule.settings.map(key => [key, settings[key]]))).sort().join(',');
-  for (const character of identity) hash = Math.imul(hash ^ character.charCodeAt(0), 0x01000193);
-  return 'rs-' + (hash >>> 0).toString(16).padStart(8, '0');
-}
-
 // A cycle screens every row with one settings object, so its ruleset is hashed once per cycle.
 const rulesets = new WeakMap();
 function screenRuleset(settings) {
@@ -146,22 +128,6 @@ function marketView(row, chain, nowSec) {
     buys5m: optionalCount(row.buys_5m), sells5m: optionalCount(row.sells_5m),
     buyTax: optionalRate(row.buy_tax), sellTax: optionalRate(row.sell_tax)
   };
-}
-
-/**
- * Every rule's verdict for one row, the token's decision, and the enforced
- * rules that blocked it (the reasons a rejected token shows), in table order.
- */
-export function evaluateRules(market, settings, rules = SCREEN_RULES) {
-  const verdicts = {}, reasons = [];
-  let dropped = false;
-  for (const rule of rules) {
-    const verdict = verdicts[rule.id] = rule.evaluate(market, settings);
-    if (rule.mode !== ENFORCE || verdict === CLEAR || rule.role === DROP && verdict === UNKNOWN) continue;
-    dropped ||= rule.role === DROP;
-    reasons.push(rule.id);
-  }
-  return { decision: dropped ? DROP : reasons.length ? UNDECIDED : ADMIT, verdicts, reasons };
 }
 
 /**

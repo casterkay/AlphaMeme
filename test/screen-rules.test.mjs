@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { scannerSettings } from '../src/scanner-settings.mjs';
-import { ENFORCE, SCREEN_RULES, SHADOW, discoveryScreen, evaluateRules, rulesetVersion } from '../src/scoring/screen.mjs';
+import { ENFORCE, SHADOW, evaluateRules, rulesetVersion } from '../src/scoring/rules.mjs';
+import { SCREEN_RULES, discoveryScreen } from '../src/scoring/screen.mjs';
 
 const rule = (id, role, verdict, mode = ENFORCE, settings = []) => ({ id, version: 1, role, mode, settings, evaluate: () => verdict });
 
