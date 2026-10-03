@@ -53,6 +53,9 @@ export function publicSecondary(source = {}) {
   });
   const security = source.security || {};
   const fields = security.fields || {};
+  // The one stand-in source a check recorded for cannot_sell_all, if any.
+  const standIn = security.standIns?.cannotSellAll;
+  const standInKey = ['distinctSellers24h', 'dexSells24h'].find(key => Number.isSafeInteger(standIn?.[key]));
   const securityFields = {};
   for (const key of [
     'isHoneypot', 'openSource', 'mintable', 'ownerChangeBalance', 'hiddenOwner',
@@ -79,8 +82,7 @@ export function publicSecondary(source = {}) {
       fields: securityFields,
       buyTax: finiteOrNull(security.buyTax),
       sellTax: finiteOrNull(security.sellTax),
-      ...(Number.isSafeInteger(security.standIns?.cannotSellAll?.distinctSellers24h)
-        ? { standIns: { cannotSellAll: { distinctSellers24h: security.standIns.cannotSellAll.distinctSellers24h } } } : {})
+      ...(standInKey ? { standIns: { cannotSellAll: { [standInKey]: standIn[standInKey] } } } : {})
     }
   };
 }

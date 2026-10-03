@@ -206,6 +206,7 @@ function parseDexBatch(payload, { dexChainId, tokenAddresses, capturedAt }) {
     const liquidity = optionalNonNegative(pair.liquidity?.usd);
     const volume5m = optionalNonNegative(pair.volume?.m5);
     const buys5m = optionalCount(pair.txns?.m5?.buys), sells5m = optionalCount(pair.txns?.m5?.sells);
+    const sells24h = optionalCount(pair.txns?.h24?.sells);
     if (liquidity === null || volume5m === null) continue;
     const poolMarket = {
       pairAddress: cleanString(pair.pairAddress, 128), dexId: cleanString(pair.dexId, 64),
@@ -222,7 +223,8 @@ function parseDexBatch(payload, { dexChainId, tokenAddresses, capturedAt }) {
         fdv: tokenAddress === baseAddress ? optionalNonNegative(pair.fdv) : null,
         // DexScreener's trade direction is defined for the base token.
         buys5m: tokenAddress === baseAddress ? buys5m : null,
-        sells5m: tokenAddress === baseAddress ? sells5m : null };
+        sells5m: tokenAddress === baseAddress ? sells5m : null,
+        sells24h: tokenAddress === baseAddress ? sells24h : null };
       const previous = best.get(tokenAddress);
       if (!previous || market.liquidity > previous.liquidity) best.set(tokenAddress, market);
     }
@@ -444,34 +446,43 @@ function sourceResult(response) {
 }
 
 // GoPlus answers every other rule on Arc but never cannot_sell_all (6 of 6
-// tokens, 2026-10-02). There, AVE's distinct sellers stand in for that one
-// field. It is weaker evidence: wallets selling some amount does not rule out
-// maximum-sell or partial-balance rules, so the check records the stand-in.
+// tokens, 2026-10-02). There, sales that went through stand in for that one
+// field: AVE's distinct sellers, or for a pool promoted from DexScreener, its
+// sell transactions. It is weaker evidence: selling some amount does not rule
+// out maximum-sell or partial-balance rules, so the check records the stand-in.
 const CANNOT_SELL_ALL_STAND_IN_CHAINS = Object.freeze(['arc']);
+
+// The one source that stands in: AVE's count whenever AVE gave one, else DexScreener's.
+function sellEvidence(distinctSellers24h, dexSells24h) {
+  if (Number.isSafeInteger(distinctSellers24h)) return { distinctSellers24h };
+  return Number.isSafeInteger(dexSells24h) ? { dexSells24h } : null;
+}
 
 // A new security view with the stand-in applied; GoPlus's own fields, including
 // its missing cannotSellAll, are kept as it answered.
-function withSellerStandIn(security, chain, distinctSellers24h) {
+function withSellerStandIn(security, chain, evidence) {
   if (!CANNOT_SELL_ALL_STAND_IN_CHAINS.includes(chain) || !security.unknownFields?.includes('cannotSellAll')
-    || !Number.isSafeInteger(distinctSellers24h) || distinctSellers24h < 1) return security;
+    || !evidence || !(Object.values(evidence)[0] >= 1)) return security;
   const unknownFields = security.unknownFields.filter(field => field !== 'cannotSellAll');
   const complete = unknownFields.length === 0;
   return {
     ...security, complete, unknownFields, verdict: securityVerdict(security.fatal, complete),
-    standIns: { cannotSellAll: { distinctSellers24h } }
+    standIns: { cannotSellAll: evidence }
   };
 }
 
 /**
  * The token's secondary safety check from its recorded GoPlus response. On a
  * chain where GoPlus omits cannot_sell_all, at least one distinct seller in
- * AVE's 24-hour window (`distinctSellers24h`) stands in for it, recorded as
- * `security.standIns.cannotSellAll`; without one the field stays unknown.
+ * AVE's 24-hour window (`distinctSellers24h`) stands in for it, or, when AVE
+ * gave no count, at least one sell transaction in DexScreener's 24-hour window
+ * (`dexSells24h`). The stand-in is recorded as `security.standIns.cannotSellAll`;
+ * without one the field stays unknown.
  */
-export function aggregateSecondarySources({ chain, tokenAddress, sources = {}, distinctSellers24h = null }) {
+export function aggregateSecondarySources({ chain, tokenAddress, sources = {}, distinctSellers24h = null, dexSells24h = null }) {
   const normalizedChain = cleanString(chain, 24).toLowerCase();
   const goPlus = sourceResult(sources.goPlus);
-  const security = withSellerStandIn(goPlus.security, normalizedChain, distinctSellers24h);
+  const security = withSellerStandIn(goPlus.security, normalizedChain, sellEvidence(distinctSellers24h, dexSells24h));
   const complete = goPlus.source.status === 'OK' && security.complete === true;
   const collectedAt = sources.goPlus?.collectedAt;
   return {

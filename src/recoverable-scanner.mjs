@@ -112,7 +112,7 @@ function discoveryRows(discovery) {
 // DexScreener dates pools, not tokens, and keeps no source clock: the token's first pool's creation
 // stands in for launch time (age basis 'pool'; its deepest pool, shown, may be younger) and our read
 // time for the source clock. It has no holder count, taxes or distinct traders, so those stay
-// unknown; GoPlus checks taxes after the alert.
+// unknown; GoPlus checks taxes after the alert. Its 24-hour sell count is kept for that check.
 function promotedRows(discovery, chain) {
   const watch = discovery?.responses?.watch?.value;
   const markets = new Map((watch?.markets || []).map(market => [market.address, market]));
@@ -121,7 +121,7 @@ function promotedRows(discovery, chain) {
     price: market.priceUsd, market_cap: market.marketCap, liquidity: market.liquidity, holder_count: null, buy_tax: null, sell_tax: null,
     creation_timestamp: Math.floor(market.firstPairCreatedAt / 1000), launch_at: null, ageBasis: 'pool',
     pairAddress: market.pairAddress, poolCreatedAt: market.pairCreatedAt,
-    volume_5m: market.volume5m, swaps_5m: market.swaps5m, buys_5m: market.buys5m, sells_5m: market.sells5m,
+    volume_5m: market.volume5m, swaps_5m: market.swaps5m, buys_5m: market.buys5m, sells_5m: market.sells5m, sells_24h: market.sells24h,
     capturedAt: watch.capturedAt, sourceUpdatedAt: watch.capturedAt
   }));
 }
@@ -511,8 +511,10 @@ export class RecoverableScanner {
     const stored = this.store.readCandidate(current.chain, item.row.address);
     const token = stored || leadCandidate(item.row, item.screen, current.chain, null, now, settings);
     // Seller evidence comes only from this cycle's row: a stored token off the hot list has none.
+    // A promoted pool's row offers DexScreener's sell transactions instead of AVE's distinct sellers.
     const secondary = aggregateSecondarySources({ chain: current.chain, tokenAddress: token.address,
-      sources: current.partial.secondary?.sources || {}, distinctSellers24h: item.row.sellers_24h });
+      sources: current.partial.secondary?.sources || {}, distinctSellers24h: item.row.sellers_24h,
+      dexSells24h: item.row.marketProvider === 'DEXSCREENER' ? item.row.sells_24h : null });
     const supported = Object.values(secondary.sources).some(source => source?.status !== 'UNSUPPORTED');
     const vetoed = secondary.security?.verdict === 'FATAL';
     const secondaryReason = vetoed ? '第二安全源触发一票否决'
