@@ -10,6 +10,7 @@ Portable principles distilled from `AGENTS.md` and
 - Maximum soundness, minimum complexity.
 - Surface material ambiguity and tradeoffs rather than hiding them.
 - Avoid repetition, jargon, and over-engineering.
+- Do not seek for 100% realism! Learn the art of proper simplification! 
 
 ## Work Contract
 
