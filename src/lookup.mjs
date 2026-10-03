@@ -134,10 +134,13 @@ export function lookupVerified(record, now) {
 }
 
 // A finished run's effect on the veto: a fatal finding records one; only a
-// complete check free of fatal flags clears it; anything else keeps it.
+// complete check free of fatal flags clears it; anything else keeps it. A
+// stand-in is weaker than the finding it would overturn, so a check that used
+// one for a vetoed field never clears that veto.
 function nextVeto(previous, secondary) {
   const { security } = secondary;
   if (security.verdict === 'FATAL') return { checkedAt: secondary.checkedAt, fatal: security.fatal.map(({ field, reason }) => ({ field, reason })) };
+  if (previous?.fatal.some(({ field }) => Object.hasOwn(security.standIns || {}, field))) return previous;
   return secondary.sources.goPlus?.status === 'OK' && security.complete && security.verdict === 'NO_FATAL_FLAGS' ? null : previous;
 }
 

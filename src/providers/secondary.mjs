@@ -364,6 +364,10 @@ function findGoPlusRecord(payload, tokenAddress) {
   return null;
 }
 
+// An omitted risk flag is not evidence of safety: a check with any unknown field
+// stays UNKNOWN so callers can recheck instead of treating it as a clean bill.
+const securityVerdict = (fatal, complete) => fatal.length ? 'FATAL' : complete ? 'NO_FATAL_FLAGS' : 'UNKNOWN';
+
 function parseGoPlus(payload, { tokenAddress }) {
   if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
     const error = new Error('unexpected GoPlus JSON shape');
@@ -403,14 +407,12 @@ function parseGoPlus(payload, { tokenAddress }) {
   fields.buyTax = buyTax;
   fields.sellTax = sellTax;
   for (const field of taxBreaches(buyTax, sellTax, scannerSettings)) fatal.push({ field, reason: TAX_BREACH_REASONS[field] });
-  // An omitted risk flag is not evidence of safety. Keep the source incomplete
-  // so callers can recheck instead of treating an unknown field as a clean bill.
   const complete = unknownFields.length === 0;
   return {
     found: true,
     security: {
       complete,
-      verdict: fatal.length ? 'FATAL' : complete ? 'NO_FATAL_FLAGS' : 'UNKNOWN',
+      verdict: securityVerdict(fatal, complete),
       fatal,
       unknownFields,
       fields,
@@ -451,8 +453,7 @@ function withSellerStandIn(security, chain, distinctSellers24h) {
   const unknownFields = security.unknownFields.filter(field => field !== 'cannotSellAll');
   const complete = unknownFields.length === 0;
   return {
-    ...security, complete, unknownFields,
-    verdict: security.verdict === 'FATAL' ? 'FATAL' : complete ? 'NO_FATAL_FLAGS' : 'UNKNOWN',
+    ...security, complete, unknownFields, verdict: securityVerdict(security.fatal, complete),
     standIns: { cannotSellAll: { distinctSellers24h } }
   };
 }

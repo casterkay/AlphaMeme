@@ -379,6 +379,26 @@ describe('pasted contract-address lookup', () => {
     });
   });
 
+  it('never lets AVE sellers clear a veto GoPlus recorded on cannot_sell_all itself', async () => {
+    await withLookups('26832', async ({ storage, tenantId, net, connect, paste, step, lookups, clock }) => {
+      await connect();
+      const state = () => safetyState(storage, tenantId, 'arc', TOKEN, clock.now());
+      net.knobs.ave = (address, apiChain) => json({ status: 1, data: { pairs: [], token: { token: address, chain: apiChain, symbol: 'LOOK', current_price_usd: '0.0012', token_sellers_24h: 1 } } });
+      net.knobs.goPlus = { ...CLEAN, cannot_sell_all: '1' };
+      await paste(TOKEN);for (let index = 0; index < 2; index++) await step();
+      expect(state()).toBe('VETOED');
+      clock.advance(LOOKUP_SETTINGS.reuseMs);
+      net.knobs.goPlus = { ...CLEAN, cannot_sell_all: undefined };
+      await paste(TOKEN);for (let index = 0; index < 2; index++) await step();
+      expect([lookups()[0].state, lookups()[0].secondary.security.standIns, state()]).toEqual(['DONE', { cannotSellAll: { distinctSellers24h: 1 } }, 'VETOED']);
+      // GoPlus's own clean answer still clears it.
+      clock.advance(LOOKUP_SETTINGS.reuseMs);
+      net.knobs.goPlus = CLEAN;
+      await paste(TOKEN);for (let index = 0; index < 2; index++) await step();
+      expect([lookups()[0].veto, state()]).toEqual([null, 'VERIFIED']);
+    });
+  });
+
   it('keeps a recorded veto through a rerun until a complete clean GoPlus check replaces it', async () => {
     await withLookups('26817', async ({ storage, tenantId, net, connect, paste, step, lookups, lastText, clock }) => {
       await connect();
