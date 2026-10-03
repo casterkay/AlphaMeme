@@ -55,6 +55,7 @@ def temporal_split(data: pd.DataFrame) -> tuple[pd.Series, dict[str, Any]]:
 def binary_metrics(y: np.ndarray, scores: np.ndarray, threshold: float) -> dict[str, Any]:
     predicted = scores >= threshold
     return {'threshold': float(threshold), 'selected': int(predicted.sum()),
+            'accuracy': float((predicted == y).mean()),
             'precision': float(precision_score(y, predicted, zero_division=0)),
             'recall': float(recall_score(y, predicted, zero_division=0)),
             'f1': float(f1_score(y, predicted, zero_division=0)),
@@ -223,9 +224,9 @@ def report(results: dict[str, Any]) -> str:
     text += 'Labels: positive net P&L (`netUsd > 0`) and loss greater than 5% of the $2 stake (`netUsd < -0.10`). Labels include all modeled costs. Only entered positions are trained; never-funded and failed-entry records are excluded. Main-case labels use the existing unknown-honeypot-clear assumption. Current security, addresses, exit outcomes and future observations are excluded from model inputs.\n\n'
     text += f"Only +4 blocks / 40% at 2.5x is evaluated, one row per token. Token-grouped chronological 60/20/20 split with a {split['purgeSeconds']}-second holding-horizon purge before validation/test. Rows: {split['rows']}; tokens: {split['tokens']}. Thresholds and simple rules are selected using validation only; test data is untouched until evaluation. All model inputs are chain observations at entry.\n\n"
     text += 'Two modest LightGBM models (15 leaves, minimum 100 rows/leaf, learning rate 0.03, L2=5, up to 1,000 rounds with 50-round early stopping); no test-driven tuning or class reweighting.\n\n'
-    text += '| Model | Test prevalence | ROC AUC | Average precision | Rounds |\n|---|---:|---:|---:|---:|\n'
+    text += '| Model | Test prevalence | Accuracy at 0.5 | ROC AUC | Average precision | Rounds |\n|---|---:|---:|---:|---:|---:|\n'
     for name, model in results['models'].items():
-        text += f"| {name} | {pct(model['testPrevalence'])} | {model['rocAuc']:.3f} | {model['averagePrecision']:.3f} | {model['iterations']} |\n"
+        text += f"| {name} | {pct(model['testPrevalence'])} | {pct(model['operatingPoints']['default']['test']['accuracy'])} | {model['rocAuc']:.3f} | {model['averagePrecision']:.3f} | {model['iterations']} |\n"
     text += '\n## Held-out operating points\n\nFor the positive model, keep predicted positives; for the loss model, reject predicted positives. Target names describe validation targets, not guaranteed test performance. Precision/recall refer to the model label. Loss dollars include all negative positions; heavy losses mean at least $1 lost.\n\n'
     text += '| Model / validation target | Threshold | Test precision | Test recall | Kept entries | Kept P&L / baseline | Kept P&L unknown-blocked | Failed exits caught | Heavy losses caught | Loss dollars caught | Winners rejected |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n'
     for name, model in results['models'].items():
