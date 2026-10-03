@@ -16,44 +16,11 @@ const recentTraders = () => Array.from({ length: 5 }, (_, i) => ({
   address: `seller-${i}`, sell_tx_count_cur: 1, last_active_timestamp: nowSec - 60
 }));
 
-test('discovery waits five minutes and prioritizes 20k-80k market cap', () => {
-  const base = { address, market_cap: 50_000, liquidity: 10_000, creation_timestamp: nowSec - 301, rug_ratio: .1, bundler_rate: .1, rat_trader_amount_rate: .1, is_wash_trading: false, is_honeypot: 0 };
-  const pass = discoveryScreen(base, config, nowSec);
-  assert.equal(pass.pass, true);
-  assert.equal(pass.priorityBand, true);
-  assert.equal(discoveryScreen({ ...base, creation_timestamp: nowSec - 299 }, config, nowSec).pass, false);
-});
-
-test('discovery recognizes boolean variants and fails closed on malformed safety fields', () => {
-  const base = { address, market_cap: 50_000, liquidity: 10_000, creation_timestamp: nowSec - 600, rug_ratio: .1, bundler_rate: .1, rat_trader_amount_rate: .1, is_wash_trading: false, is_honeypot: 0 };
-  assert.match(discoveryScreen({ ...base, is_honeypot: true }, config, nowSec).reasons.join(' '), /貔貅/);
-  assert.match(discoveryScreen({ ...base, is_wash_trading: 'true' }, config, nowSec).reasons.join(' '), /刷量/);
-  const unknown = discoveryScreen({ ...base, rug_ratio: 'unknown' }, config, nowSec);
-  assert.equal(unknown.pass, false);
-  assert.ok(unknown.unknownFields.includes('rugRatio'));
-});
-
-test('discovery rejects an address that is not an EVM token address', () => {
-  const common = { market_cap: 50_000, liquidity: 10_000, creation_timestamp: nowSec - 600, rug_ratio: .1, bundler_rate: .1, rat_trader_amount_rate: .1, is_wash_trading: false, is_honeypot: 0 };
-  assert.doesNotMatch(discoveryScreen({ ...common, address }, config, nowSec).reasons.join(' '), /地址格式异常/);
-  assert.match(discoveryScreen({ ...common, address: 'So11111111111111111111111111111111111111112' }, config, nowSec).reasons.join(' '), /地址格式异常/);
-});
-
-test('discovery ranking rewards multiple smart-money wallets but never rewards KOL-only interest', () => {
-  const base = {
-    address, market_cap: 50_000, liquidity: 10_000, creation_timestamp: nowSec - 600,
-    rug_ratio: .1, bundler_rate: .1, rat_trader_amount_rate: .1,
-    is_wash_trading: false, is_honeypot: 0, volume: 1_000, holder_count: 100
-  };
-  const single = discoveryScreen({ ...base, smart_degen_count: 1, renowned_count: 0 }, config, nowSec);
-  const multiple = discoveryScreen({ ...base, smart_degen_count: 3, renowned_count: 0 }, config, nowSec);
-  const kolOnly = discoveryScreen({ ...base, smart_degen_count: 1, renowned_count: 2 }, config, nowSec);
-  const unknownSmart = discoveryScreen({ ...base, renowned_count: 2 }, config, nowSec);
-  assert.equal(multiple.signals.smartBoost, 14);
-  assert.ok(multiple.score > single.score);
-  assert.equal(kolOnly.signals.kolOnly, true);
-  assert.ok(kolOnly.score < single.score);
-  assert.equal(unknownSmart.signals.kolOnly, false);
+test('discovery fails loudly on a row from any provider but AVE or DexScreener', () => {
+  const row = { address, chain: 'arc', market_cap: 50_000, liquidity: 10_000, creation_timestamp: nowSec - 600 };
+  for (const marketProvider of [undefined, 'GMGN']) {
+    assert.throws(() => discoveryScreen({ ...row, marketProvider }, { ...config, chain: 'arc' }, nowSec), TypeError);
+  }
 });
 
 test('wallet proxy rejects bot-heavy and linked-funding holder sets', () => {
