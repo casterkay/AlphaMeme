@@ -19,6 +19,8 @@ node scripts/arc-backtest/run.mjs \
   --output .runtime/arc-backtest/replay
 ```
 
+Trailing stop: `--trailing-ath-fraction 0.9` (default). Use `0.8` or `0.85` for a wider stop, retaining activation after take-profit and ATH since entry.
+
 Model inputs: `--slippage-bps 50`, `--swap-gas-units 250000`, `--approval-gas-units 50000`. Gas price comes from the dataset's sampled Arc header. Slippage is an adverse fill haircut, separate from price impact and pool/token fees. A failed exit pays gas and writes off remaining inventory after one attempt. Active-range virtual reserves approximate concentrated-liquidity execution; this is not a forked-chain emulator.
 
 Outputs: generated Markdown report, CSV comparison matrix, summary JSON and per-token fill ledger. Missing current security/taxes are retained with explicit optimistic/conservative scenarios, rather than dropping tokens. LP locking is not an exit rule.

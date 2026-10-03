@@ -16,6 +16,7 @@ const { values } = parseArgs({ options: {
   'approval-gas-units': { type: 'string', default: '50000' },
   delays: { type: 'string', default: DELAYS.join(',') },
   'take-profit-multiples': { type: 'string', default: POLICIES.map(policy => policy.multiple).join(',') },
+  'trailing-ath-fraction': { type: 'string', default: '0.9' },
   'capture-entry-features': { type: 'boolean', default: false }, 'features-file': { type: 'string' }
 } });
 const number = (name, min, max) => {
@@ -27,8 +28,10 @@ const output = resolve(values.output), cache = resolve(values.cache);
 const delays = [...new Set(values.delays.split(',').map(Number))];
 if (!delays.length || delays.some(delay => !Number.isInteger(delay) || delay < 1 || delay > 20)) throw new Error('--delays must contain integers between 1 and 20');
 const multiples = [...new Set(values['take-profit-multiples'].split(',').map(Number))];
-const policies = multiples.map(multiple => POLICIES.find(policy => policy.multiple === multiple));
-if (!policies.length || policies.some(policy => !policy)) throw new Error('--take-profit-multiples must select 1.6, 2 or 2.5');
+const selectedPolicies = multiples.map(multiple => POLICIES.find(policy => policy.multiple === multiple));
+if (!selectedPolicies.length || selectedPolicies.some(policy => !policy)) throw new Error('--take-profit-multiples must select 1.6, 2 or 2.5');
+const trailingAthFraction = number('trailing-ath-fraction', 0.01, 1);
+const policies = selectedPolicies.map(policy => ({ ...policy, trailingAthFraction }));
 await mkdir(output, { recursive: true });
 const progress = value => process.stderr.write(`${JSON.stringify(value)}\n`);
 let variables = {};
@@ -100,7 +103,7 @@ const report = `# Arc immediate-entry baseline backtest\n\nGenerated: ${summary.
   `Scope: ${dataset.manifest.scope}. ${dataset.pools.length} distinct token/pool records; ${dataset.manifest.fundedPools} funded and ${dataset.manifest.noFundedPools} never funded during capture.\n\n` +
   `## Execution model\n\n` +
   `- One $2 purchase per token, at the end of block ${delays.map(delay => `+${delay}`).join('/')} after first active liquidity. No security or liquidity-size entry filter.\n` +
-  `- Independent policies: ${policies.map(policy => `${policy.fraction * 100}% of original quantity at ${policy.multiple}x`).join('; ')}. After that fill, sell the remainder at 90% of ATH since entry. Hard stop at 50% of average entry cost per received token; time stop at 20 minutes after entry.\n` +
+  `- Independent policies: ${policies.map(policy => `${policy.fraction * 100}% of original quantity at ${policy.multiple}x`).join('; ')}. After that fill, sell the remainder at ${trailingAthFraction * 100}% of ATH since entry. Hard stop at 50% of average entry cost per received token; time stop at 20 minutes after entry.\n` +
   `- Observe ordered pool events; fills use the state at the end of the next block. A full exit takes precedence over a partial take-profit when signals coincide. The timer runs without swaps.\n` +
   `- Active-range virtual reserves price the $2 buy and actual sell quantity, including pool fee, price impact, current token taxes and ${fixed(costs.slippageBps / 100)}% adverse slippage on each fill. Historical markets do not react to our trades; no complete tick-crossing or hook emulator.\n` +
   `- Before the first dynamic-fee Swap, use that pool's first observed ordinary fee; when none exists, assume ${fixed(costs.dynamicFeePips / 10000)}%. Current token security/taxes are applied throughout history.\n` +
@@ -115,7 +118,7 @@ const report = `# Arc immediate-entry baseline backtest\n\nGenerated: ${summary.
   `\n\n## Exit reasons\n\n| Delay | Policy | Reasons (counts) |\n|---|---|---|\n` +
   rows.map(row => `| ${row.delayBlocks} | ${row.policy} | ${Object.entries(row.exitReasons).map(([reason, count]) => `${reason}: ${count}`).join(', ')} |`).join('\n') +
   (entryFeatures.length ? `\n\n## Entry-time features\n\n${entryFeatures.length} entry snapshots in entry-features.json, joined to trades by entryFeatureKey (token:delayBlocks). Features use only chain observations through their entry block. Missing fields remain null. Current security snapshots model trading taxes and sale success; they do not screen entries or populate historical entry features.\n\n| Field | Available | Missing |\n|---|---:|---:|\n${Object.entries(featureCoverage).map(([name, coverage]) => `| ${name} | ${coverage.available} | ${coverage.missing} |`).join('\n')}\n` : '') +
-  `\n\n## Reproduction\n\nRun \`node scripts/arc-backtest/run.mjs --dataset DATASET.json --security-file SECURITY.json --delays ${delays.join(',')} --take-profit-multiples ${multiples.join(',')}${entryFeatures.length ? ' --features-file ENTRY_FEATURES.json' : ''} --output OUTPUT\` to replay without network calls.\n\nOutputs: summary.json, matrix.csv and trades.json (every simulated buy, sell and failed exit), plus entry-features.json when requested. Raw RPC chunks and current security snapshots are resumable local evidence, kept outside Git.\n`;
+  `\n\n## Reproduction\n\nRun \`node scripts/arc-backtest/run.mjs --dataset DATASET.json --security-file SECURITY.json --delays ${delays.join(',')} --take-profit-multiples ${multiples.join(',')} --trailing-ath-fraction ${trailingAthFraction}${entryFeatures.length ? ' --features-file ENTRY_FEATURES.json' : ''} --output OUTPUT\` to replay without network calls.\n\nOutputs: summary.json, matrix.csv and trades.json (every simulated buy, sell and failed exit), plus entry-features.json when requested. Raw RPC chunks and current security snapshots are resumable local evidence, kept outside Git.\n`;
 await writeFile(join(output, 'report.md'), report);
 if (values.report) {
   await writeFile(resolve(values.report), report);
