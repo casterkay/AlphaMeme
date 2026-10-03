@@ -37,36 +37,42 @@ function mergePools(pools, newPools, now) {
 const traded = market => (market.buys5m ?? 0) + (market.sells5m ?? 0) > 0 || market.volume5m > 0;
 
 /**
- * Tokens worth screening: listed on DexScreener with market cap, volume, liquidity, buys and age (from the
- * token's first pool) inside the thresholds, not excluded (on this cycle's hot list, or vetoed), and not
- * passed within REPROMOTE_MS. At most two: those never screened first, so a token that keeps failing
- * cannot hold a slot a new one needs, then busiest first.
+ * Tokens worth screening this cycle. `promotable`: listed on DexScreener with market cap, volume, liquidity,
+ * buys and age (from the token's first pool) inside the thresholds, and not excluded (on this cycle's hot
+ * list, or vetoed). `promoted`: at most two of those not passed within REPROMOTE_MS, those never screened
+ * first, so a token that keeps failing cannot hold a slot a new one needs, then busiest first.
  */
 export function promotions(state, markets, { now, settings, excluded }) {
   const pools = new Map(state.pools.map(pool => [pool.token, pool]));
   const screened = market => pools.get(market.address)?.promotedAt !== undefined;
-  return markets.filter(market => {
+  const promotable = markets.filter(market => !excluded.has(market.address)
+    && market.marketCap >= settings.discoveryMinMarketCap && market.marketCap <= settings.discoveryMaxMarketCap
+    && market.volume5m >= settings.onchainMinVolume5m && market.liquidity >= settings.minLiquidity && (market.buys5m ?? 0) >= settings.onchainMinBuys5m
+    // The screen rejects a token younger than minAgeSec, so promoting one earlier would only spend a slot.
+    && now - market.firstPairCreatedAt >= settings.minAgeSec * 1000);
+  const promoted = promotable.filter(market => {
     const pool = pools.get(market.address);
-    return !excluded.has(market.address) && !(pool?.passed === true && pool.promotedAt > now - REPROMOTE_MS)
-      && market.marketCap >= settings.discoveryMinMarketCap && market.marketCap <= settings.discoveryMaxMarketCap
-      && market.volume5m >= settings.onchainMinVolume5m && market.liquidity >= settings.minLiquidity && (market.buys5m ?? 0) >= settings.onchainMinBuys5m
-      // The screen rejects a token younger than minAgeSec, so promoting one earlier would only spend a slot.
-      && now - market.firstPairCreatedAt >= settings.minAgeSec * 1000;
-  }).sort((a, b) => screened(a) - screened(b) || b.volume5m - a.volume5m).slice(0, MAX_PROMOTIONS_PER_CYCLE).map(market => market.address);
+    return !(pool?.passed === true && pool.promotedAt > now - REPROMOTE_MS);
+  }).sort((a, b) => screened(a) - screened(b) || b.volume5m - a.volume5m).slice(0, MAX_PROMOTIONS_PER_CYCLE);
+  return { promotable: promotable.map(market => market.address), promoted: promoted.map(market => market.address) };
 }
 
 /**
- * The watchlist after one cycle: new pools added, checked ones updated, promoted ones stamped with
- * whether they `passed` the screen, and expired ones dropped: older than WATCH_MS, or at their last read
- * unlisted for UNLISTED_MS or untraded for IDLE_MS.
+ * The watchlist after one cycle: new pools added, checked ones updated, and expired ones dropped: older than
+ * WATCH_MS, or at their last read unlisted for UNLISTED_MS or untraded for IDLE_MS. A token `screened` this
+ * cycle (its screen's reasons, none when it passed) is stamped as promoted, with whether it passed. Its first
+ * listing, first promotable cycle and first screen with its reasons are stamped once, when no earlier listing
+ * or screen is on record, so a pool listed or screened before these stamps existed leaves them unknown.
  */
-export function nextWatchState(state, { newPools = null, checked = [], markets = [], promoted = [], passed = [], now }) {
+export function nextWatchState(state, { newPools = null, checked = [], markets = [], promotable = [], screened = new Map(), now }) {
   const found = new Map(markets.map(market => [market.address, market]));
   const pools = mergePools(state.pools, newPools?.pools ?? [], now).map(pool => {
     if (!checked.includes(pool.token)) return pool;
-    const market = found.get(pool.token);
-    return { ...pool, checkedAt: now, ...(market ? { listedAt: now } : {}), ...(market && traded(market) ? { tradedAt: now } : {}),
-      ...(promoted.includes(pool.token) ? { promotedAt: now, passed: passed.includes(pool.token) } : {}) };
+    const market = found.get(pool.token), reasons = screened.get(pool.token), first = pool.promotedAt === undefined;
+    return { ...pool, checkedAt: now, ...(market ? { listedAt: now } : {}), ...(market && pool.listedAt === undefined ? { firstListedAt: now } : {}),
+      ...(market && traded(market) ? { tradedAt: now } : {}),
+      ...(first && pool.firstPromotableAt === undefined && promotable.includes(pool.token) ? { firstPromotableAt: now } : {}),
+      ...(reasons ? { promotedAt: now, passed: reasons.length === 0, ...(first ? { firstScreenedAt: now, firstScreenReasons: reasons } : {}) } : {}) };
   }).filter(pool => {
     // Unlisted and idle are judged at the pool's last read: a pool left unread has given no evidence of either.
     const readAt = pool.checkedAt ?? pool.firstSeenAt;

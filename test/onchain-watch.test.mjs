@@ -7,7 +7,7 @@ const NOW = 1_800_000_000_000, MINUTE = 60_000;
 const token = index => `0x${index.toString(16).padStart(40, '0')}`;
 const pool = (index, changes = {}) => ({ token: token(index), pool: `0x${'9'.repeat(64)}`, venue: 'Uniswap v4', firstSeenAt: NOW - index * MINUTE, ...changes });
 const market = (index, changes = {}) => ({ address: token(index), marketCap: 50_000, liquidity: 20_000, volume5m: 2_000, buys5m: 20, sells5m: 5, pairCreatedAt: NOW - 30 * MINUTE, firstPairCreatedAt: NOW - 30 * MINUTE, ...changes });
-const promote = (state, markets, excluded = []) => promotions(state, markets, { now: NOW, settings: scannerSettings, excluded: new Set(excluded) });
+const promote = (state, markets, excluded = []) => promotions(state, markets, { now: NOW, settings: scannerSettings, excluded: new Set(excluded) }).promoted;
 
 test('the watch checks the tokens checked longest ago first, newest pools first among equals', () => {
   const state = { cursor: 1, pools: [pool(1, { checkedAt: NOW - MINUTE }), pool(2), pool(3, { checkedAt: NOW - 2 * MINUTE })] };
@@ -58,6 +58,8 @@ test('tokens never screened take the promotion slots ahead of busier ones that f
   const markets = [market(1, { volume5m: 9_000 }), market(2, { volume5m: 8_000 }), market(3, { volume5m: 500 }), market(4, { volume5m: 400 })];
   assert.deepEqual(promote(state, markets), [token(3), token(4)]);
   assert.deepEqual(promote(state, markets.slice(0, 3)), [token(3), token(1)], 'then the busiest failed one');
+  assert.deepEqual(promotions(state, markets, { now: NOW, settings: scannerSettings, excluded: new Set() }).promotable, markets.map(item => item.address),
+    'promotable whether or not a slot is left');
 });
 
 test('the watchlist adds new pools, records what a check found, and drops unlisted, idle and old pools', () => {
@@ -70,12 +72,28 @@ test('the watchlist adds new pools, records what a check found, and drops unlist
     pool(6, { firstSeenAt: NOW - 5 * MINUTE })
   ] };
   const next = nextWatchState(state, { newPools: { toBlock: 200, pools: [{ token: token(7), pool: 'p', venue: 'Uniswap v3' }, { token: token(6), pool: 'q', venue: 'x' }] },
-    checked: [token(5), token(6)], markets: [market(5), market(6, { volume5m: 0, buys5m: 0, sells5m: 0 })], promoted: [token(5)], passed: [], now: NOW });
+    checked: [token(5), token(6)], markets: [market(5), market(6, { volume5m: 0, buys5m: 0, sells5m: 0 })], screened: new Map([[token(5), ['NO_SELLS_5M']]]), now: NOW });
   assert.equal(next.cursor, 200);
   assert.deepEqual(next.pools.map(item => item.token), [token(7), token(6), token(5)], 'unlisted (1, 2), idle (3) and old (4) pools leave; new and checked ones stay');
   assert.deepEqual(next.pools[0], { token: token(7), pool: 'p', venue: 'Uniswap v3', firstSeenAt: NOW });
-  assert.deepEqual(next.pools[1], { ...pool(6, { firstSeenAt: NOW - 5 * MINUTE }), checkedAt: NOW, listedAt: NOW }, 'listed but not traded; its first pool is kept');
-  assert.deepEqual(next.pools[2], { ...state.pools[4], checkedAt: NOW, listedAt: NOW, tradedAt: NOW, promotedAt: NOW, passed: false });
+  assert.deepEqual(next.pools[1], { ...pool(6, { firstSeenAt: NOW - 5 * MINUTE }), checkedAt: NOW, listedAt: NOW, firstListedAt: NOW }, 'listed but not traded; its first pool is kept');
+  assert.deepEqual(next.pools[2], { ...state.pools[4], checkedAt: NOW, listedAt: NOW, tradedAt: NOW, promotedAt: NOW, passed: false,
+    firstScreenedAt: NOW, firstScreenReasons: ['NO_SELLS_5M'] }, 'listed before, so its first listing stays unknown');
+});
+
+test('a pool\'s first listing, first promotable cycle and first screen are stamped once, and only when none came before', () => {
+  const step = (state, now, changes) => nextWatchState(state, { checked: [token(1)], markets: [market(1)], now, ...changes });
+  const seen = { cursor: 1, pools: [pool(1, { firstSeenAt: NOW - MINUTE })] };
+  const listed = step(seen, NOW, {});
+  const promotable = step(listed, NOW + MINUTE, { promotable: [token(1)] });
+  const failed = step(promotable, NOW + 2 * MINUTE, { promotable: [token(1)], screened: new Map([[token(1), ['NO_SELLS_5M']]]) });
+  const passed = step(failed, NOW + 3 * MINUTE, { promotable: [token(1)], screened: new Map([[token(1), []]]) });
+  const { firstListedAt, firstPromotableAt, firstScreenedAt, firstScreenReasons, promotedAt } = passed.pools[0];
+  assert.deepEqual([firstListedAt, firstPromotableAt, firstScreenedAt, firstScreenReasons, promotedAt, passed.pools[0].passed],
+    [NOW, NOW + MINUTE, NOW + 2 * MINUTE, ['NO_SELLS_5M'], NOW + 3 * MINUTE, true]);
+  const legacy = step({ cursor: 1, pools: [pool(1, { listedAt: NOW - MINUTE, promotedAt: NOW - MINUTE, passed: false })] }, NOW,
+    { promotable: [token(1)], screened: new Map([[token(1), []]]) }).pools[0];
+  assert.deepEqual(['firstListedAt', 'firstPromotableAt', 'firstScreenedAt'].filter(key => Object.hasOwn(legacy, key)), [], 'a pool listed and screened before');
 });
 
 test('a pool left unread while young pools fill every batch is not dropped as unlisted or idle', () => {

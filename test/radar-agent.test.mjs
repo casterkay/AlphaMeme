@@ -527,6 +527,43 @@ test('more than one batch of young pools is read every cycle in parallel request
   assert.deepEqual(radarFixture.state('runtime.sourceHealth').discovery.watch, { ok: true, count: 40, requests: 2, failedRequests: 1 });
 });
 
+const PIPELINE = ['launchedAt', 'logSeenAt', 'listedAt', 'promotableAt', 'screenedAt', 'leadCreatedAt'];
+const monotonic = stages => PIPELINE.filter(stage => Object.hasOwn(stages, stage)).every((stage, index, known) => index === 0 || stages[known[index - 1]] <= stages[stage]);
+
+test('a promoted lead records each stage from its launch to its GoPlus check once, in order, and keeps them', async () => {
+  const radarFixture = radar({ chain: 'arc', onchain: true });
+  radarFixture.chainLogs = { newPools: newPool(A) };
+  const tick = scannerSettings.scanIntervalMs;
+  for (const [cycle, markets] of [[1, []], [2, [busyMarket(A, { volume5m: 100 })]], [3, [busyMarket(A, { sells5m: 0 })]], [4, [busyMarket(A)]]]) {
+    radarFixture.clock.now = NOW + (cycle - 1) * tick;
+    radarFixture.dexMarkets = async () => ({ capturedAt: radarFixture.clock.now, markets });
+    await radarFixture.runCycle(`cycle-stages-${cycle}`);
+  }
+  const recorded = radarFixture.candidate(A).metadata;
+  assert.deepEqual(recorded.stages, { launchedAt: NOW - 30 * MINUTE, logSeenAt: NOW, listedAt: NOW + tick, promotableAt: NOW + 2 * tick,
+    screenedAt: NOW + 2 * tick, leadCreatedAt: NOW + 3 * tick, goPlusCompleteAt: NOW + 3 * tick });
+  assert.deepEqual(recorded.firstScreenReasons, ['NO_SELLS_5M'], 'its first screen and that screen\'s result');
+  assert.equal(recorded.launchedAtBasis, 'firstPool', 'the token\'s first pool on DexScreener, not a block time');
+  assert.ok(monotonic(recorded.stages));
+
+  radarFixture.clock.now = NOW + 6 * MINUTE;
+  await radarFixture.runCycle('cycle-stages-5');
+  const refreshed = radarFixture.candidate(A).metadata;
+  assert.deepEqual([refreshed.stages, refreshed.launchedAtBasis, refreshed.firstScreenReasons], [recorded.stages, 'firstPool', ['NO_SELLS_5M']],
+    'a refreshed lead keeps its stage record');
+});
+
+test('a hot-list lead records the stages it passed and leaves the watch\'s unknown, never zero', async () => {
+  const radarFixture = radar();
+  radarFixture.hotList = [radarFixture.quote(A, { launchedAgoMs: 2 * MINUTE })];
+  await radarFixture.runCycle('cycle-stages-hot');
+  const { stages, firstScreenReasons, launchedAtBasis } = radarFixture.candidate(A).metadata;
+  assert.equal(launchedAtBasis, 'launch');
+  assert.deepEqual(stages, { launchedAt: NOW - 2 * MINUTE, screenedAt: NOW, leadCreatedAt: NOW, goPlusCompleteAt: NOW });
+  assert.deepEqual(firstScreenReasons, []);
+  assert.ok(monotonic(stages));
+});
+
 test('the log cursor advances only when the screen commits, so an interrupted cycle replays its range', async () => {
   const radarFixture = radar({ chain: 'arc', onchain: true });
   radarFixture.chainLogs = { newPools: newPool(A) };
