@@ -1,0 +1,44 @@
+test/ave-provider.test.mjs
+  s_03ebd0efd53ab5::t_05107ccdab9629 105-112
+src/lookup.mjs
+  s_03ebd0efd53ab5::t_3b288490b6a9d9 150,227
+  s_03ebd0efd53ab5::t_fe67459841f54c 13,137,144
+src/providers/secondary.mjs
+  s_03ebd0efd53ab5::t_3b288490b6a9d9 440-467,469-470,476,479
+src/bot/panels.mjs
+  s_03ebd0efd53ab5::t_20347471ed0fd2 95-96,184
+  s_03ebd0efd53ab5::t_7dc49bf157ca39 123-124
+test/secondary.test.mjs
+  s_03ebd0efd53ab5::t_b20b4525e0b82b 4,236-258
+  s_03ebd0efd53ab5::t_015a65639733e9 259
+src/providers/ave.mjs
+  s_03ebd0efd53ab5::t_3b288490b6a9d9 119,135-136,223-224
+test/telegram-panels.test.mjs
+  s_03ebd0efd53ab5::t_7dc49bf157ca39 268-275,277-282
+  s_03ebd0efd53ab5::t_9a866328896ea4 276
+test/radar-agent.test.mjs
+  s_03ebd0efd53ab5::t_b32d91ddfc68d9 439-451
+  s_03ebd0efd53ab5::t_9e4179eb3d4169 10
+workers/lookup.runtime.mjs
+  s_03ebd0efd53ab5::t_5c517dc1206e95 365-381
+src/recoverable-scanner.mjs
+  s_03ebd0efd53ab5::t_3b288490b6a9d9 494-496
+src/render/whitelist.mjs
+  s_03ebd0efd53ab5::t_20347471ed0fd2 81-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0e81eb957948ed9a295b6ed8b180e9dc92eebe13",
+  "prompts": {},
+  "sessions": {
+    "s_03ebd0efd53ab5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34373ce1-9e55-4e5c-9162-cf40c8df360e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
