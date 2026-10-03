@@ -1,0 +1,27 @@
+scripts/arc-backtest/security.mjs
+  s_02320cd7492a13::t_957062943a13b6 25,27,41
+  s_02320cd7492a13::t_dac12ba4866604 48
+scripts/arc-backtest/replay.mjs
+  s_02320cd7492a13::t_be246215c0425a 88-91
+test/arc-backtest-replay.test.mjs
+  s_02320cd7492a13::t_b99e68501fcad6 60-68
+test/arc-backtest-security.test.mjs
+  s_02320cd7492a13::t_2f27f4fa4fced9 7,34-48
+  s_02320cd7492a13::t_3e581bc13f7c3b 49-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "66ed1594890c96dfc6f38b3bd511a491a83bec02",
+  "prompts": {},
+  "sessions": {
+    "s_02320cd7492a13": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a100aa-b911-7302-bef8-65c9aa4a5665",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
