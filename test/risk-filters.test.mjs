@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chartRiskScreen } from '../src/scoring/chart-risk.mjs';
 import { scannerSettings as config } from '../src/scanner-settings.mjs';
-import { deepScreen, knownRiskReasons, discoveryScreen, observeFiveMinutes } from '../src/scoring/index.mjs';
+import { deepScreen, observeFiveMinutes } from '../src/scoring/index.mjs';
+import { discoveryScreen } from '../src/scoring/screen.mjs';
 
 const now = 1_800_000_000_000, address = '0x' + 'a'.repeat(40);
 const series = (closes, at = now) => closes.map((close, i) => {
@@ -12,9 +13,8 @@ const series = (closes, at = now) => closes.map((close, i) => {
 });
 const pump = at => series([1.3776, 1.38, 1.38, 1.39, 1.39, 1.39, 1.40, 1.40, 1.40], at);
 const dump = at => series([1, .65, .35, .18, .18, .18, .18, .18, .18], at);
-const discovery = at => ({ address, chain: 'bsc', marketProvider: 'AVE', market_cap: 50000, liquidity: 12000,
-  creation_timestamp: at / 1000 - 600, rug_ratio: .1, bundler_rate: .05,
-  rat_trader_amount_rate: .05, is_wash_trading: false, is_honeypot: false });
+const discovery = at => ({ address, chain: 'bsc', marketProvider: 'AVE', price: .001, market_cap: 50000, liquidity: 12000,
+  volume_5m: 2000, launch_at: at / 1000 - 600, capturedAt: at, sourceUpdatedAt: at });
 
 test('observed early pump and collapse are rejected even when the last five bars look normal', () => {
   for (const [bars, code] of [[pump(now), 'VERTICAL_PLATEAU'], [dump(now), 'SUSTAINED_COLLAPSE']]) {
@@ -58,12 +58,11 @@ test('DEV exit labels cannot override positive holdings or fill a missing balanc
   }
 });
 
-test('discovery screening filters known low LP, high taxes, DEV and explicit zero 5m volume', () => {
-  for (const fields of [{ liquidity: 2_900 }, { buy_tax: '10%', sell_tax: '15%' },
-    { dev_team_hold_rate: .0803 }, { creator_balance_rate: .08 }, { volume_5m: 0 }]) {
-    const row = { ...discovery(now), ...fields };
-    const [reason] = knownRiskReasons(row, { ...config, strictLiquidity: config.minLiquidity });
-    assert.ok(reason);
-    assert.ok(discoveryScreen(row, { ...config, chain: 'bsc' }, now / 1000).reasons.includes(reason));
+test('discovery screening drops known low LP and high taxes, and holds back explicit zero 5m volume', () => {
+  assert.equal(discoveryScreen(discovery(now), { ...config, chain: 'bsc' }, now / 1000).pass, true);
+  for (const [fields, rule, verdict, decision] of [[{ liquidity: 2_900 }, 'LIQUIDITY_TOO_LOW', 'HIT', 'DROP'],
+    [{ buy_tax: '10%', sell_tax: '15%' }, 'TAX_TOO_HIGH', 'HIT', 'DROP'], [{ volume_5m: 0 }, 'VOLUME_5M_POSITIVE', 'HIT', 'UNDECIDED']]) {
+    const screen = discoveryScreen({ ...discovery(now), ...fields }, { ...config, chain: 'bsc' }, now / 1000);
+    assert.deepEqual([screen.verdicts[rule], screen.decision, screen.reasons], [verdict, decision, [rule]]);
   }
 });
