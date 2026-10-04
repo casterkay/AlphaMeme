@@ -778,6 +778,38 @@ test('a check records the shadow audit with the lead, and its outcome keeps the 
   assert.deepEqual(after.cohortMetadata.audit, audit, 'the outcome keeps the audit of its first answered check');
 });
 
+test('the creator ledger keeps one row per checked token and counts the creator\'s launches in the 24 hours up to each one', async () => {
+  // TART's record names one creator for every token; one launch in a day is the limit here.
+  const radarFixture = radar({ settings: { maxCreatorLaunches24h: 1 } });
+  radarFixture.secondary = new SecondaryValidator({ fetchImpl: async url => Response.json(goPlusRecordFor(new URL(url).searchParams.get('contract_addresses'))) });
+  const ledger = () => radarFixture.storage.sql.exec('SELECT address, launched_at, first_seen_at FROM creator_launches ORDER BY first_seen_at').toArray()
+    .map(row => [row.address, row.launched_at, row.first_seen_at]);
+  const checkAt = async (token, at, launchedAgoMs) => {
+    radarFixture.clock.now = at;
+    radarFixture.hotList = [radarFixture.quote(token, { launchedAgoMs })];
+    await radarFixture.runCycle(`cycle-ledger-${token}-${at}`);
+    const { verdicts, evidence } = radarFixture.candidate(token).secondary.audit;
+    return [verdicts.CREATOR_LAUNCHES_24H, evidence.creatorLaunches24hAtLeast];
+  };
+  const launchOf = (at, agoMs) => Math.floor((at - agoMs) / 1000) * 1000;
+
+  // C launched 25 hours before A, outside A's window; B launched a minute after A, inside B's window.
+  assert.deepEqual(await checkAt(C, NOW, 25 * 60 * MINUTE), ['CLEAR', 1]);
+  assert.deepEqual(await checkAt(A, NOW + MINUTE, 30 * MINUTE), ['CLEAR', 1]);
+  assert.deepEqual(await checkAt(B, NOW + 2 * MINUTE, 30 * MINUTE), ['HIT', 2]);
+  // A's recheck counts no later launch, keeps A's first launch time and writes no row.
+  const recheckAt = NOW + MINUTE + scannerSettings.chainPassRecheckMs + MINUTE;
+  assert.deepEqual(await checkAt(A, recheckAt, 10 * MINUTE), ['CLEAR', 1]);
+  assert.deepEqual(ledger(), [[C, launchOf(NOW, 25 * 60 * MINUTE), NOW], [A, launchOf(NOW + MINUTE, 30 * MINUTE), NOW + MINUTE],
+    [B, launchOf(NOW + 2 * MINUTE, 30 * MINUTE), NOW + 2 * MINUTE]]);
+
+  // A cycle's summary forgets tokens first seen longer ago than the retention.
+  radarFixture.clock.now = NOW + 2 * MINUTE + scannerSettings.creatorLedgerRetentionMs;
+  radarFixture.hotList = [];
+  await radarFixture.runCycle('cycle-ledger-prune');
+  assert.deepEqual(ledger(), [[B, launchOf(NOW + 2 * MINUTE, 30 * MINUTE), NOW + 2 * MINUTE]]);
+});
+
 test('a checkpoint left between the retired DexScreener and GoPlus steps finishes with one GoPlus read', async () => {
   const radarFixture = radar();
   radarFixture.seedCheckpoint({ cycleId: 'cycle-mid-check', chain: 'bsc', phase: 'SECONDARY', endpointIndex: 1, partial: { settings: radarFixture.settings, queue: { selected: [leadItem(A)] },
