@@ -108,6 +108,15 @@ Portable principles distilled from `AGENTS.md` and
   effective config.
 - Keep secrets out of logs; put temporary artifacts in a scratch area and remove them.
 
+## Production Host
+
+- The VPS (`docs/VPS-MIGRATION-PLAN.md`) is `ssh alphameme`: user `ubuntu` at
+  150.109.235.163, key `~/.ssh/korea_ssh_key.pem` (an entry in the owner's
+  `~/.ssh/config`). Ubuntu 24.04, 2 vCPU, 2 GB RAM, Docker with Compose.
+- The host also runs a Caddy server on port 80 that is not ours; leave it alone.
+- Until the cutover, production is the Cloudflare Worker deployed from
+  `.agents/worktrees/deploy` with `npx wrangler deploy`.
+
 ## Commits and Pull Requests
 
 - Commit subjects use `type(scope): imperative summary` (72 chars max); one coherent
