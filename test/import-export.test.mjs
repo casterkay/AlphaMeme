@@ -38,7 +38,7 @@ async function exportedState() {
   fillEveryTable(radar, RADAR_TABLES);
   const registry = objectStorage({ 'scheduler.watchdog.cursor.v1': '1000' }, null);
   initializeTenantRegistrySchema(registry);
-  fillEveryTable(registry, TENANT_REGISTRY_TABLES);
+  registry.sql.exec('INSERT INTO tenant_registry (tenant_id, registered_at) VALUES (?, ?)', '1000', 1);
   const exported = {
     exportedAt: ALARM_AT,
     tenantId: '1000',
@@ -99,6 +99,15 @@ test('an export missing a schema table fails the schema check and leaves no data
   const exported = await exportedState();
   delete exported.radar.tables.outbox;
   assert.throws(() => importExport(exported, directory), { code: 'SCHEMA_TABLE_SET_MISMATCH' });
+  assert.deepEqual(readdirSync(directory), []);
+}));
+
+test('an export whose registry holds another tenant is refused, since the host serves one', () => withDirectory(async directory => {
+  const exported = await exportedState();
+  exported.registry.tables.tenant_registry.rows.push({ tenant_id: '2000', registered_at: 2 });
+  assert.throws(() => importExport(exported, directory), /registry must hold exactly the exported tenant 1000, not \["1000","2000"\]/);
+  exported.registry.tables.tenant_registry.rows.shift();
+  assert.throws(() => importExport(exported, directory), /exported tenant 1000, not \["2000"\]/);
   assert.deepEqual(readdirSync(directory), []);
 }));
 
