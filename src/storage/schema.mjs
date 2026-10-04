@@ -1,4 +1,4 @@
-export const RADAR_SCHEMA_VERSION = 2;
+export const RADAR_SCHEMA_VERSION = 3;
 
 const SCHEMA_TENANT_ID = '__schema__';
 const SCHEMA_VERSION_KEY = 'schema.version';
@@ -116,8 +116,18 @@ export const RADAR_TABLES = Object.freeze([
     ['expected_ui_version', 'INTEGER'], ['params_json', 'TEXT'], ['origin_message_id', 'TEXT'],
     ['review_revision', 'TEXT'], ['expected_mark_version', 'INTEGER'],
     ['expected_connection_generation', 'INTEGER'], ['expires_at', 'INTEGER NOT NULL'], ['created_at', 'INTEGER']
-  ], ['tenant_id', 'id'])
+  ], ['tenant_id', 'id']),
+  // The creator ledger: each token a GoPlus check named a creator for, with its launch time (ms, null when
+  // unknown) and when we first saw it. Its key puts the creator before the token, so one creator's launches are one range read.
+  table('creator_launches', [
+    ['tenant_id', 'TEXT NOT NULL'], ['chain', 'TEXT NOT NULL'], ['creator', 'TEXT NOT NULL'], ['address', 'TEXT NOT NULL'],
+    ['launched_at', 'INTEGER'], ['first_seen_at', 'INTEGER NOT NULL']
+  ], ['tenant_id', 'chain', 'creator', 'address'])
 ]);
+
+// The tables each schema version added. Migrations are additive only: a database at an earlier version gains
+// the tables of every later version, with the version bump, in one transaction. Any other change needs its own design.
+const ADDED_TABLES = Object.freeze({ 3: Object.freeze(['creator_launches']) });
 
 // These JSON containers keep the unnormalized state/export fields intact until their
 // later-owner modules replace them with dedicated behavior.
@@ -158,8 +168,8 @@ function readSchemaVersion(sql) {
   }
 }
 
-function assertTableSet(actual) {
-  const expected = RADAR_TABLES.map(definition => definition.name).sort();
+function assertTableSet(actual, definitions = RADAR_TABLES) {
+  const expected = definitions.map(definition => definition.name).sort();
   if (actual.length !== expected.length || actual.some((name, index) => name !== expected[index])) {
     throw new SchemaError('SCHEMA_TABLE_SET_MISMATCH', 'database table set does not match the supported Radar schema');
   }
@@ -194,10 +204,34 @@ function createFreshSchema(storage) {
   });
 }
 
+// Bring a database at an earlier version with additive steps to every later one up to date. One at any other
+// version is left for the checks after, which reject it; so is one whose tables do not match its own version.
+function migrateSchema(storage, existingTables) {
+  if (!existingTables.includes('preferences')) return;
+  const from = readSchemaVersion(storage.sql);
+  const steps = Array.from({ length: Math.max(0, RADAR_SCHEMA_VERSION - from) }, (_, index) => from + 1 + index);
+  if (!steps.length || steps.some(version => !ADDED_TABLES[version])) return;
+  const added = new Set(steps.flatMap(version => ADDED_TABLES[version]));
+  const kept = RADAR_TABLES.filter(definition => !added.has(definition.name));
+  assertTableSet(existingTables, kept);
+  for (const definition of kept) assertTableContract(storage.sql, definition);
+  storage.transactionSync(() => {
+    if (readSchemaVersion(storage.sql) !== from) {
+      throw new SchemaError('SCHEMA_CONCURRENT_INITIALIZATION', 'Radar schema changed while migration was in progress');
+    }
+    for (const definition of RADAR_TABLES) if (added.has(definition.name)) storage.sql.exec(createTableSql(definition));
+    storage.sql.exec('UPDATE preferences SET value_json = ? WHERE tenant_id = ? AND key = ?', JSON.stringify({ version: RADAR_SCHEMA_VERSION }), SCHEMA_TENANT_ID, SCHEMA_VERSION_KEY);
+  });
+  console.log(JSON.stringify({ event: 'radar_schema_migrated', from, to: RADAR_SCHEMA_VERSION }));
+}
+
 export function initializeRadarSchema(storage) {
   const existingTables = listUserTables(storage.sql);
   if (existingTables.length === 0) createFreshSchema(storage);
-  else assertTableSet(existingTables);
+  else {
+    migrateSchema(storage, existingTables);
+    assertTableSet(listUserTables(storage.sql));
+  }
 
   const version = readSchemaVersion(storage.sql);
   if (version !== RADAR_SCHEMA_VERSION) {
