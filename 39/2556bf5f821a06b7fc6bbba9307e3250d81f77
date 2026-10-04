@@ -1,0 +1,29 @@
+.dockerignore
+  s_e9d978d309853c::t_df96c79bd8bec5 7
+Dockerfile
+  s_e9d978d309853c::t_239f89bab8d13c 10-11
+docs/VPS-MIGRATION-PLAN.md
+  s_e9d978d309853c::t_8dc465ab07c0d7 166-169,173-176
+scripts/import-export.mjs
+  s_e9d978d309853c::t_76f44896806516 7-9,16-17,21,23,25,28,42,49,51-52,54-63,70,76-77,79
+test/host-image.test.mjs
+  s_e9d978d309853c::t_feee4739210e91 8,30
+test/import-export.test.mjs
+  s_e9d978d309853c::t_9b8e0a87a0bc24 9-11,20,69,81,83-88,90,92-95,105-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "392556bf5f821a06b7fc6bbba9307e3250d81f77",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
