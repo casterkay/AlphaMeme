@@ -2,25 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
+import { sqliteStorage } from '../src/host/storage.mjs';
 import { TelegramOutbox } from '../src/bot/outbox.mjs';
 import { createTelegramTransport } from '../src/bot/telegram-transport.mjs';
 
 function fixture(transport = async () => ({ ok: true, result: { message_id: 42 } })) {
   const db = new DatabaseSync(':memory:');
-  const storage = {
-    sql: { exec: (query, ...args) => ({ toArray: () => db.prepare(query).all(...args) }) },
-    transactionSync: callback => {
-      db.exec('BEGIN');
-      try { const result = callback(); db.exec('COMMIT'); return result; }
-      catch (error) { db.exec('ROLLBACK'); throw error; }
-    }
-  };
-  // DO exec executes writes eagerly, including those without cursor consumption.
-  storage.sql.exec = (query, ...args) => {
-    const statement = db.prepare(query);
-    const rows = statement.columns().length ? statement.all(...args) : (statement.run(...args), []);
-    return { toArray: () => rows };
-  };
+  const storage = sqliteStorage(db);
   initializeRadarSchema(storage);
   let now = 100;
   const outbox = new TelegramOutbox({ storage, tenantId: 'tenant', transport, now: () => now });

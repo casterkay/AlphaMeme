@@ -1,0 +1,16 @@
+services:
+  radar:
+    build: .
+    restart: unless-stopped
+    # The operator routes listen on the VPS's own 127.0.0.1:8787, reachable over SSH only.
+    network_mode: host
+    env_file: .env
+    volumes:
+      - ./data:/data
+    # Lets a running alarm step finish on `docker compose down` or a redeploy.
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"

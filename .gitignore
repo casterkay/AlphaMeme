@@ -30,3 +30,6 @@ npm-debug.log*
 skills-lock.json
 
 __pycache__/
+
+# The VPS host's database directory (compose.yaml)
+/data/

@@ -15,6 +15,7 @@ import { SCREEN_RULES } from '../src/scoring/screen.mjs';
 import { SqliteControlStateStore } from '../src/storage/control-state.mjs';
 import { SqliteRecoverableScannerStore, stableEffectId } from '../src/storage/recoverable-scanner.mjs';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
+import { sqliteStorage } from '../src/host/storage.mjs';
 import { readTelegramStatistics } from '../src/bot/statistics.mjs';
 import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 
@@ -25,36 +26,12 @@ const API_KEY = 'radar-test-ave-key';
 const address = digit => `0x${digit.repeat(40)}`;
 const A = address('a'), B = address('b'), C = address('c'), D = address('d'), E = address('f');
 
-function sqliteStorage() {
-  const db = new DatabaseSync(':memory:');
-  return {
-    sql: {
-      exec: (sql, ...args) => {
-        const statement = db.prepare(sql);
-        const rows = statement.columns().length ? statement.all(...args) : (statement.run(...args), []);
-        return { toArray: () => rows };
-      }
-    },
-    transactionSync: fn => {
-      db.exec('BEGIN');
-      try {
-        const value = fn();
-        db.exec('COMMIT');
-        return value;
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
-      }
-    }
-  };
-}
-
 const request = operation => operation({ signal: new AbortController().signal });
 
 // A configured tenant scanning `chain`, backed by the real SQLite store, a real
 // AveClient over a hand-written fetch stub, and a hand-written secondary source.
 function radar({ chain = 'bsc', settings: overrides = {}, onchain = false } = {}) {
-  const storage = sqliteStorage();
+  const storage = sqliteStorage(new DatabaseSync(':memory:'));
   initializeRadarSchema(storage);
   const state = readSchedulerStateInTransaction(storage, TENANT);
   writeSchedulerStateInTransaction(storage, TENANT, {
