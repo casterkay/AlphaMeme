@@ -8,7 +8,9 @@ import { GoPlusAuth, goPlusCredentials } from './providers/goplus-auth.mjs';
 import { SecondaryValidator } from './providers/secondary.mjs';
 import { chainRpcUrls } from './trading/config.mjs';
 import { readAveAdmissionState, writeAveAdmissionStateInTransaction } from './storage/ave-admission-state.mjs';
-import { initializeRadarSchema } from './storage/schema.mjs';
+import { initializeRadarSchema, RADAR_TABLES } from './storage/schema.mjs';
+import { exportDurableObjectState } from './storage/durable-object-export.mjs';
+import { EXECUTING_STATES, listTrades } from './trading/trades.mjs';
 import { normalizeTenantId } from './storage/tenant-id.mjs';
 import { RecoverableScanner } from './recoverable-scanner.mjs';
 import { scannerSettings } from './scanner-settings.mjs';
@@ -170,6 +172,7 @@ export class RadarAgent extends DurableObject {
   }
 
   async wake() {
+    if (this.env.RUNTIME_DISABLED === '1') return { accepted: false, reason: 'runtime_disabled' };
     const scheduler = this.#schedulerForPersistedTenant();
     if (!scheduler) return { accepted: false, reason: 'scheduler_not_initialized' };
     return scheduler.wake();
@@ -204,11 +207,26 @@ export class RadarAgent extends DurableObject {
     return { ...result, dueAt };
   }
 
+  // Reads only, so the migration export works while the runtime is disabled. The idle check lists
+  // what may still have an effect in flight: undelivered outbox rows and trades between confirmation and settlement.
+  async exportState(value) {
+    const tenantId = normalizeTenantId(value);
+    if (readSchedulerTenant(this.ctx.storage) !== tenantId) throw new Error('Radar Durable Object is not bound to the exported tenant');
+    const state = await exportDurableObjectState(this.ctx.storage, RADAR_TABLES);
+    const unconfirmedOutbox = this.#telegram(tenantId).outbox.activeRows()
+      .map(row => ({ id: row.id, status: row.status, deliveryClass: row.delivery_class }));
+    const unsettledTrades = listTrades(this.ctx.storage, tenantId).filter(trade => EXECUTING_STATES.has(trade.state))
+      .map(trade => ({ id: trade.id, state: trade.state, chain: trade.chain, side: trade.side }));
+    return { ...state, idle: { idle: unconfirmedOutbox.length === 0 && unsettledTrades.length === 0, unconfirmedOutbox, unsettledTrades } };
+  }
+
   #telegram(tenantId) {
     return new TelegramRuntime({ storage: this.ctx.storage, env: this.env, tenantId });
   }
 
+  // Disabled, the alarm is consumed without running; the next host's first wake re-arms it from scheduler state.
   async alarm() {
+    if (this.env.RUNTIME_DISABLED === '1') return;
     const scheduler = this.#schedulerForPersistedTenant();
     if (!scheduler) {
       await this.ctx.storage.deleteAlarm();

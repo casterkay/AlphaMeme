@@ -21,7 +21,12 @@
   // KyberSwap Aggregator and is required once any chain is enabled. Explorer
   // URLs default to bscscan/basescan/etherscan; Arc has no default, so without
   // ARC_EXPLORER_URL an Arc transaction shows its hash only.
+  // RUNTIME_DISABLED "1" freezes this deployment for the VPS cutover: webhook
+  // updates are refused (Telegram keeps them), and no alarm or wake runs. Deploy
+  // it with "crons": [] below as an uncommitted edit (docs/VPS-MIGRATION-PLAN.md,
+  // "Data migration").
   "vars": {
+    "RUNTIME_DISABLED": "0",
     "AVE_MONTHLY_CU": "1000000",
     "AVE_CU_RESET_DAY": "1",
     "KYBER_CLIENT_ID": "AlphaMeme",
