@@ -1,0 +1,25 @@
+docs/VPS-MIGRATION-PLAN.md
+  s_e9d978d309853c::t_15e413f941cb98 160-161,167
+scripts/import-export.mjs
+  s_e9d978d309853c::t_26aad2a0ffdfb6 8,71-75
+test/host.test.mjs
+  s_e9d978d309853c::t_488ddf5a8c2eb4 9-12,207-247
+test/import-export.test.mjs
+  s_e9d978d309853c::t_03166357a85108 41,105-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a95a65b1c277a508e81f9d010ce3c87d3ca4b8b6",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
