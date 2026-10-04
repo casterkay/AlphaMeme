@@ -1,0 +1,68 @@
+src/host/log.mjs
+  s_e9d978d309853c::t_fb574c9c38a601 1-9
+src/host/telegram-polling.mjs
+  s_e9d978d309853c::t_7dd6a57d718e8d 1-102
+src/host/host.mjs
+  s_e9d978d309853c::t_bedf5331ec4b4c 1-125,132
+  s_e9d978d309853c::t_4217988f327745 126-131,133
+src/host/alarm.mjs
+  s_e9d978d309853c::t_55d9c4f78d6540 1-99
+  s_e9d978d309853c::t_a55a9577dd31a5 100-103
+test/host-alarm.test.mjs
+  s_e9d978d309853c::t_6a9e2d6f74d46a 1-116
+src/host/storage.mjs
+  s_e9d978d309853c::t_bd9b05149e4af9 1-63
+src/host/state.mjs
+  s_e9d978d309853c::t_f33cf6f04bbcf1 1-48
+test/host-storage.test.mjs
+  s_e9d978d309853c::t_9107dc95e39232 1-79
+test/host.test.mjs
+  s_e9d978d309853c::t_ddb38904317bf3 1-197
+  s_e9d978d309853c::t_c70ea0a72b9850 198-202
+.dockerignore
+  s_e9d978d309853c::t_50bc83d2a52132 1-5
+.env.example
+  s_e9d978d309853c::t_8a7944ccf951e2 1-24
+.gitignore
+  s_e9d978d309853c::t_7a1c2b5444d587 33-35
+Dockerfile
+  s_e9d978d309853c::t_c4730c72be0739 1-12
+compose.yaml
+  s_e9d978d309853c::t_00165827fbf244 1-16
+docs/VPS-MIGRATION-PLAN.md
+  s_e9d978d309853c::t_d0429627a02176 106-111
+scripts/backup.mjs
+  s_e9d978d309853c::t_3e0be08dbf1e21 1-6
+scripts/pull-backup.sh
+  s_e9d978d309853c::t_093d931744196c 1-35
+src/host/backup.mjs
+  s_e9d978d309853c::t_56de852b795a64 1-60
+src/host/cloudflare-hook.mjs
+  s_e9d978d309853c::t_4b4955a80afed0 1-12
+src/host/durable-object.mjs
+  s_e9d978d309853c::t_52aaaadde7ce87 1-7
+src/host/main.mjs
+  s_e9d978d309853c::t_cc590bf179af94 1-19
+test/notification-policy.test.mjs
+  s_e9d978d309853c::t_9477ff5534b54a 5,12
+test/radar-agent.test.mjs
+  s_e9d978d309853c::t_7877d807bff56b 18,34
+test/telegram-outbox.test.mjs
+  s_e9d978d309853c::t_cb4ad5ff2764d1 5,11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9a5f1fefc757f834535c2e2fa342f8df1d9f8e1a",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
