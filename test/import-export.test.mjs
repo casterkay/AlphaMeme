@@ -6,6 +6,9 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { importExport } from '../scripts/import-export.mjs';
 import { exportDurableObjectState } from '../src/storage/durable-object-export.mjs';
+import { backupDatabases } from '../src/host/backup.mjs';
+import { hostEntries } from '../src/host/state.mjs';
+import { sqliteStorage } from '../src/host/storage.mjs';
 import { initializeRadarSchema, RADAR_TABLES } from '../src/storage/schema.mjs';
 import { initializeTenantRegistrySchema, TENANT_REGISTRY_TABLES } from '../src/storage/tenant-registry-schema.mjs';
 
@@ -13,25 +16,8 @@ const ALARM_AT = 1_800_000_000_000;
 
 // A Durable Object storage stand-in over node:sqlite, with its key-value entries and alarm.
 function objectStorage(entries, alarmAt) {
-  const db = new DatabaseSync(':memory:');
   return {
-    db,
-    sql: { exec: (sql, ...args) => {
-      const statement = db.prepare(sql);
-      const rows = statement.columns().length ? statement.all(...args) : (statement.run(...args), []);
-      return { toArray: () => rows };
-    } },
-    transactionSync: fn => {
-      db.exec('BEGIN');
-      try {
-        const value = fn();
-        db.exec('COMMIT');
-        return value;
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
-      }
-    },
+    ...sqliteStorage(new DatabaseSync(':memory:')),
     list: async () => new Map(Object.entries(entries)),
     getAlarm: async () => alarmAt
   };
@@ -80,7 +66,7 @@ test('an export of every table round-trips into fresh databases that pass their 
   const summary = importExport(exported, directory);
 
   assert.deepEqual(readdirSync(directory).sort(), ['host.sqlite', 'radar.sqlite', 'registry.sqlite']);
-  for (const [name, initialize] of [['radar', initializeRadarSchema], ['registry', initializeTenantRegistrySchema]]) {
+  for (const name of ['radar', 'registry']) {
     const db = new DatabaseSync(join(directory, `${name}.sqlite`));
     try {
       for (const [table, { rows }] of Object.entries(exported[name].tables)) {
@@ -88,28 +74,38 @@ test('an export of every table round-trips into fresh databases that pass their 
         assert.equal(summary.counts[name][table], rows.length);
       }
       assert.equal(db.prepare('PRAGMA journal_mode').get().journal_mode, 'wal');
-      initialize({ sql: { exec: (sql, ...args) => ({ toArray: () => db.prepare(sql).all(...args) }) }, transactionSync: fn => fn() });
     } finally {
       db.close();
     }
   }
-  const host = new DatabaseSync(join(directory, 'host.sqlite'));
+  const db = new DatabaseSync(join(directory, 'host.sqlite'));
   try {
-    assert.deepEqual(rowsOf(host, 'entries').sort((left, right) => left.key.localeCompare(right.key)), [
-      { object: 'radar', key: 'count', value_json: '3' },
-      { object: 'radar', key: 'radar.entry', value_json: '"kept"' },
-      { object: 'registry', key: 'scheduler.watchdog.cursor.v1', value_json: '"1000"' }
-    ]);
-    assert.deepEqual(rowsOf(host, 'alarms'), [{ object: 'radar', at: ALARM_AT }]);
+    const host = sqliteStorage(db);
+    assert.equal(hostEntries(host, 'radar').get('count'), 3);
+    assert.equal(hostEntries(host, 'radar').get('radar.entry'), 'kept');
+    assert.equal(hostEntries(host, 'registry').get('scheduler.watchdog.cursor.v1'), '1000');
+    assert.equal(hostEntries(host, 'host').get('radar.alarm'), ALARM_AT);
+    assert.deepEqual(summary.hostEntries, { host: 1, radar: 2, registry: 1 });
   } finally {
-    host.close();
+    db.close();
   }
+
+  // The host's own backup check: integrity, each owner's schema initializer, row counts.
+  const backup = backupDatabases({ dataDir: directory });
+  assert.equal(backup.databases['radar.sqlite'].outbox, 1);
 }));
 
 test('an export missing a schema table fails the schema check and leaves no database behind', () => withDirectory(async directory => {
   const exported = await exportedState();
   delete exported.radar.tables.outbox;
   assert.throws(() => importExport(exported, directory), { code: 'SCHEMA_TABLE_SET_MISMATCH' });
+  assert.deepEqual(readdirSync(directory), []);
+}));
+
+test('an export holding a registry alarm is refused, since the host keeps only the radar alarm', () => withDirectory(async directory => {
+  const exported = await exportedState();
+  exported.registry.alarmAt = ALARM_AT;
+  assert.throws(() => importExport(exported, directory), /registry alarm/);
   assert.deepEqual(readdirSync(directory), []);
 }));
 

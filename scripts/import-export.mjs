@@ -4,62 +4,28 @@
 //
 // radar.sqlite and registry.sqlite get each object's tables, recreated from the
 // exported DDL with their rows; row counts are checked per table, then the
-// object's own schema initializer runs on the file, as the host would at boot.
-// host.sqlite holds what Cloudflare kept outside those tables:
-//
-//   CREATE TABLE entries (object TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, PRIMARY KEY (object, key))
-//     one row per ctx.storage.get/put entry; object is 'radar' or 'registry'
-//   CREATE TABLE alarms (object TEXT NOT NULL PRIMARY KEY, at INTEGER NOT NULL)
-//     the object's pending alarm time, absent when none is set
+// object's own schema initializer runs on the file, as the host does at boot.
+// host.sqlite gets each object's key-value entries and the radar's alarm time,
+// in the host's own layout (src/host/state.mjs).
 //
 // The three files are built in a scratch directory and moved into place only
 // once all are verified, and an existing file is never overwritten.
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
+import { hostEntries, initializeHostSchema } from '../src/host/state.mjs';
+import { DATABASE_FILES, openDatabase, sqliteStorage } from '../src/host/storage.mjs';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
 import { initializeTenantRegistrySchema } from '../src/storage/tenant-registry-schema.mjs';
 
-export const HOST_SCHEMA = [
-  'CREATE TABLE entries (object TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, PRIMARY KEY (object, key))',
-  'CREATE TABLE alarms (object TEXT NOT NULL PRIMARY KEY, at INTEGER NOT NULL)'
-];
+const OBJECT_SCHEMAS = Object.freeze({ radar: initializeRadarSchema, registry: initializeTenantRegistrySchema });
 
-const OBJECTS = [
-  { name: 'radar', file: 'radar.sqlite', initializeSchema: initializeRadarSchema },
-  { name: 'registry', file: 'registry.sqlite', initializeSchema: initializeTenantRegistrySchema }
-];
-
-// The slice of the Durable Object storage API the schema initializers use.
-function sqliteStorage(db) {
-  return {
-    sql: { exec: (sql, ...args) => {
-      const statement = db.prepare(sql);
-      const rows = statement.columns().length ? statement.all(...args) : (statement.run(...args), []);
-      return { toArray: () => rows };
-    } },
-    transactionSync: fn => {
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        const value = fn();
-        db.exec('COMMIT');
-        return value;
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
-      }
-    }
-  };
-}
-
-function writeObjectDatabase(path, { name, initializeSchema }, state) {
+function writeObjectDatabase(path, name, state) {
   if (!state?.tables || typeof state.tables !== 'object') throw new Error(`export has no ${name} tables`);
-  const db = new DatabaseSync(path);
+  const db = openDatabase(path);
   try {
-    db.exec('PRAGMA journal_mode = WAL');
-    const counts = {};
     const storage = sqliteStorage(db);
+    const counts = {};
     storage.transactionSync(() => {
       for (const [table, { sql, rows }] of Object.entries(state.tables)) {
         db.exec(sql);
@@ -73,47 +39,44 @@ function writeObjectDatabase(path, { name, initializeSchema }, state) {
         counts[table] = count;
       }
     });
-    initializeSchema(storage);
+    OBJECT_SCHEMAS[name](storage);
     return counts;
   } finally {
     db.close();
   }
 }
 
+// The host keeps one alarm, the radar's; the registry never sets one.
 function writeHostDatabase(path, exported) {
-  const db = new DatabaseSync(path);
+  if (exported.registry.alarmAt !== null) throw new Error('export holds a registry alarm, which the host has no place for');
+  const db = openDatabase(path);
   try {
-    db.exec('PRAGMA journal_mode = WAL');
-    db.exec('BEGIN IMMEDIATE');
-    for (const sql of HOST_SCHEMA) db.exec(sql);
-    const entry = db.prepare('INSERT INTO entries (object, key, value_json) VALUES (?, ?, ?)');
-    const alarm = db.prepare('INSERT INTO alarms (object, at) VALUES (?, ?)');
-    for (const { name } of OBJECTS) {
-      const { entries, alarmAt } = exported[name];
-      for (const [key, value] of Object.entries(entries)) entry.run(name, key, JSON.stringify(value));
-      if (alarmAt !== null) alarm.run(name, alarmAt);
-    }
-    db.exec('COMMIT');
-    return {
-      entries: db.prepare('SELECT COUNT(*) AS count FROM entries').get().count,
-      alarms: Object.fromEntries(db.prepare('SELECT object, at FROM alarms').all().map(row => [row.object, row.at]))
-    };
+    const storage = sqliteStorage(db);
+    initializeHostSchema(storage);
+    storage.transactionSync(() => {
+      for (const name of Object.keys(OBJECT_SCHEMAS)) {
+        const entries = hostEntries(storage, name);
+        for (const [key, value] of Object.entries(exported[name].entries)) entries.put(key, value);
+      }
+      if (exported.radar.alarmAt !== null) hostEntries(storage, 'host').put('radar.alarm', exported.radar.alarmAt);
+    });
+    return Object.fromEntries(db.prepare('SELECT scope, COUNT(*) AS count FROM kv GROUP BY scope').all().map(row => [row.scope, row.count]));
   } finally {
     db.close();
   }
 }
 
 export function importExport(exported, directory) {
-  const files = [...OBJECTS.map(object => object.file), 'host.sqlite'];
+  const files = Object.values(DATABASE_FILES);
   const existing = files.filter(file => existsSync(join(directory, file)));
   if (existing.length) throw new Error(`refusing to overwrite ${existing.join(', ')} in ${directory}`);
 
   const scratch = mkdtempSync(join(directory, '.import-'));
   try {
-    const counts = Object.fromEntries(OBJECTS.map(object => [object.name, writeObjectDatabase(join(scratch, object.file), object, exported[object.name])]));
-    const host = writeHostDatabase(join(scratch, 'host.sqlite'), exported);
+    const counts = Object.fromEntries(Object.keys(OBJECT_SCHEMAS).map(name => [name, writeObjectDatabase(join(scratch, DATABASE_FILES[name]), name, exported[name])]));
+    const hostEntryCounts = writeHostDatabase(join(scratch, DATABASE_FILES.host), exported);
     for (const file of files) renameSync(join(scratch, file), join(directory, file));
-    return { tenantId: exported.tenantId, exportedAt: exported.exportedAt, idle: exported.idle, counts, host };
+    return { tenantId: exported.tenantId, exportedAt: exported.exportedAt, idle: exported.idle, counts, hostEntries: hostEntryCounts };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
