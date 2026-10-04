@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { initializeRadarSchema } from '../src/storage/schema.mjs';
+import { sqliteStorage } from '../src/host/storage.mjs';
 import { NotificationPolicy } from '../src/bot/notification-policy.mjs';
 import { TelegramOutbox } from '../src/bot/outbox.mjs';
 import { readSchedulerStateInTransaction, writeSchedulerStateInTransaction } from '../src/storage/scheduler-state.mjs';
 const START = 1800000000000;
 function fixture() {
   const db = new DatabaseSync(':memory:');
-  const storage = { sql: { exec: (sql, ...args) => { const stmt = db.prepare(sql), rows = stmt.columns().length ? stmt.all(...args) : (stmt.run(...args), []); return { toArray: () => rows }; } }, transactionSync: fn => fn() };
+  const storage = sqliteStorage(db);
   initializeRadarSchema(storage);
   let now = START;
   const create = () => new NotificationPolicy({ storage, tenantId: '123', now: () => now });

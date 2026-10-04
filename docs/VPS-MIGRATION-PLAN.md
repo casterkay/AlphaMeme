@@ -103,10 +103,12 @@ same structured JSON lines, read with `docker compose logs`.
 Nightly, a host cron job runs `scripts/backup.mjs` inside the container. It
 writes a consistent snapshot of each database with `VACUUM INTO` (safe while the
 process runs), checks each copy (`PRAGMA integrity_check`, the schema
-initializer's table check, row counts), and copies the dated set off the VPS;
-the last 14 sets are kept. The snapshots hold ciphertext only; `MASTER_ENC_KEY`
-is kept separately (above). Restore = stop the container, put the three files
-back, start. The backup PR includes a test that restores a snapshot and boots
+initializer's table check, row counts), and keeps the last 14 verified sets in
+`data/backups`. Off the VPS, the owner pulls the newest verified set to their
+machine over SSH with `scripts/pull-backup.sh`. The snapshots hold ciphertext
+only; `MASTER_ENC_KEY` is kept separately (above). Restore = stop the
+container, put the three files back (removing any `-wal`/`-shm` files beside
+them), start. The backup PR includes a test that restores a snapshot and boots
 the host from it.
 
 A restore loses whatever happened after the snapshot. Before resuming trading
@@ -175,6 +177,4 @@ and trade.
 ## Decisions needed
 
 - VPS provider and region (any small instance works: 1 vCPU, 1–2 GB RAM).
-- Where the nightly backup goes off the VPS (for example an S3-compatible
-  bucket, or pulled to your machine).
 - Whether to keep the Cloudflare data after cleanup or delete the Worker.
