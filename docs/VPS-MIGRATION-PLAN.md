@@ -163,15 +163,17 @@ curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/deleteWebhook"
 # 2–3. Export once more; its "idle" must still be true, else reconcile first.
 curl -sS -H "authorization: Bearer $OPERATOR_TOKEN" "$WORKER/export?tenant_id=$TENANT" -o export.json
 jq .idle export.json
-# 4. On the VPS, into the empty data directory; prints row counts per table.
-node scripts/import-export.mjs export.json /path/to/data && rm export.json
+# 4. On the VPS, with ./data empty and the export readable by uid 1000; prints row counts per table.
+docker compose build
+docker compose run --rm -v "$PWD/export.json:/tmp/export.json:ro" radar node scripts/import-export.mjs /tmp/export.json /data
+docker compose run --rm radar node scripts/backup.mjs && rm export.json
 ```
 
 An alarm that comes due while disabled is consumed without running, so the
-export may show none; the VPS host's first wake re-arms it from scheduler
-state. `host.sqlite` holds `entries (object, key, value_json)` and
-`alarms (object, at)`, with `object` `radar` or `registry`
-(`scripts/import-export.mjs`).
+export may show none; the host's first watchdog wake (within 60 s) re-arms it
+from scheduler state. The import writes each object's key-value entries to
+`host.sqlite` under its scope and the radar's alarm as `host/radar.alarm`
+(`src/host/state.mjs`).
 
 The Cloudflare data stays untouched as a pre-migration snapshot. It is not a
 rollback: once the VPS acts, that snapshot lacks every later command, delivery

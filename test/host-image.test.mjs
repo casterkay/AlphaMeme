@@ -5,7 +5,7 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const ENTRY_POINTS = ['src/host/main.mjs', 'scripts/backup.mjs'];
+const ENTRY_POINTS = ['src/host/main.mjs', 'scripts/backup.mjs', 'scripts/import-export.mjs'];
 // Static `import`/`export … from`, side-effect imports, and literal dynamic imports.
 const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"]([^'"]+)['"]/g;
 
@@ -27,7 +27,7 @@ function localImportGraph(entryPoints) {
 const covers = (paths, file) => paths.some(path => file === path || file.startsWith(`${path}/`));
 const strip = path => path.replace(/^\.\//, '').replace(/\/$/, '');
 
-test('the Docker image contains every local module the host and the backup job import', () => {
+test('the Docker image contains every local module the host and its scripts import', () => {
   const copied = readFileSync(resolve(ROOT, 'Dockerfile'), 'utf8').split('\n')
     .filter(line => /^COPY\s/.test(line))
     .flatMap(line => line.trim().split(/\s+/).slice(1, -1).map(strip));
