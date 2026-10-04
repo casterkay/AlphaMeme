@@ -1,0 +1,23 @@
+src/storage/schema.mjs
+  s_e9d978d309853c::t_4390b3d726cf21 1,119-125,128-131,171-172,207-227,231-234
+test/schema.test.mjs
+  s_e9d978d309853c::t_26dc1fffcb0568 3,237-316
+workers/durable-objects.runtime.mjs
+  s_e9d978d309853c::t_5100b30234eaab 76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d96b2df417dc9aa7c85fa88419e34be7690ecc5",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
