@@ -150,6 +150,29 @@ the new one starts only after it:
 5. **Activate the VPS**: start the process (it deletes the webhook, then polls
    and picks up the updates Telegram held).
 
+Commands for steps 1–4 (`$WORKER` is the Worker URL, `$TENANT` the tenant id):
+
+```sh
+# 1. In the bot: pause scanning, place no trades. Repeat until "idle": true.
+curl -sS -H "authorization: Bearer $OPERATOR_TOKEN" "$WORKER/export?tenant_id=$TENANT" | jq .idle
+# Freeze: deploy with "RUNTIME_DISABLED": "1" and "crons": [] in wrangler.jsonc, then revert the edit.
+npx wrangler deploy && git checkout wrangler.jsonc
+# Optional: remove the webhook now (pending updates kept), so held updates wait
+# for getUpdates under Telegram's documented 24 hours instead of webhook retries.
+curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/deleteWebhook"
+# 2–3. Export once more; its "idle" must still be true, else reconcile first.
+curl -sS -H "authorization: Bearer $OPERATOR_TOKEN" "$WORKER/export?tenant_id=$TENANT" -o export.json
+jq .idle export.json
+# 4. On the VPS, into the empty data directory; prints row counts per table.
+node scripts/import-export.mjs export.json /path/to/data && rm export.json
+```
+
+An alarm that comes due while disabled is consumed without running, so the
+export may show none; the VPS host's first wake re-arms it from scheduler
+state. `host.sqlite` holds `entries (object, key, value_json)` and
+`alarms (object, at)`, with `object` `radar` or `registry`
+(`scripts/import-export.mjs`).
+
 The Cloudflare data stays untouched as a pre-migration snapshot. It is not a
 rollback: once the VPS acts, that snapshot lacks every later command, delivery
 and trade.
