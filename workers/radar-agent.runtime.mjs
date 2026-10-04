@@ -511,7 +511,8 @@ describe('recoverable Radar scanner', () => {
           phase: 'SUMMARIZE', tokenIndex: 0, endpointIndex: 0, partial: { settings, summary: { finalized: true } }, updatedAt: now
         },
         candidateRetentionMs: settings.candidateRetentionMs,
-        outcomeRetentionMs: settings.outcomeRetentionMs
+        outcomeRetentionMs: settings.outcomeRetentionMs,
+        creatorLedgerRetentionMs: settings.creatorLedgerRetentionMs
       });
       const rows = state.storage.sql.exec('SELECT address FROM candidates WHERE tenant_id = ? AND chain = ?', tenantId, 'arc').toArray().map(row => row.address);
       expect(rows).toHaveLength(201);

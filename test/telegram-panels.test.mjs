@@ -310,13 +310,14 @@ test('the token detail lists the shadow audit by verdict and the checks that did
   const holder=(address,rate,more={})=>({address,rate,locked:false,contract:false,tag:'',...more});
   const holdings={holders:[holder('0x'+'1'.repeat(40),.42)],lpHolders:[holder('0x'+'2'.repeat(40),1,{nftPositions:true})],lpTotalSupply:5,creatorRate:.002,
     ownerAddress:'0x0000000000000000000000000000000000000000',creatorHoneypots:false,pairAddresses:[],venues:['UniV3']};
-  const audit=postAlertAudit({chain:'bsc',holdings,liquidity:5_000,at:now-120_000},scannerSettings);
+  const launch={address:'0x'+'3'.repeat(40),launchedAt:now,creatorLaunches:[{address:'0x'+'4'.repeat(40),launchedAt:now-60_000}]};
+  const audit=postAlertAudit({chain:'bsc',holdings:{...holdings,creatorAddress:'0x'+'5'.repeat(40)},liquidity:5_000,launch,at:now-120_000},scannerSettings);
   const snapshot=fixture();snapshot.candidates=[lead({chain:'bsc',secondary:{...complete,audit}})];
   const selectedToken={chain:'bsc',address:snapshot.candidates[0].address}, view=(panel,locale,query={})=>renderPanel(snapshot,{...session(panel,{selectedToken,...query}),viewChain:'bsc'},locale).text;
   assert.equal(view('detail','en').split('\n')[1],'✅ No failures found · checked 2m ago');
-  assert.match(view('detail','en'),new RegExp(['Shadow audit, not enforced','Flagged: Top-10 holders 42%, Liquidity \\$5(?:\\.0)?K','Clear: Owner, Creator holdings 0\\.2%, Creator honeypot history','Unknown: LP locked or burned',
-    'Not run, no source yet: full-balance sell, 5m observation, chart risk, rug ratio, insiders, bundlers, snipers, wash trading, wallet analysis, market behavior, creator launches in 24h, self-trading, holder growth\\n'].join('\\n')));
-  assert.match(view('detail','zh'),/影子审计（不影响结论）\n发现风险：前十持仓 42%、流动性 [^\n]+\n未见风险：所有者、创建者持仓 0\.2%、创建者貔貅记录\n未知：LP锁定或销毁\n未运行（暂无数据源）：全额卖出模拟、/);
+  assert.match(view('detail','en'),new RegExp(['Shadow audit, not enforced','Flagged: Top-10 holders 42%, Liquidity \\$5(?:\\.0)?K','Clear: Owner, Creator holdings 0\\.2%, Creator honeypot history, Creator launches in 24h ≥2','Unknown: LP locked or burned',
+    'Not run, no source yet: full-balance sell, 5m observation, chart risk, rug ratio, insiders, bundlers, snipers, wash trading, wallet analysis, market behavior, self-trading, holder growth\\n'].join('\\n')));
+  assert.match(view('detail','zh'),/影子审计（不影响结论）\n发现风险：前十持仓 42%、流动性 [^\n]+\n未见风险：所有者、创建者持仓 0\.2%、创建者貔貅记录、创建者24小时发币 ≥2\n未知：LP锁定或销毁\n未运行（暂无数据源）：全额卖出模拟、/);
   const evidence=Array.from({length:6},(_,detailPage)=>view('evidence','en',{detailPage})).join('\n');
   assert.doesNotMatch(evidence,/TOP10_CONCENTRATED|SELL_ALL_SIMULATION|verdicts|notRun/,'rule ids stay off the evidence pages');
 });

@@ -9,7 +9,11 @@ import { ADMIT, DROP, SHADOW, UNKNOWN, evaluateRules, known, rulesetVersion } fr
  * its verdict is recorded with the lead and its outcome, and the safety verdict
  * ignores it. A check with no data source yet (source null) is always UNKNOWN,
  * and the record lists it as not run, apart from a check that ran without data.
+ * The creator check also reads the creator ledger: the tokens earlier checks
+ * found by the same creator on the chain.
  */
+const DAY_MS = 86_400_000;
+
 const BURN_ADDRESSES = new Set(['0x0000000000000000000000000000000000000000', '0x000000000000000000000000000000000000dead']);
 
 // Uniswap v4 keeps every pool's tokens in one PoolManager, which GoPlus leaves untagged and unlocked and
@@ -40,8 +44,21 @@ function top10Rate({ holders, pairAddresses, venues }, chain) {
 const lpPositions = ({ lpHolders }) => (lpHolders || []).filter(holder => holder.nftPositions).slice(0, 10)
   .map(({ address, rate, locked }) => ({ address, rate, locked: lockedOrBurned({ address, locked }) }));
 
-/** The facts the audit rules read, each null when it could not be read. They are recorded as the audit's evidence. */
-export function auditFacts({ chain, holdings, liquidity }) {
+// The creator's launches in the 24 hours up to this token's launch, this one included, among the tokens the ledger
+// holds. The ledger holds only tokens we checked, so this is a lower bound on the creator's real launches.
+function creatorLaunches24hAtLeast({ address, launchedAt, creatorLaunches }) {
+  if (!(launchedAt > 0)) return null;
+  const earlier = creatorLaunches.filter(launch => launch.address !== address && launch.launchedAt !== null
+    && launch.launchedAt > launchedAt - DAY_MS && launch.launchedAt <= launchedAt);
+  return earlier.length + 1;
+}
+
+/**
+ * The facts the audit rules read, each null when it could not be read. They are recorded as the audit's evidence.
+ * `launch` is this token's ledger view, null when GoPlus named no creator: its address and launch time (ms, null
+ * when unknown) and the creator's other launches the ledger holds on the chain (`{ address, launchedAt }`).
+ */
+export function auditFacts({ chain, holdings, liquidity, launch = null }) {
   return {
     ownerRenounced: holdings?.ownerAddress ? BURN_ADDRESSES.has(holdings.ownerAddress) : null,
     lpLockedRate: holdings ? lpLockedRate(holdings) : null,
@@ -49,6 +66,7 @@ export function auditFacts({ chain, holdings, liquidity }) {
     top10Rate: holdings ? top10Rate(holdings, chain) : null,
     creatorRate: holdings?.creatorRate ?? null,
     creatorHoneypots: holdings?.creatorHoneypots ?? null,
+    creatorLaunches24hAtLeast: launch ? creatorLaunches24hAtLeast(launch) : null,
     liquidity: optionalNonNegativeNumber(liquidity)
   };
 }
@@ -69,10 +87,15 @@ export const AUDIT_RULES = Object.freeze([
   // #107's first signal: GoPlus knows the creator made a honeypot before.
   { id: 'CREATOR_HONEYPOT_HISTORY', version: 1, role: DROP, mode: SHADOW, source: 'GOPLUS', settings: [],
     evaluate: facts => known(facts.creatorHoneypots, facts.creatorHoneypots === true) },
+  // #1 D2 over our own creator ledger. Its count is a lower bound, so a HIT is trustworthy and a CLEAR only means
+  // the tokens we saw stay within the limit; as a DROP rule a CLEAR blocks no more than an UNKNOWN would, but it
+  // records that the creator and launch time were known. Version 2: version 1 had no source and never ran.
+  { id: 'CREATOR_LAUNCHES_24H', version: 2, role: DROP, mode: SHADOW, source: 'LEDGER', settings: ['maxCreatorLaunches24h'],
+    evaluate: (facts, settings) => known(facts.creatorLaunches24hAtLeast, facts.creatorLaunches24hAtLeast > settings.maxCreatorLaunches24h) },
   // Arc's full-balance sale over its RPC, and the GMGN, candle and history checks, once their sources exist.
   notRun('SELL_ALL_SIMULATION'), notRun('OBSERVATION_5M'), notRun('CHART_RISK'), notRun('RUG_RATIO'),
   notRun('INSIDER_RATE'), notRun('BUNDLER_RATE'), notRun('SNIPER_RATE'), notRun('WASH_TRADING'),
-  notRun('WALLET_ANALYSIS'), notRun('MARKET_BEHAVIOR'), notRun('CREATOR_LAUNCHES_24H'), notRun('SELF_TRADING'),
+  notRun('WALLET_ANALYSIS'), notRun('MARKET_BEHAVIOR'), notRun('SELF_TRADING'),
   notRun('HOLDERS_GROWING', ADMIT)
 ].map(rule => Object.freeze({ ...rule, settings: Object.freeze(rule.settings) })));
 
@@ -82,9 +105,9 @@ const NOT_RUN = Object.freeze(AUDIT_RULES.filter(rule => rule.source === null).m
  * The audit of one GoPlus check: the ruleset, every rule's verdict, the checks
  * that did not run, and the facts the rules read. `holdings` is the check's
  * holder distribution (goPlusHoldings), null when GoPlus did not answer;
- * `liquidity` is the discovery row's.
+ * `liquidity` is the discovery row's; `launch` is as auditFacts takes it.
  */
-export function postAlertAudit({ chain, holdings, liquidity, at }, settings) {
-  const evidence = auditFacts({ chain, holdings, liquidity });
+export function postAlertAudit({ chain, holdings, liquidity, launch = null, at }, settings) {
+  const evidence = auditFacts({ chain, holdings, liquidity, launch });
   return { ruleset: rulesetVersion(AUDIT_RULES, settings), at, verdicts: evaluateRules(evidence, settings, AUDIT_RULES).verdicts, notRun: NOT_RUN, evidence };
 }

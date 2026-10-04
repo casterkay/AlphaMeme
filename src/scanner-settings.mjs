@@ -48,6 +48,8 @@ export const scannerSettings = Object.freeze({
   maxBuyTax: 0.05,
   maxSellTax: 0.05,
   minLpLockedRate: 0.80,
+  // #1 D2: more launches than this by one creator in 24 hours.
+  maxCreatorLaunches24h: 20,
   minOrdinaryWallets: 8,
   dynamicRecheckMs: 2 * 60_000,
   chainPassRecheckMs: 5 * 60_000,
@@ -56,6 +58,9 @@ export const scannerSettings = Object.freeze({
   candidateRetentionMs: 2 * 60 * 60_000,
   staleCandidateMs: 10 * 60_000,
   outcomeRetentionMs: 7 * 24 * 60 * 60_000,
+  // The creator ledger keeps a token this long after first seeing it: maxAgeSec plus a day, so a token still
+  // young enough to check keeps every launch of its 24-hour window that we saw.
+  creatorLedgerRetentionMs: 8 * 24 * 60 * 60_000,
 });
 
 /** Whether a settings object carries every key above as a finite number, as a cycle's snapshot must. */

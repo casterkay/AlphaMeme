@@ -72,14 +72,29 @@ test('each recorded token gets the verdicts its holders call for', async () => {
 
 test('every check that ran hits past its threshold, clears within it, and is unknown without its fact', () => {
   const s = scannerSettings;
-  const clear = { ownerRenounced: true, lpLockedRate: s.minLpLockedRate, top10Rate: s.maxTop10Rate, creatorRate: s.maxDevHoldRate, creatorHoneypots: false, liquidity: s.strictLiquidity };
-  const hit = { ownerRenounced: false, lpLockedRate: s.minLpLockedRate - .01, top10Rate: s.maxTop10Rate + .01, creatorRate: s.maxDevHoldRate + .001, creatorHoneypots: true, liquidity: s.strictLiquidity - 1 };
+  const clear = { ownerRenounced: true, lpLockedRate: s.minLpLockedRate, top10Rate: s.maxTop10Rate, creatorRate: s.maxDevHoldRate, creatorHoneypots: false,
+    creatorLaunches24hAtLeast: s.maxCreatorLaunches24h, liquidity: s.strictLiquidity };
+  const hit = { ownerRenounced: false, lpLockedRate: s.minLpLockedRate - .01, top10Rate: s.maxTop10Rate + .01, creatorRate: s.maxDevHoldRate + .001, creatorHoneypots: true,
+    creatorLaunches24hAtLeast: s.maxCreatorLaunches24h + 1, liquidity: s.strictLiquidity - 1 };
   const ran = AUDIT_RULES.filter(rule => rule.source !== null);
-  assert.deepEqual(ran.map(rule => rule.id), ['OWNER_NOT_RENOUNCED', 'LP_NOT_LOCKED', 'TOP10_CONCENTRATED', 'DEV_HOLD_TOO_HIGH', 'LIQUIDITY_BELOW_STRICT', 'CREATOR_HONEYPOT_HISTORY']);
+  assert.deepEqual(ran.map(rule => rule.id), ['OWNER_NOT_RENOUNCED', 'LP_NOT_LOCKED', 'TOP10_CONCENTRATED', 'DEV_HOLD_TOO_HIGH', 'LIQUIDITY_BELOW_STRICT', 'CREATOR_HONEYPOT_HISTORY', 'CREATOR_LAUNCHES_24H']);
   for (const [facts, verdict] of [[clear, 'CLEAR'], [hit, 'HIT'], [Object.fromEntries(Object.keys(clear).map(key => [key, null])), 'UNKNOWN']]) {
     for (const rule of ran) assert.equal(verdicts(facts)[rule.id], verdict, `${rule.id} ${verdict}`);
   }
-  assert.equal(scannerSettings.maxDevHoldRate, .01);
+  assert.deepEqual([scannerSettings.maxDevHoldRate, scannerSettings.maxCreatorLaunches24h], [.01, 20]);
+});
+
+test('a creator\'s launches count only the ledger\'s tokens launched in the 24 hours up to this one, and are unknown without a creator or launch time', () => {
+  const hour = 3_600_000, launchedAt = 100 * hour, token = '0x' + 'a'.repeat(40);
+  const other = (digit, at) => ({ address: '0x' + digit.repeat(40), launchedAt: at });
+  const count = launch => auditFacts({ chain: 'bsc', holdings: null, liquidity: null, launch }).creatorLaunches24hAtLeast;
+  const creatorLaunches = [other('b', launchedAt - 24 * hour), other('c', launchedAt - 24 * hour + 1), other('d', launchedAt), other('e', launchedAt + 1),
+    other('f', null), { address: token, launchedAt }];
+  // Itself, c just inside the window and d at the same time; not b at its edge, e launched later, f with no time, nor its own row again.
+  assert.equal(count({ address: token, launchedAt, creatorLaunches }), 3);
+  assert.equal(count({ address: token, launchedAt, creatorLaunches: [] }), 1, 'a first sighting counts itself');
+  assert.equal(count({ address: token, launchedAt: null, creatorLaunches }), null);
+  assert.equal(count(null), null, 'GoPlus named no creator');
 });
 
 test('locked, burned and pool supply never counts toward the top holders, and V3 or V4 LP positions leave the lock unknown', () => {
@@ -101,10 +116,10 @@ test('the checks without a source never run: they stay unknown and the record li
   const audit = postAlertAudit({ chain: 'arc', holdings: null, liquidity: null, at: 7 }, scannerSettings);
   const notRun = AUDIT_RULES.filter(rule => rule.source === null).map(rule => rule.id);
   assert.deepEqual(audit.notRun, notRun);
-  assert.equal(notRun.length, 13);
-  assert.ok(notRun.includes('SELL_ALL_SIMULATION') && notRun.includes('CREATOR_LAUNCHES_24H') && notRun.includes('HOLDERS_GROWING'));
+  assert.equal(notRun.length, 12);
+  assert.ok(notRun.includes('SELL_ALL_SIMULATION') && notRun.includes('HOLDERS_GROWING'));
   assert.ok(Object.values(audit.verdicts).every(verdict => verdict === 'UNKNOWN'), 'a check GoPlus did not answer is unknown');
-  assert.ok(Object.keys(audit.verdicts).filter(id => !notRun.includes(id)).length === 6, 'the six that ran without data are not listed as not run');
+  assert.ok(Object.keys(audit.verdicts).filter(id => !notRun.includes(id)).length === 7, 'the seven that ran without data are not listed as not run');
   assert.ok(AUDIT_RULES.every(rule => rule.mode === 'SHADOW'));
   assert.equal(audit.at, 7);
 });
@@ -114,7 +129,7 @@ test('the audit ruleset id changes with every threshold an audit rule reads, and
   const current = ruleset(scannerSettings);
   assert.match(current, /^rs-[0-9a-f]{8}$/);
   const declared = new Set(AUDIT_RULES.flatMap(rule => rule.settings));
-  assert.deepEqual([...declared].sort(), ['maxDevHoldRate', 'maxTop10Rate', 'minLpLockedRate', 'strictLiquidity']);
+  assert.deepEqual([...declared].sort(), ['maxCreatorLaunches24h', 'maxDevHoldRate', 'maxTop10Rate', 'minLpLockedRate', 'strictLiquidity']);
   for (const key of declared) assert.notEqual(ruleset({ ...scannerSettings, [key]: scannerSettings[key] + 1 }), current, key);
   for (const key of ['minLiquidity', 'maxBuyTax', 'scanIntervalMs']) assert.equal(ruleset({ ...scannerSettings, [key]: scannerSettings[key] + 1 }), current, key);
   assert.equal(new Set(AUDIT_RULES.map(rule => rule.id)).size, AUDIT_RULES.length, 'rule ids are unique');

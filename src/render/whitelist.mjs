@@ -58,7 +58,8 @@ function publicAudit(audit) {
     evidence: {
       ...Object.fromEntries(AUDIT_EVIDENCE.rates.map(key => [key, finiteOrNull(evidence[key])])),
       ...Object.fromEntries(AUDIT_EVIDENCE.flags.map(key => [key, typeof evidence[key] === 'boolean' ? evidence[key] : null])),
-      liquidity: finiteOrNull(evidence.liquidity)
+      liquidity: finiteOrNull(evidence.liquidity),
+      creatorLaunches24hAtLeast: Number.isSafeInteger(evidence.creatorLaunches24hAtLeast) ? evidence.creatorLaunches24hAtLeast : null
     }
   };
 }

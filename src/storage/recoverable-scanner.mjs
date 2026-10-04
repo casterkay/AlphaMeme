@@ -232,6 +232,10 @@ function pruneExpiredOutcomes(storage, tenantId, now, retentionMs) {
   );
 }
 
+function pruneExpiredCreatorLaunches(storage, tenantId, now, retentionMs) {
+  storage.sql.exec('DELETE FROM creator_launches WHERE tenant_id = ? AND first_seen_at < ?', tenantId, now - retentionMs);
+}
+
 function restartCycleId(rootCycleId, keyEpoch) {
   const suffix = `:rotation:${keyEpoch}`;
   return `${String(rootCycleId).slice(0, 127 - suffix.length)}${suffix}`;
@@ -402,6 +406,15 @@ function outcomeInput(value, tenantId, chainName, { allowCrossChain = false } = 
   return { ...json(value, 'outcome'), address: canonicalAddress(value.address), tenantId, chain: outcomeChain };
 }
 
+// The checked token's creator, as GoPlus named it, and its launch time (ms, null when unknown).
+function creatorLaunchInput(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value.creator !== 'string' || !value.creator) {
+    throw new RecoverableScannerError('CREATOR_LAUNCH_INVALID', 'creator launch requires a creator');
+  }
+  return { creator: canonicalAddress(value.creator), launchedAt: timestamp(value.launchedAt, 'creator launch time', { nullable: true }) };
+}
+
 function stringOrNull(value) {
   return typeof value === 'string' ? value : null;
 }
@@ -543,6 +556,7 @@ export class SqliteRecoverableScannerStore {
     const expected = value.expected || {};
     const candidateRetentionMs = positiveInteger(value.candidateRetentionMs, 'candidate retention');
     const outcomeRetentionMs = positiveInteger(value.outcomeRetentionMs, 'outcome retention');
+    const creatorLedgerRetentionMs = positiveInteger(value.creatorLedgerRetentionMs, 'creator ledger retention');
     return this.storage.transactionSync(() => {
       const current = existingCheckpoint(this.storage, this.tenantId, next.cycleId);
       assertCurrent(this.storage, this.tenantId, current, expected);
@@ -570,6 +584,7 @@ export class SqliteRecoverableScannerStore {
         this.tenantId, next.chain, ...kept, this.tenantId, next.chain, MAX_PUBLIC_CANDIDATES
       );
       pruneExpiredOutcomes(this.storage, this.tenantId, next.updatedAt, outcomeRetentionMs);
+      pruneExpiredCreatorLaunches(this.storage, this.tenantId, next.updatedAt, creatorLedgerRetentionMs);
       this.storage.sql.exec(
         'UPDATE cycle_checkpoint SET phase = ?, token_index = ?, endpoint_index = ?, partial_json = ?, updated_at = ? WHERE tenant_id = ? AND cycle_id = ?',
         next.phase, next.tokenIndex, next.endpointIndex, JSON.stringify(next.partial), next.updatedAt, this.tenantId, next.cycleId
@@ -726,10 +741,17 @@ export class SqliteRecoverableScannerStore {
     }));
   }
 
+  /** The tokens the creator ledger holds for one creator on a chain, with their launch times (ms, null when unknown). */
+  readCreatorLaunches(chainName, creator) {
+    return this.storage.sql.exec('SELECT address, launched_at FROM creator_launches WHERE tenant_id = ? AND chain = ? AND creator = ?',
+      this.tenantId, chain(chainName), canonicalAddress(creator)).toArray().map(row => ({ address: row.address, launchedAt: row.launched_at }));
+  }
+
   commitClassification(value) {
     const expected = value.expected || {};
     const next = checkpointInput(value.next);
     const candidate = candidateInput(value.candidate, this.tenantId, next.chain);
+    const creatorLaunch = creatorLaunchInput(value.creatorLaunch);
     const auditQueue = queueInput(value.auditQueue, this.tenantId, next.chain);
     const outcome = outcomeInput(value.outcome, this.tenantId, next.chain);
     const event = eventInput(value.event, this.tenantId, next.cycleId, next.chain, candidate.address, next.updatedAt);
@@ -746,6 +768,7 @@ export class SqliteRecoverableScannerStore {
       this.#upsertCandidate(candidate, { keepEvidence: false });
       this.#upsertQueueRow(auditQueue);
       if (outcome) this.#upsertOutcome(outcome);
+      if (creatorLaunch) this.#recordCreatorLaunch(creatorLaunch, candidate, next.updatedAt);
       const recorded = this.#recordEvent(event, next.chain, candidate.address);
       this.#mergeSourceHealth(value.sourceHealth);
       this.#writeCheckpoint(next);
@@ -771,6 +794,17 @@ export class SqliteRecoverableScannerStore {
       integerOrNull(row.lastAuditedAt), integerOrNull(row.nextAuditAt), integerOrNull(row.attempts),
       stringOrNull(row.status), row.priorityBand ? 1 : 0, numberOrNull(row.score), row.watched ? 1 : 0,
       JSON.stringify(row.details || {})
+    );
+  }
+
+  // The ledger row is a fact of the token's first sighting: a later check writes nothing, unless it learns a launch time
+  // the first one lacked. So a check writes at most one row.
+  #recordCreatorLaunch({ creator, launchedAt }, candidate, seenAt) {
+    this.storage.sql.exec(
+      `INSERT INTO creator_launches (tenant_id, chain, creator, address, launched_at, first_seen_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(tenant_id, chain, creator, address) DO UPDATE SET launched_at = excluded.launched_at
+       WHERE launched_at IS NULL AND excluded.launched_at IS NOT NULL`,
+      this.tenantId, candidate.chain, creator, candidate.address, launchedAt, seenAt
     );
   }
 

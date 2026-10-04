@@ -203,18 +203,21 @@ const screenReasonLabels = {
 const auditLabels = {
   OWNER_NOT_RENOUNCED:['所有者','Owner'],LP_NOT_LOCKED:['LP锁定或销毁','LP locked or burned',['lpLockedRate','rate']],TOP10_CONCENTRATED:['前十持仓','Top-10 holders',['top10Rate','rate']],
   DEV_HOLD_TOO_HIGH:['创建者持仓','Creator holdings',['creatorRate','rate']],LIQUIDITY_BELOW_STRICT:['流动性','Liquidity',['liquidity','money']],CREATOR_HONEYPOT_HISTORY:['创建者貔貅记录','Creator honeypot history'],
+  CREATOR_LAUNCHES_24H:['创建者24小时发币','Creator launches in 24h',['creatorLaunches24hAtLeast','atLeast']],
   SELL_ALL_SIMULATION:['全额卖出模拟','full-balance sell'],OBSERVATION_5M:['5分钟观察','5m observation'],CHART_RISK:['K线风险','chart risk'],RUG_RATIO:['跑路比例','rug ratio'],
   INSIDER_RATE:['内部人','insiders'],BUNDLER_RATE:['捆绑','bundlers'],SNIPER_RATE:['狙击','snipers'],WASH_TRADING:['刷量','wash trading'],WALLET_ANALYSIS:['钱包分析','wallet analysis'],
-  MARKET_BEHAVIOR:['市场行为','market behavior'],CREATOR_LAUNCHES_24H:['创建者24小时发币','creator launches in 24h'],SELF_TRADING:['对倒','self-trading'],HOLDERS_GROWING:['持有人增长','holder growth']
+  MARKET_BEHAVIOR:['市场行为','market behavior'],SELF_TRADING:['对倒','self-trading'],HOLDERS_GROWING:['持有人增长','holder growth']
 };
 
-// The shadow audit, grouped by verdict; it never moves the safety verdict, so it says so.
+// The shadow audit, grouped by verdict; it never moves the safety verdict, so it says so. A count from our own
+// observations is a lower bound, shown as one.
+const auditFact = (value,type,locale) => type === 'money' ? money(value,locale) : type === 'atLeast' ? `≥${numberText(value,locale)}` : percent(value,locale);
 function auditLines(audit,locale) {
   if (!audit) return [];
   const L = (zh,en) => localize(locale,zh,en), notRun = new Set(audit.notRun);
   const label = id => {
     const [zh,en,fact] = auditLabels[id], value = fact && audit.evidence[fact[0]];
-    return `${L(zh,en)}${present(value) ? ` ${fact[1] === 'money' ? money(value,locale) : percent(value,locale)}` : ''}`;
+    return `${L(zh,en)}${present(value) ? ` ${auditFact(value,fact[1],locale)}` : ''}`;
   };
   const ran = verdict => Object.entries(audit.verdicts).filter(([id,value]) => value === verdict && !notRun.has(id) && auditLabels[id]).map(([id]) => label(id));
   const groups = [[L('发现风险','Flagged'),ran('HIT')],[L('未见风险','Clear'),ran('CLEAR')],[L('未知','Unknown'),ran('UNKNOWN')],

@@ -255,7 +255,7 @@ function settingsError() {
 
 function validSettings(settings) {
   const positive = ['maxSecondaryChecksPerCycle', 'auditCycleBudgetMs', 'queueRetentionMs', 'scanIntervalMs',
-    'candidateRetentionMs', 'outcomeRetentionMs', 'liveLeadRetentionMs', 'staleCandidateMs', 'youngPoolAgeMs', 'maxWatchRequestsPerCycle'];
+    'candidateRetentionMs', 'outcomeRetentionMs', 'creatorLedgerRetentionMs', 'liveLeadRetentionMs', 'staleCandidateMs', 'youngPoolAgeMs', 'maxWatchRequestsPerCycle'];
   if (!completeScannerSettings(settings) || positive.some(key => !Number.isSafeInteger(settings[key]) || settings[key] <= 0)
     || !Number.isSafeInteger(settings.outcomeReadsPerCycle) || settings.outcomeReadsPerCycle < 0) throw settingsError();
   return settings;
@@ -447,7 +447,8 @@ export class RecoverableScanner {
         expected,
         next: { ...current, phase: 'SUMMARIZE', tokenIndex, endpointIndex: 0, partial, updatedAt: now },
         candidateRetentionMs: candidateRetentionLimit(settings),
-        outcomeRetentionMs: outcomeRetentionLimit(settings)
+        outcomeRetentionMs: outcomeRetentionLimit(settings),
+        creatorLedgerRetentionMs: settings.creatorLedgerRetentionMs
       });
     } else {
       throw phaseError('current checkpoint phase does not have a local transition');
@@ -590,7 +591,11 @@ export class RecoverableScanner {
       : { ...token };
     // The audit is evidence of this check, so it is kept with it: a lead refresh keeps both.
     const holdings = goPlusHoldings(current.partial.secondary?.sources);
-    const audit = postAlertAudit({ chain: current.chain, holdings, liquidity: item.row.liquidity, at: now }, settings);
+    // The creator ledger takes the creator GoPlus named and the token's launch: its lead's launch stage, else this screen's.
+    const creator = holdings?.creatorAddress ?? null;
+    const launchedAt = token.metadata?.stages?.launchedAt ?? (Number.isSafeInteger(item.screen.createdAt) && item.screen.createdAt > 0 ? item.screen.createdAt * 1000 : null);
+    const launch = creator && { address: addressKey(token.address), launchedAt, creatorLaunches: this.store.readCreatorLaunches(current.chain, creator) };
+    const audit = postAlertAudit({ chain: current.chain, holdings, liquidity: item.row.liquidity, launch, at: now }, settings);
     candidate.secondary = { ...secondary, audit };
     candidate.decisionReason = [vetoed ? '' : token.decisionReason, secondaryReason].filter(Boolean).join('；');
     // A lead's first complete GoPlus check is one of its stages.
@@ -634,6 +639,7 @@ export class RecoverableScanner {
       candidate,
       auditQueue: queue,
       outcome,
+      creatorLaunch: creator && { creator, launchedAt },
       event,
       sourceHealth: { lastSecondary: { complete: secondary.complete, checkedAt: now, sources: secondary.sources } }
     });
