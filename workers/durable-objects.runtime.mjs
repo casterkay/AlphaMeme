@@ -73,7 +73,7 @@ describe('M2 Durable Object bindings', () => {
         .exec('SELECT value_json FROM scheduler_state WHERE tenant_id = ? AND key = ?', persistedTenantId, 'ave.admission.v1')
         .one();
 
-      expect(JSON.parse(version.value_json)).toEqual({ version: 2 });
+      expect(JSON.parse(version.value_json)).toEqual({ version: 3 });
       expect(JSON.parse(admitted.value_json)).toEqual(persistedState);
       expect(state.storage.sql.databaseSize).toBeGreaterThan(0);
     });

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import {
   RADAR_SCHEMA_VERSION,
   RADAR_TABLES,
@@ -231,6 +232,86 @@ test('Radar schema rejects altered types, defaults, checks, uniqueness, and inde
   indexed.sql.explicitIndexes.set('candidates_status', 'CREATE INDEX candidates_status ON candidates (status)');
   assert.throws(() => initializeRadarSchema(indexed), error =>
     error instanceof SchemaError && error.code === 'SCHEMA_INDEX_CONTRACT_MISMATCH');
+});
+
+function sqliteStorage() {
+  const db = new DatabaseSync(':memory:');
+  return {
+    sql: {
+      exec: (sql, ...args) => {
+        const statement = db.prepare(sql);
+        const rows = statement.columns().length ? statement.all(...args) : (statement.run(...args), []);
+        return { toArray: () => rows };
+      }
+    },
+    transactionSync: fn => {
+      db.exec('BEGIN');
+      try {
+        const value = fn();
+        db.exec('COMMIT');
+        return value;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    }
+  };
+}
+
+const VERSION_KEY = ['__schema__', 'schema.version'];
+const recordedVersion = storage => JSON.parse(storage.sql.exec('SELECT value_json FROM preferences WHERE tenant_id = ? AND key = ?', ...VERSION_KEY).toArray()[0].value_json).version;
+const tableNames = storage => storage.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").toArray().map(row => row.name);
+const rowsOf = (storage, table) => storage.sql.exec(`SELECT * FROM ${table} ORDER BY 1, 2, 3`).toArray();
+
+// A version 2 database as it was deployed, with rows: version 3 only added the creator ledger.
+function populatedVersionTwo() {
+  const storage = sqliteStorage();
+  initializeRadarSchema(storage);
+  storage.sql.exec('DROP TABLE creator_launches');
+  storage.sql.exec('UPDATE preferences SET value_json = ? WHERE tenant_id = ? AND key = ?', JSON.stringify({ version: 2 }), ...VERSION_KEY);
+  storage.sql.exec("INSERT INTO candidates (tenant_id, chain, address, status, metadata_json) VALUES ('1000', 'bsc', '0xabc', 'LIVE_READY', '{\"stages\":{}}')");
+  storage.sql.exec("INSERT INTO outcomes (tenant_id, chain, address, initial_decision, baseline_at) VALUES ('1000', 'bsc', '0xabc', 'LIVE_READY', 5)");
+  storage.sql.exec("INSERT INTO preferences (tenant_id, key, value_json) VALUES ('1000', 'locale', '\"en\"')");
+  return storage;
+}
+
+test('a fresh SQLite database gets the current schema, which a restart accepts unchanged', () => {
+  const storage = sqliteStorage();
+  assert.equal(initializeRadarSchema(storage), RADAR_SCHEMA_VERSION);
+  assert.ok(tableNames(storage).includes('creator_launches'));
+  assert.equal(initializeRadarSchema(storage), RADAR_SCHEMA_VERSION);
+});
+
+test('a populated version 2 database gains the creator ledger and version 3 in one step, keeping every row', () => {
+  const storage = populatedVersionTwo();
+  const before = Object.fromEntries(['candidates', 'outcomes', 'preferences'].map(table => [table, rowsOf(storage, table)]));
+  assert.equal(initializeRadarSchema(storage), RADAR_SCHEMA_VERSION);
+  assert.equal(recordedVersion(storage), RADAR_SCHEMA_VERSION);
+  assert.deepEqual(rowsOf(storage, 'candidates'), before.candidates);
+  assert.deepEqual(rowsOf(storage, 'outcomes'), before.outcomes);
+  assert.deepEqual(rowsOf(storage, 'preferences').filter(row => row.tenant_id !== '__schema__'), before.preferences.filter(row => row.tenant_id !== '__schema__'));
+  assert.deepEqual(rowsOf(storage, 'creator_launches'), []);
+  // The migrated database passes the same contract checks as a fresh one, now and on every restart.
+  assert.equal(initializeRadarSchema(storage), RADAR_SCHEMA_VERSION);
+  storage.sql.exec("INSERT INTO creator_launches (tenant_id, chain, creator, address, launched_at, first_seen_at) VALUES ('1000', 'bsc', '0xc', '0xabc', NULL, 1)");
+  assert.equal(rowsOf(storage, 'creator_launches').length, 1);
+});
+
+test('a version 2 database whose tables do not match version 2 is refused before anything changes', () => {
+  const extra = populatedVersionTwo();
+  extra.sql.exec('CREATE TABLE creator_launches (tenant_id TEXT NOT NULL, PRIMARY KEY (tenant_id))');
+  const altered = populatedVersionTwo();
+  altered.sql.exec('ALTER TABLE outcomes ADD COLUMN unexpected TEXT');
+  for (const [storage, code] of [[extra, 'SCHEMA_TABLE_SET_MISMATCH'], [altered, 'SCHEMA_TABLE_CONTRACT_MISMATCH']]) {
+    const tables = tableNames(storage);
+    assert.throws(() => initializeRadarSchema(storage), error => error instanceof SchemaError && error.code === code);
+    assert.deepEqual([recordedVersion(storage), tableNames(storage)], [2, tables]);
+  }
+  // A version with no additive step to 3 is refused too.
+  const older = populatedVersionTwo();
+  older.sql.exec('UPDATE preferences SET value_json = ? WHERE tenant_id = ? AND key = ?', JSON.stringify({ version: 1 }), ...VERSION_KEY);
+  assert.throws(() => initializeRadarSchema(older), error => error instanceof SchemaError);
+  assert.equal(tableNames(older).includes('creator_launches'), false);
 });
 
 test('AVE admission state persists every cross-restart field and rejects corrupt or invalid state', () => {
