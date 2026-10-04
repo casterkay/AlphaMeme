@@ -5,6 +5,7 @@
 // radar.sqlite and registry.sqlite get each object's tables, recreated from the
 // exported DDL with their rows; row counts are checked per table, then the
 // object's own schema initializer runs on the file, as the host does at boot.
+// The registry must hold exactly the exported tenant, as the host serves one.
 // host.sqlite gets each object's key-value entries and the radar's alarm time,
 // in the host's own layout (src/host/state.mjs).
 //
@@ -67,6 +68,11 @@ function writeHostDatabase(path, exported) {
 }
 
 export function importExport(exported, directory) {
+  // The host is single-tenant: it takes the export only when the registry holds that one tenant.
+  const registered = exported.registry?.tables?.tenant_registry?.rows?.map(row => row.tenant_id);
+  if (registered?.length !== 1 || registered[0] !== exported.tenantId) {
+    throw new Error(`the registry must hold exactly the exported tenant ${exported.tenantId}, not ${JSON.stringify(registered)}`);
+  }
   const files = Object.values(DATABASE_FILES);
   const existing = files.filter(file => existsSync(join(directory, file)));
   if (existing.length) throw new Error(`refusing to overwrite ${existing.join(', ')} in ${directory}`);

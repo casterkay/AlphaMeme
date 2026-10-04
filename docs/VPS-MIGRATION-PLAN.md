@@ -157,13 +157,14 @@ Commands for steps 1–4 (`$WORKER` is the Worker URL, `$TENANT` the tenant id):
 curl -sS -H "authorization: Bearer $OPERATOR_TOKEN" "$WORKER/export?tenant_id=$TENANT" | jq .idle
 # Freeze: deploy with "RUNTIME_DISABLED": "1" and "crons": [] in wrangler.jsonc, then revert the edit.
 npx wrangler deploy && git checkout wrangler.jsonc
-# Optional: remove the webhook now (pending updates kept), so held updates wait
-# for getUpdates under Telegram's documented 24 hours instead of webhook retries.
+# Remove the webhook now (pending updates kept), so held updates wait for
+# getUpdates under Telegram's documented 24 hours instead of webhook retries.
 curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/deleteWebhook"
 # 2–3. Export once more; its "idle" must still be true, else reconcile first.
 curl -sS -H "authorization: Bearer $OPERATOR_TOKEN" "$WORKER/export?tenant_id=$TENANT" -o export.json
 jq .idle export.json
 # 4. On the VPS, with ./data empty and the export readable by uid 1000; prints row counts per table.
+#    It refuses an export whose registry holds any tenant but the exported one.
 docker compose build
 docker compose run --rm -v "$PWD/export.json:/tmp/export.json:ro" radar node scripts/import-export.mjs /tmp/export.json /data
 docker compose run --rm radar node scripts/backup.mjs && rm export.json
