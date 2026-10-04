@@ -139,6 +139,13 @@ GMGN, DexScreener and GeckoTerminal all throttle Cloudflare's shared egress IPs,
 so this choice depends on the VPS, which also unblocks the new-pool watch. GMGN is the riskiest: it has blocked clients
 before, so its checks stay in shadow until it proves stable from the VPS IP.
 
+Websockets (probed 2026-10-05, `docs/spikes/AVE-WEBSOCKET.md`): AVE's
+websocket refuses our key ("Unauthorized"), so it cannot replace per-token REST
+reads unless AVE grants access. Arc's RPC serves `eth_subscribe` `newHeads` at
+`wss://rpc.mainnet.arc.io` without a key; on the VPS it can replace the
+new-pool watch's 15 s log polling. It yields raw chain events, not priced
+market data, so DexScreener still prices the pools.
+
 ### Known defects found while planning
 
 1. **No Arc token can reach `PASSED`.** GoPlus never returns `cannot_sell_all` on
