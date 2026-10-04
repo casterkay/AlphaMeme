@@ -1,0 +1,38 @@
+src/worker.mjs
+  s_e9d978d309853c::t_1cb7347240d7fa 122-134,138-140
+src/storage/durable-object-export.mjs
+  s_e9d978d309853c::t_71855217c23cc1 1-31
+scripts/import-export.mjs
+  s_e9d978d309853c::t_6199f1bd0cd93a 1-129
+workers/vps-migration.runtime.mjs
+  s_e9d978d309853c::t_4eb92111626477 1-123
+  s_e9d978d309853c::t_9bcf67d92604c5 124-130
+test/import-export.test.mjs
+  s_e9d978d309853c::t_516cbc4fc8c90d 1-129
+docs/VPS-MIGRATION-PLAN.md
+  s_e9d978d309853c::t_7595c19e7be6b5 151-173
+src/radar-agent.mjs
+  s_e9d978d309853c::t_831aff4d1cf6dd 11-13,175,210-222,227,229
+src/tenant-registry.mjs
+  s_e9d978d309853c::t_60188770b4e00b 3-4,30-33,35
+worker-configuration.d.ts
+  s_e9d978d309853c::t_25ca677f0cce83 2,5,8-9,32
+wrangler.jsonc
+  s_e9d978d309853c::t_8bac331038cac2 24-27,29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c16c2e5e1f67d49e5b68fbb05b4cb633305a3a0",
+  "prompts": {},
+  "sessions": {
+    "s_e9d978d309853c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b0e6aec-d1e7-49dd-acc4-7829fed8ffd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "casterkay <poetrycoder>"
+    }
+  }
+}
