@@ -1,7 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { normalizeTenantId } from './storage/tenant-id.mjs';
-import { exportDurableObjectState } from './storage/durable-object-export.mjs';
-import { initializeTenantRegistrySchema, TENANT_REGISTRY_TABLES } from './storage/tenant-registry-schema.mjs';
+import { initializeTenantRegistrySchema } from './storage/tenant-registry-schema.mjs';
 import { settleTenantWakes } from './tenant-watchdog.mjs';
 
 const WATCHDOG_CURSOR_KEY = 'scheduler.watchdog.cursor.v1';
@@ -25,10 +24,6 @@ export class TenantRegistry extends DurableObject {
       );
     });
     return { tenantId };
-  }
-
-  async exportState() {
-    return exportDurableObjectState(this.ctx.storage, TENANT_REGISTRY_TABLES);
   }
 
   async scheduledWake() {

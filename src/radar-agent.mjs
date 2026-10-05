@@ -8,9 +8,7 @@ import { GoPlusAuth, goPlusCredentials } from './providers/goplus-auth.mjs';
 import { SecondaryValidator } from './providers/secondary.mjs';
 import { chainRpcUrls } from './trading/config.mjs';
 import { readAveAdmissionState, writeAveAdmissionStateInTransaction } from './storage/ave-admission-state.mjs';
-import { initializeRadarSchema, RADAR_TABLES } from './storage/schema.mjs';
-import { exportDurableObjectState } from './storage/durable-object-export.mjs';
-import { EXECUTING_STATES, listTrades } from './trading/trades.mjs';
+import { initializeRadarSchema } from './storage/schema.mjs';
 import { normalizeTenantId } from './storage/tenant-id.mjs';
 import { RecoverableScanner } from './recoverable-scanner.mjs';
 import { scannerSettings } from './scanner-settings.mjs';
@@ -205,19 +203,6 @@ export class RadarAgent extends DurableObject {
     const result = await this.#telegram(tenantId).receiveCredential(receipt, credentialText);
     const dueAt = await this.#schedulerForTenant(tenantId).recomputeAlarm();
     return { ...result, dueAt };
-  }
-
-  // Reads only, so the migration export works while the runtime is disabled. The idle check lists
-  // what may still have an effect in flight: undelivered outbox rows and trades between confirmation and settlement.
-  async exportState(value) {
-    const tenantId = normalizeTenantId(value);
-    if (readSchedulerTenant(this.ctx.storage) !== tenantId) throw new Error('Radar Durable Object is not bound to the exported tenant');
-    const state = await exportDurableObjectState(this.ctx.storage, RADAR_TABLES);
-    const unconfirmedOutbox = this.#telegram(tenantId).outbox.activeRows()
-      .map(row => ({ id: row.id, status: row.status, deliveryClass: row.delivery_class }));
-    const unsettledTrades = listTrades(this.ctx.storage, tenantId).filter(trade => EXECUTING_STATES.has(trade.state))
-      .map(trade => ({ id: trade.id, state: trade.state, chain: trade.chain, side: trade.side }));
-    return { ...state, idle: { idle: unconfirmedOutbox.length === 0 && unsettledTrades.length === 0, unconfirmedOutbox, unsettledTrades } };
   }
 
   #telegram(tenantId) {

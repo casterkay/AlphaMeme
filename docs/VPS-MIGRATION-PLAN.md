@@ -116,69 +116,35 @@ on restored state, reconcile the wallet's balances and recent transactions
 against the chain, since the chain, not the restored database, is the source of
 truth for fills.
 
-## Data migration
+## Cutover: a fresh start
 
-All state lives in the tenant's `RadarAgent` database (including the encrypted
-AVE key and trading wallet in `keys`) and the registry's. Ciphertext is bound
-to tenant id, field and key version, not to Cloudflare, so it moves as-is with
-the same `MASTER_ENC_KEY`.
+No state moves (owner decision, 2026-10-05). The VPS starts on empty databases,
+and its first Telegram sender becomes the owner, as on Cloudflare; the owner
+connects the AVE key again with `/setkey`. Outcomes, leads and settings start
+over.
 
 The two hosts must never act at once: both would scan, alert, deliver and
-possibly trade. So the old host stops completely before the final export, and
-the new one starts only after it:
+possibly trade. So Cloudflare is frozen before the VPS starts:
 
-0. **Probe** (before any migration work is committed): from the chosen VPS, run
-   the production request pattern for about 30 minutes: Arc `eth_blockNumber`
-   + `eth_getLogs` every 15 s, DexScreener batch and pair reads at the radar's
-   rate, GoPlus with the app key. Proceed only if the 429s are gone.
-1. **Quiesce, then freeze Cloudflare**: pause scanning, place no trades, and
-   wait until the outbox has no unconfirmed rows and no trade is submitted but
-   unsettled. Then deploy the version with `RUNTIME_DISABLED=1` and no cron. It
-   refuses webhook updates (Telegram keeps them for 24 hours), and makes
-   `alarm()` and `wake()` no-ops, so no scan, command, outbox delivery or trade
-   step runs.
-2. **Check idle**: with the export route (read-only, step 3), confirm there is
-   still no in-flight effect. If one slipped in, reconcile it by hand before
-   continuing: a delivery whose outcome is unknown is flagged, not resent
-   blindly; a submitted trade is settled from its transaction receipt on chain.
-3. **Final export**, taken after the drain: a temporary operator-only route (operator token) returns
-   every table's rows from both objects, their key-value entries and pending
-   alarm time, as JSON. The file holds ciphertext, not plaintext, and is
-   deleted after import.
-4. **Import and verify** into the three VPS databases: row counts per table,
-   schema checks, a first backup.
-5. **Activate the VPS**: start the process (it deletes the webhook, then polls
-   and picks up the updates Telegram held).
-
-Commands for steps 1–4 (`$WORKER` is the Worker URL, `$TENANT` the tenant id):
+0. **Probe** (done 2026-10-05): from the VPS, the production request pattern
+   (Arc RPC, DexScreener, GoPlus without the app key) ran without a 429.
+1. **Freeze Cloudflare**: deploy with `RUNTIME_DISABLED=1` and no cron. It
+   refuses webhook updates and makes `alarm()` and `wake()` no-ops, so no scan,
+   command, outbox delivery or trade step runs.
+2. **Start the VPS**: `docker compose up -d --build` on empty `./data`. It
+   deletes the webhook and polls, picking up the updates Telegram held.
+3. **Reconnect** in the bot: `/start`, then `/setkey`.
 
 ```sh
-# 1. In the bot: pause scanning, place no trades. Repeat until "idle": true.
-curl -sS -H "authorization: Bearer $OPERATOR_TOKEN" "$WORKER/export?tenant_id=$TENANT" | jq .idle
-# Freeze: deploy with "RUNTIME_DISABLED": "1" and "crons": [] in wrangler.jsonc, then revert the edit.
+# 1. Freeze: deploy with "RUNTIME_DISABLED": "1" and "crons": [] in wrangler.jsonc, then revert the edit.
 npx wrangler deploy && git checkout wrangler.jsonc
-# Remove the webhook now (pending updates kept), so held updates wait for
-# getUpdates under Telegram's documented 24 hours instead of webhook retries.
-curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/deleteWebhook"
-# 2–3. Export once more; its "idle" must still be true, else reconcile first.
-curl -sS -H "authorization: Bearer $OPERATOR_TOKEN" "$WORKER/export?tenant_id=$TENANT" -o export.json
-jq .idle export.json
-# 4. On the VPS, with ./data empty and the export readable by uid 1000; prints row counts per table.
-#    It refuses an export whose registry holds any tenant but the exported one.
-docker compose build
-docker compose run --rm -v "$PWD/export.json:/tmp/export.json:ro" radar node scripts/import-export.mjs /tmp/export.json /data
-docker compose run --rm radar node scripts/backup.mjs && rm export.json
+# 2. On the VPS.
+cd ~/AlphaMeme && git pull && sudo docker compose up -d --build
 ```
 
-An alarm that comes due while disabled is consumed without running, so the
-export may show none; the host's first watchdog wake (within 60 s) re-arms it
-from scheduler state. The import writes each object's key-value entries to
-`host.sqlite` under its scope and the radar's alarm as `host/radar.alarm`
-(`src/host/state.mjs`).
-
-The Cloudflare data stays untouched as a pre-migration snapshot. It is not a
-rollback: once the VPS acts, that snapshot lacks every later command, delivery
-and trade.
+The Cloudflare data stays untouched. It still holds the old encrypted AVE key
+and any trading wallet under the same `MASTER_ENC_KEY`, so a wallet created
+there is recoverable from it if one ever turns out to hold funds.
 
 ## Slices (one PR each)
 
@@ -192,8 +158,8 @@ and trade.
    boot, offset handling for stored, declined and failed updates, a full scan
    cycle with stubbed upstreams, backup then restore then boot. The Cloudflare
    deployment is unchanged.
-2. **Export and disable switch** on the Cloudflare side, with tests.
-3. **Cutover** (operations, no code): steps 1–5 above, then confirm in
+2. **Disable switch** on the Cloudflare side, with tests.
+3. **Cutover** (operations, no code): steps 1–3 above, then confirm in
    production that the Arc and DexScreener 429s are gone.
 4. **Cleanup** once the VPS has run cleanly for a while: drop the
    `cloudflare:workers` hook and `extends DurableObject`, the webhook route,

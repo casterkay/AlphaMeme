@@ -5,7 +5,7 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const ENTRY_POINTS = ['src/host/main.mjs', 'scripts/backup.mjs', 'scripts/import-export.mjs'];
+const ENTRY_POINTS = ['src/host/main.mjs', 'scripts/backup.mjs'];
 // Static `import`/`export … from`, side-effect imports, and literal dynamic imports.
 const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"]([^'"]+)['"]/g;
 

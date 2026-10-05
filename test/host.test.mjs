@@ -6,10 +6,6 @@ import { join } from 'node:path';
 import '../src/host/cloudflare-hook.mjs';
 import { backupDatabases, BACKUP_SETS_KEPT } from '../src/host/backup.mjs';
 import { DATABASE_FILES } from '../src/host/storage.mjs';
-import { exportDurableObjectState } from '../src/storage/durable-object-export.mjs';
-import { RADAR_TABLES } from '../src/storage/schema.mjs';
-import { TENANT_REGISTRY_TABLES } from '../src/storage/tenant-registry-schema.mjs';
-import { importExport } from '../scripts/import-export.mjs';
 
 const { startHost } = await import('../src/host/host.mjs');
 
@@ -203,45 +199,4 @@ test('a verified backup restores into a fresh directory and the host boots from 
   assert.equal(restarted.offset(), offset, 'polling resumes after the last confirmed update');
   assert.equal(typeof restarted.host.alarm.getAlarm(), 'number', 'the pending alarm is re-armed');
   assert.equal(restarted.sql('SELECT COUNT(*) AS count FROM keys')[0].count, databases['radar.sqlite'].keys);
-});
-
-// The Worker's /export of the fixture's state, read with the same export code over the host's files.
-async function exportOf(fixture, alarmAt) {
-  const { storage } = fixture.host;
-  const state = (name, tables) => exportDurableObjectState({
-    ...storage[name],
-    list: async () => new Map(storage.host.sql.exec('SELECT key, value_json FROM kv WHERE scope = ?', name).toArray().map(row => [row.key, JSON.parse(row.value_json)])),
-    getAlarm: async () => (name === 'radar' ? alarmAt : null)
-  }, tables);
-  const exported = { exportedAt: Date.now(), tenantId: String(OWNER), idle: null, radar: await state('radar', RADAR_TABLES), registry: await state('registry', TENANT_REGISTRY_TABLES) };
-  return JSON.parse(JSON.stringify(exported));
-}
-
-test('the host boots from an imported export with the tenant configured, keeping a pending alarm or re-arming a missing one', async t => {
-  const stubs = upstreams(t);
-  const source = await boot(t);
-  await connect(source, stubs);
-  const keys = source.sql('SELECT name, value_enc, generation FROM keys ORDER BY name');
-  assert.ok(keys.length > 0, 'the source holds the encrypted AVE key');
-  const pendingAlarm = Date.now() + 3_600_000;
-  const exports = [await exportOf(source, pendingAlarm), await exportOf(source, null)];
-  await source.stop();
-  stubs.telegram.updates.length = 0;
-
-  for (const exported of exports) {
-    const dataDir = mkdtempSync(join(tmpdir(), 'radar-host-imported-'));
-    importExport(exported, dataDir);
-    const imported = await boot(t, dataDir);
-    assert.equal((await imported.host.radar.getStatus(String(OWNER))).control.configured, true);
-    assert.deepEqual(imported.sql('SELECT name, value_enc, generation FROM keys ORDER BY name'), keys);
-    if (exported.radar.alarmAt === null) {
-      assert.equal(imported.host.alarm.getAlarm(), null);
-      // What the 60 s watchdog runs.
-      await imported.host.registry.scheduledWake();
-      assert.equal(typeof imported.host.alarm.getAlarm(), 'number', 'the watchdog wake re-arms the alarm');
-    } else {
-      assert.equal(imported.host.alarm.getAlarm(), pendingAlarm);
-    }
-    await imported.stop();
-  }
 });
