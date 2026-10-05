@@ -8,7 +8,6 @@ COPY src ./src
 COPY public/voice-alerts.mjs ./public/voice-alerts.mjs
 COPY scripts/backup.mjs ./scripts/backup.mjs
 # Temporary: the one-off import of the Cloudflare export at cutover.
-COPY scripts/import-export.mjs ./scripts/import-export.mjs
 
 # uid 1000, which owns the mounted data directory on the VPS.
 USER node

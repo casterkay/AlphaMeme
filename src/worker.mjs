@@ -119,19 +119,6 @@ export default {
         return json(operatorStatus(await callWorkerRpc(() => env.RADAR.get(id).getStatus(tenantId))));
       }
 
-      // Temporary, for the VPS migration: both objects' complete state, ciphertext included, for the operator only.
-      if (url.pathname === '/export') {
-        if (request.method !== 'GET') return methodNotAllowed();
-        if (!(await operatorAuthorized(request, env))) return json({ error: 'unauthorized' }, { status: 401 });
-        const tenantId = tenantIdFromSearch(url);
-        if (!tenantId) return json({ error: 'tenant_id_required' }, { status: 400 });
-        const registry = await callWorkerRpc(() => env.TENANT_REGISTRY.getByName('tenant-registry').exportState());
-        if (!registry.tables.tenant_registry.rows.some(row => row.tenant_id === tenantId)) return json({ error: 'tenant_not_registered' }, { status: 404 });
-        const radar = await callWorkerRpc(() => env.RADAR.get(env.RADAR.idFromName(`radar:${tenantId}`)).exportState(tenantId));
-        const { idle, ...radarState } = radar;
-        return json({ exportedAt: Date.now(), tenantId, idle, radar: radarState, registry });
-      }
-
       if (url.pathname === '/webhook/telegram') {
         if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, { status: 405, headers: { allow: 'POST' } });
         if (!(await telegramWebhookAuthorized(request, env))) return json({ error: 'forbidden' }, { status: 403 });
